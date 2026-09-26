@@ -226,23 +226,65 @@ DEMO_MODE=1 uvicorn backend.main:app
 `LLM_PROVIDER` (`groq` | `openrouter`), `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`,
 `LLM_VISION` (`1` | `0`), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `DEMO_MODE`
 
-## Team and ownership
-Team size: TBD. Workstreams (collapse or expand to fit headcount):
-1. Vision: detection, pose, face, features
-2. Audio: YAMNet events
-3. Backend: fusion, LLM interpreter, state, event log
-4. Frontend + notifications
-5. (if 5+) Fallback footage, demo script, pitch
+## Team and ownership (2 people)
+
+The split follows one boundary: **Data produces events, Web consumes them.** Everything left of
+the JSON contracts belongs to Data; everything right of them belongs to Web. Neither person edits
+the other's folders without asking.
+
+### Person A — Data (models, signals, rules)
+Owns: `backend/sources.py`, `backend/vision/`, `backend/audio/`, `backend/fusion/rules.py`, `data/`
+
+- Input abstraction: webcam | stream | file, selected by one config flag
+- Dog detection, body keypoints, face landmarks, `keypoint_map.py`
+- Feature extraction into `FrameEvent`, YAMNet into `AudioEvent`
+- Rules v1 and tuning (the person who understands the features writes the rules)
+- Sourcing fallback clips and audio, recording licences in `data/fallback/SOURCES.md`
+- Optional DogFLW fine-tune, only if a pretrained face-landmark model can't be found by midday day 1
+- **Deliverable for Web:** a `Pipeline` class (below) plus a pre-computed `events.jsonl` for every
+  fallback clip, so Web can build and demo against real data
+
+### Person B — Web (backend, LLM, dashboard, alerts)
+Owns: `backend/main.py`, `backend/fusion/llm_interpreter.py`, `backend/fusion/state.py`,
+`backend/notify/`, `backend/demo/`, `frontend/`, `config.yaml`, env setup
+
+- FastAPI app, WebSocket push, event log, `/video` MJPEG endpoint from the pipeline's latest frame
+- LLM interpreter (Groq / OpenRouter switch), final-label logic, state machine, cooldowns
+- Telegram notifications
+- Dashboard: live video with skeleton overlay drawn on a canvas from keypoints, current emotion,
+  timeline, audio strip, live/fallback toggle, **"treat dropped" button**
+- Demo mode: replay `events.jsonl` + clip, serve cached LLM responses, zero network
+- **Mock first:** write `mock_events.py` from the contracts in hour one, and build everything against
+  it until Data's real events arrive
+
+### The handoff interface (agree on this before splitting up)
+```python
+class Pipeline:
+    def __init__(self, config): ...
+    async def run(self, on_frame_event, on_audio_event, on_rules_label): ...
+    def latest_frame_jpeg(self) -> bytes | None: ...
+    def stop(self): ...
+```
+`on_rules_label` receives `{"ts", "emotion", "confidence", "scores": {emotion: score}}`.
+Web calls `run()` and never imports anything else from `vision/` or `audio/`.
 
 ## Two-day plan
-**Day 1:** agree on contracts → source abstraction → pretrained pose on a clip → YAMNet events →
-dashboard on mock data → Telegram test message → features + rules v1 → LLM prompt + provider switch →
-one fallback clip end to end.
-**Day 2:** tune rules on fallback clips → state machine + cooldowns → dashboard timeline →
-cache LLM responses for demo mode → feature freeze → live test in venue → rehearse the fallback switch twice.
+
+| When | Person A — Data | Person B — Web |
+|---|---|---|
+| Day 1, hour 1 | **Together:** freeze JSON contracts + `Pipeline` interface | **Together** |
+| Day 1 morning | Source abstraction, YOLO + pretrained pose on a stock clip, YAMNet events | FastAPI + WebSocket, `mock_events.py`, dashboard skeleton, Telegram test message |
+| Day 1 afternoon | Face landmarks, features, rules v1, source 3–5 fallback clips | LLM interpreter with provider switch, state machine, cooldowns, video endpoint + overlay |
+| Day 1 evening | First real `events.jsonl` handed over | **Together:** one fallback clip end to end, real events replacing mocks |
+| Day 2 morning | Tune rules on all fallback clips, fix missing/low-confidence keypoints | Timeline, audio strip, treat button, cache LLM responses for demo mode, compare providers |
+| Day 2 early afternoon | **Feature freeze** | **Feature freeze** |
+| Day 2 rest | **Together:** live test in venue, rehearse the fallback switch twice, fix only what breaks | **Together** |
+
+If Data falls behind, Web does **not** wait: the demo can run on mocks plus the LLM reading raw frames,
+and Data's real signals slot in when ready. If Web falls behind, cut the audio strip and timeline first;
+the live emotion card and one notification are the core of the demo.
 
 ## Open questions
-- Team size and owners per workstream
 - Camera hardware and placement for the live demo
 - How treat events are detected (recommended: a manual "treat dropped" button on the dashboard)
 - Default provider and model for the demo (Groq vs. OpenRouter), decided from day-2 latency logs
