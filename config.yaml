@@ -16,6 +16,14 @@ data:
     - [0.8, 0.4]
     - [0.8, 0.95]
     - [0.2, 0.95]
+  detect:
+    model: models/yolo11s.pt   # COCO-pretrained; auto-downloaded once, then offline
+    conf: 0.25
+    imgsz: 640
+    ema_alpha: 0.5             # weight of the newest bbox (1.0 = no smoothing)
+    ema_reset_misses: 8        # frames without a dog before smoothing restarts
+    crop_pad: 0.15             # crop padding per side, fraction of bbox size
+    zone_anchor: bottom_center # bottom_center | center: bbox point tested against feeding_zone
   # Rules thresholds; tuned in Step 11.
   rules:
     window_s: 3.0
