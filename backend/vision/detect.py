@@ -40,6 +40,19 @@ def point_in_zone(point: tuple[float, float], zone_norm: list[list[float]], fram
     return cv2.pointPolygonTest(poly, (float(point[0]), float(point[1])), False) >= 0
 
 
+def crop_padded(frame: np.ndarray, bbox: BBox, pad: float) -> tuple[np.ndarray, tuple[int, int]]:
+    """Crop the bbox padded by `pad` (fraction of its size per side), clipped to the frame.
+
+    Returns (crop, (ox, oy)): add (ox, oy) to crop coords to get full-frame pixels.
+    """
+    h, w = frame.shape[:2]
+    x1, y1, x2, y2 = bbox
+    px, py = (x2 - x1) * pad, (y2 - y1) * pad
+    cx1, cy1 = max(0, int(np.floor(x1 - px))), max(0, int(np.floor(y1 - py)))
+    cx2, cy2 = min(w, int(np.ceil(x2 + px))), min(h, int(np.ceil(y2 + py)))
+    return frame[cy1:cy2, cx1:cx2], (cx1, cy1)
+
+
 def _iou(a: BBox, b: BBox) -> float:
     ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
     iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
@@ -143,17 +156,8 @@ class DogDetector:
     # -- helpers -----------------------------------------------------------------------------
 
     def crop(self, frame: np.ndarray, bbox: BBox, pad: float | None = None) -> tuple[np.ndarray, tuple[int, int]]:
-        """Crop the bbox padded by `pad` (fraction of its size per side), clipped to the frame.
-
-        Returns (crop, (ox, oy)): add (ox, oy) to crop coords to get full-frame pixels.
-        """
-        pad = self.pad if pad is None else pad
-        h, w = frame.shape[:2]
-        x1, y1, x2, y2 = bbox
-        px, py = (x2 - x1) * pad, (y2 - y1) * pad
-        cx1, cy1 = max(0, int(np.floor(x1 - px))), max(0, int(np.floor(y1 - py)))
-        cx2, cy2 = min(w, int(np.ceil(x2 + px))), min(h, int(np.ceil(y2 + py)))
-        return frame[cy1:cy2, cx1:cx2], (cx1, cy1)
+        """Padded crop of `bbox` (see `crop_padded`); `pad` defaults to the configured crop_pad."""
+        return crop_padded(frame, bbox, self.pad if pad is None else pad)
 
     def latency_stats(self) -> dict[str, float]:
         """Mean and p95 detect() latency in ms over the last 200 calls."""
@@ -189,6 +193,7 @@ def main(argv: list[str] | None = None) -> None:
     import yaml
 
     from backend.sources import MediaSources
+    from backend.vision.videoio import DebugVideoWriter
 
     p = argparse.ArgumentParser(description="Run dog detection on a clip and write an annotated video.")
     p.add_argument("--config", default="config.yaml")
@@ -209,8 +214,7 @@ def main(argv: list[str] | None = None) -> None:
             found += d is not None
             annotated = draw_debug(frame, d, det.zone, det.latencies_ms[-1] if det.latencies_ms else det.first_call_ms or 0.0)
             if writer is None:
-                h, w = annotated.shape[:2]
-                writer = cv2.VideoWriter(args.out, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+                writer = DebugVideoWriter(args.out, fps)
             writer.write(annotated)
     if writer is not None:
         writer.release()

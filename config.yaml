@@ -24,6 +24,11 @@ data:
     ema_reset_misses: 8        # frames without a dog before smoothing restarts
     crop_pad: 0.15             # crop padding per side, fraction of bbox size
     zone_anchor: bottom_center # bottom_center | center: bbox point tested against feeding_zone
+  pose:
+    superanimal: superanimal_quadruped   # DeepLabCut model zoo dataset name
+    model: hrnet_w32                     # weights auto-download once into the deeplabcut package, then offline
+    device: auto                         # auto (MPS if available, else CPU) | mps | cpu
+    crop_pad: 0.15                       # padding around the dog bbox before pose, fraction per side
   # Rules thresholds; tuned in Step 11.
   rules:
     window_s: 3.0

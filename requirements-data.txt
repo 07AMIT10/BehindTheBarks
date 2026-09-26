@@ -14,3 +14,5 @@ tf-keras==2.21.0
 torch==2.14.0
 torchvision==0.29.0
 ultralytics==8.4.163
+# Body pose (Step 4): DeepLabCut SuperAnimal-Quadruped. Pulls opencv-python-headless next to opencv-python (cv2 still imports fine).
+deeplabcut==3.0.2
