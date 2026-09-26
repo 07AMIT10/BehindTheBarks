@@ -1,0 +1,1 @@
+"""Dog Emotion Monitor backend."""

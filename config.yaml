@@ -1,0 +1,33 @@
+# Shared config. Person B owns this file; Person A's data section is below.
+# Person B: merge your sections (LLM, notify, demo_mode, cooldowns) alongside, don't replace.
+
+data:
+  source:
+    type: file            # webcam | stream | file
+    path: null            # video path (file) or URL (stream)
+    device: 0             # webcam device index
+    audio: null           # optional audio override path (file mode) or null for mic/embedded track
+    loop: false
+  fps: 8
+  keypoint_conf_threshold: 0.3
+  # Feeding zone polygon in normalised (0..1) image coords, clockwise from top-left.
+  feeding_zone:
+    - [0.2, 0.4]
+    - [0.8, 0.4]
+    - [0.8, 0.95]
+    - [0.2, 0.95]
+  # Rules thresholds; tuned in Step 11.
+  rules:
+    window_s: 3.0
+    hysteresis_s: 1.5
+    no_dog_unknown_s: 2.0
+    disinterested_s: 8.0
+    aggressive_max_conf_without_growl: 0.5
+    thresholds:
+      tail_high: 0.3
+      tail_low: -0.3
+      wag_fast_hz: 3.0
+      motion_high: 0.6
+      motion_low: 0.15
+      body_lowering_high: 0.5
+      mouth_open: 0.4

@@ -1,0 +1,16 @@
+# Data-side dependencies (Person A). Python 3.11, macOS arm64. Generated from a verified venv.
+# setuptools<81 is required: tensorflow-hub 0.16 imports pkg_resources, removed in newer setuptools.
+numpy==2.4.6
+opencv-python==5.0.0.93
+pydantic==2.13.5
+pytest==9.1.1
+pyyaml==6.0.3
+scipy==1.17.1
+setuptools==80.10.2
+sounddevice==0.5.6
+tensorflow==2.21.0
+tensorflow-hub==0.16.1
+tf-keras==2.21.0
+torch==2.14.0
+torchvision==0.29.0
+ultralytics==8.4.163
