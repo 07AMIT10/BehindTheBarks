@@ -3,7 +3,7 @@
 
 data:
   source:
-    type: file            # browser (phone, pushed via Pipeline.ingest_*) | webcam | stream | file
+    type: browser         # browser (phone, pushed via Pipeline.ingest_*) | webcam | stream | file
     path: null            # video path (file) or URL (stream)
     device: 0             # webcam device index
     audio: null           # optional audio override path (file mode) or null for mic/embedded track
@@ -126,7 +126,7 @@ data:
 
 # ---------------------------------------------------------------- Person B (Web)
 web:
-  pipeline: mock              # mock | real
+  pipeline: real              # mock | real
   log_dir: out
   ws:
     frame_fps: 8              # max frame messages/s per client
