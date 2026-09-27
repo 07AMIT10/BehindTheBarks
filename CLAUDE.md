@@ -255,8 +255,10 @@ make dev-backend            # uvicorn backend.main:app --reload --port 8000 (web
 make test-web               # pytest tests/web
 python scripts/llm_smoke_test.py [frame.jpg]   # one real LLM call (reads .env)
 python scripts/telegram_test.py                # one test photo to Telegram
-# frontend
-cd frontend && npm run dev
+# frontend (Next.js 16; first time: cd frontend && npm install)
+make dev-frontend           # http://localhost:3000 (backend URL: ?backend=… or NEXT_PUBLIC_BACKEND_URL)
+make test-frontend          # vitest + typecheck + lint
+python scripts/gen_ts_types.py   # after changing backend/contracts.py
 # HTTPS for the phone camera (one quick tunnel per port)
 cloudflared tunnel --url http://localhost:3000
 cloudflared tunnel --url http://localhost:8000
