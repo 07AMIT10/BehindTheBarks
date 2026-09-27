@@ -1,11 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ClipMeta } from "@/lib/demo";
 import { phoneNotice } from "@/lib/phone";
 import { serverNow } from "@/lib/store";
 import { spanAt } from "@/lib/timeline";
 import { useBackend } from "@/lib/useBackend";
 import { useNow } from "@/lib/useNow";
+import ClipList from "./ClipList";
+import DemoBanner from "./DemoBanner";
+import DemoPlayer from "./DemoPlayer";
 import EmotionCard from "./EmotionCard";
 import Header from "./Header";
 import NotificationsBell from "./NotificationsBell";
@@ -33,6 +37,9 @@ export default function Dashboard() {
 
   const [treatFlash, setTreatFlash] = useState(false);
   const [selectedSpan, setSelectedSpan] = useState<number | null>(null);
+  const [demoClip, setDemoClip] = useState<ClipMeta | null>(null);
+  const mode = state.status?.mode ?? "live";
+  const demo = mode === "demo";
   const viewMoment = useCallback((ts: number) => {
     const i = spanAt(state.spans, ts);
     if (i >= 0) setSelectedSpan(i);
@@ -48,14 +55,16 @@ export default function Dashboard() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() !== "t" || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      onTreat();
+      const k = e.key.toLowerCase();
+      if (k === "d") { void setMode(demo ? "live" : "demo"); return; }
+      if (k === "t" && !demo) onTreat();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onTreat]);
+  }, [onTreat, demo, setMode]);
 
   return (
     <div className={projector ? "projector" : undefined}>
@@ -68,32 +77,48 @@ export default function Dashboard() {
           status={state.status} onMode={(m) => void setMode(m)} />
         <SystemNotice connected={state.connected} everConnected={state.everConnected} reconnectAttempt={state.reconnectAttempt}
           status={state.status} lastFrameTs={state.frame?.ts ?? null} onDemo={() => void setMode("demo")} />
-        <div className="grid gap-4 [grid-template-areas:'card'_'video'_'signals'] lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:grid-rows-[auto_auto_1fr] lg:gap-6 lg:[grid-template-areas:'video_card'_'video_treat'_'video_signals']">
-          <div className="min-h-[216px] [grid-area:video] lg:min-h-[480px]">
-            <VideoPanel http={backend.http} frame={state.frame} nowSec={nowSec} location={profile.location}
-              paused={paused} lastDogTs={state.lastDogTs} />
+        {demo && <DemoBanner onGoLive={() => void setMode("live")} />}
+        {demo ? (
+          <>
+            <ClipList http={backend.http} activeId={demoClip?.id ?? null} onPick={setDemoClip} />
+            {demoClip ? (
+              <DemoPlayer http={backend.http} meta={demoClip} dogName={profile.dog_name} />
+            ) : (
+              <div className="text-small text-muted">Pick a clip to replay it through the full pipeline.</div>
+            )}
+          </>
+        ) : (
+          <>
+          <div className="grid gap-4 [grid-template-areas:'card'_'video'_'signals'] lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:grid-rows-[auto_auto_1fr] lg:gap-6 lg:[grid-template-areas:'video_card'_'video_treat'_'video_signals']">
+            <div className="min-h-[216px] [grid-area:video] lg:min-h-[480px]">
+              <VideoPanel http={backend.http} frame={state.frame} nowSec={nowSec} location={profile.location}
+                paused={paused} lastDogTs={state.lastDogTs} />
+            </div>
+            <div className="[grid-area:card]">
+              <EmotionCard current={state.current} currentSince={state.currentSince} lastEmotionAt={state.lastEmotionAt}
+                nowMs={nowMs} nowSec={nowSec} paused={paused} projector={projector} dogName={profile.dog_name}
+                lastDogTs={state.lastDogTs} lastSeenEmotion={lastSeenEmotion} />
+            </div>
+            <div className="hidden [grid-area:treat] lg:block">
+              <TreatButton onTreat={onTreat} flash={treatFlash} />
+            </div>
+            <div className="[grid-area:signals]">
+              <SignalsPanel history={state.history} defaultOpen={!projector} />
+            </div>
           </div>
-          <div className="[grid-area:card]">
-            <EmotionCard current={state.current} currentSince={state.currentSince} lastEmotionAt={state.lastEmotionAt}
-              nowMs={nowMs} nowSec={nowSec} paused={paused} projector={projector} dogName={profile.dog_name}
-              lastDogTs={state.lastDogTs} lastSeenEmotion={lastSeenEmotion} />
+          <div id="timeline">
+            <Timeline spans={state.spans} audio={state.audio} treats={state.treats} notifications={state.notifications}
+              nowSec={nowSec} selected={selectedSpan} onSelect={setSelectedSpan} />
           </div>
-          <div className="hidden [grid-area:treat] lg:block">
-            <TreatButton onTreat={onTreat} flash={treatFlash} />
-          </div>
-          <div className="[grid-area:signals]">
-            <SignalsPanel history={state.history} defaultOpen={!projector} />
-          </div>
-        </div>
-        <div id="timeline">
-          <Timeline spans={state.spans} audio={state.audio} treats={state.treats} notifications={state.notifications}
-            nowSec={nowSec} selected={selectedSpan} onSelect={setSelectedSpan} />
-        </div>
+          </>
+        )}
       </div>
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-bg/90 p-3 backdrop-blur lg:hidden"
-        style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}>
-        <TreatButton onTreat={onTreat} flash={treatFlash} />
-      </div>
+      {!demo && (
+        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-bg/90 p-3 backdrop-blur lg:hidden"
+          style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}>
+          <TreatButton onTreat={onTreat} flash={treatFlash} />
+        </div>
+      )}
       <ToastStack toasts={state.toasts} onDismiss={backend.dismissToast} onView={viewMoment} />
     </div>
   );
