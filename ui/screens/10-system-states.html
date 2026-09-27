@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Claude Pet · System states</title>
+
+</head>
+<body>
+<x-dc>
+
+<div style="width: 1440px; height: 1600px; box-sizing: border-box; padding: 48px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(3, minmax(0, 1fr)); gap: 32px; background: #F6F5F1; color: #17181A; font-family: 'Hanken Grotesk', ui-sans-serif, system-ui, sans-serif">
+
+<!-- 1 Connecting / reconnecting -->
+<section style="display: flex; flex-direction: column; gap: 14px; min-height: 0">
+<div style="display: flex; flex-direction: column; gap: 4px"><div style="font-size: 20px; font-weight: 700">Connecting / reconnecting</div><div style="font-size: 14px; color: #5E6168">Readings pause and the last one is held, greyed. First connect uses the same panel.</div></div>
+<div role="status" style="display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 14px; border-radius: 10px; background: #FFFFFF; border: 1px solid #E4E2DB; font-size: 13px; color: #3E4146">
+<svg width="16" height="16" sc-camel-view-box="0 0 24 24" fill="none" stroke="#0B7A83" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9"></path></svg>
+<span style="font-weight: 600; color: #17181A">Reconnecting to camera</span><span>attempt 2 of 5</span><span style="flex-grow: 1"></span><span style="font-family: 'IBM Plex Mono', ui-monospace, monospace; color: #5E6168">last frame 18:31:04</span>
+</div>
+<div style="flex-grow: 1; display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 14px; min-height: 0">
+<div style="position: relative; border-radius: 14px; background: #1B1D1F; overflow: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: #ECEDEE; text-align: center; padding: 20px">
+<div style="position: absolute; inset: 0; background: #2B2E31; opacity: .35"></div>
+<svg width="32" height="32" sc-camel-view-box="0 0 24 24" fill="none" stroke="#7FE3E8" stroke-width="2" stroke-linecap="round" aria-hidden="true" style="position: relative"><path d="M21 12a9 9 0 1 1-9-9"></path></svg>
+<div style="position: relative; font-size: 16px; font-weight: 600">Reconnecting…</div>
+<div style="position: relative; font-size: 13px; line-height: 1.45; color: #C9CCD0; max-width: 260px">The camera phone dropped off Wi‑Fi. Keep it on and near the router.</div>
+</div>
+<div style="border-radius: 14px; background: #FFFFFF; border: 1px solid #E4E2DB; padding: 18px; display: flex; flex-direction: column; gap: 12px">
+<div style="font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #5E6168">Paused · last reading</div>
+<div style="display: flex; align-items: center; gap: 12px; opacity: .55">
+<svg width="36" height="36" sc-camel-view-box="0 0 24 24" fill="none" stroke="#5E6168" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0z"></path><path d="M7.5 10c.5-1 2.5-1 3 0"></path><path d="M13.5 10c.5-1 2.5-1 3 0"></path><path d="M8 13.5h8c0 2.2-1.8 4-4 4s-4-1.8-4-4z"></path></svg>
+<div style="font-size: 32px; font-weight: 700; letter-spacing: -0.02em; color: #3E4146">Excited</div>
+</div>
+<div style="height: 8px; border-radius: 4px; background: #ECEAE4"><div style="width: 86%; height: 100%; border-radius: 4px; background: #BDBFC3"></div></div>
+<div style="font-size: 13px; color: #5E6168">Held since 18:31:04</div>
+</div>
+</div>
+</section>
+
+<!-- 2 No dog in view -->
+<section style="display: flex; flex-direction: column; gap: 14px; min-height: 0">
+<div style="display: flex; flex-direction: column; gap: 4px"><div style="font-size: 20px; font-weight: 700">No dog in view</div><div style="font-size: 14px; color: #5E6168">Not an error. Timeline shows a grey “not in view” gap; no alert is sent.</div></div>
+<div style="flex-grow: 1; display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 14px; min-height: 0">
+<div style="position: relative; border-radius: 14px; background: #1B1D1F; overflow: hidden">
+<svg sc-camel-view-box="420 180 520 300" sc-camel-preserve-aspect-ratio="xMidYMid slice" style="position: absolute; inset: 0; width: 100%; height: 100%" aria-hidden="true">
+<rect x="-2000" y="-2000" width="5000" height="2330" fill="#2B2E31"></rect><rect x="-2000" y="330" width="5000" height="2700" fill="#3A3733"></rect><rect x="-2000" y="322" width="5000" height="10" fill="#33363A"></rect>
+<rect x="700" y="398" width="160" height="44" rx="6" fill="#343E3D"></rect><ellipse cx="778" cy="416" rx="46" ry="12" fill="#707679"></ellipse><ellipse cx="778" cy="412" rx="36" ry="7" fill="#3F4448"></ellipse>
+<rect x="470" y="220" width="420" height="240" rx="14" fill="none" stroke="#7FE3E8" stroke-width="2" stroke-dasharray="10 8" stroke-opacity=".6"></rect>
+</svg>
+<div style="position: absolute; top: 14px; left: 14px; height: 28px; padding: 0 10px; border-radius: 8px; background: rgba(15,17,19,.78); color: #ECEDEE; font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 6px">No dog in view<span style="color: #A0A5AD; font-weight: 400">· 6 min</span></div>
+</div>
+<div style="border-radius: 14px; background: #FFFFFF; border: 1px solid #E4E2DB; padding: 18px; display: flex; flex-direction: column; gap: 12px">
+<div style="font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #5E6168">Right now</div>
+<div style="width: 56px; height: 56px; border-radius: 14px; background: #ECEDEF; display: flex; align-items: center; justify-content: center"><svg width="34" height="34" sc-camel-view-box="0 0 24 24" fill="none" stroke="#5D6168" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0z" stroke-dasharray="2.2 2.4"></path><path d="M9.8 9.5a2.3 2.3 0 1 1 3.3 2.1c-.7.3-1.1.9-1.1 1.6v.3"></path><path d="M12 16.5h.01"></path></svg></div>
+<div style="font-size: 26px; font-weight: 700; letter-spacing: -0.015em">No dog in view</div>
+<div style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: #5E6168">Last seen 18:24 ·<svg width="16" height="16" sc-camel-view-box="0 0 24 24" fill="none" stroke="#1E7148" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0z"></path><path d="M7.5 10c.5 1 2.5 1 3 0"></path><path d="M13.5 10c.5 1 2.5 1 3 0"></path><path d="M9 15c.8.8 1.8 1.2 3 1.2s2.2-.4 3-1.2"></path></svg><span style="color: #1E7148; font-weight: 600">Relaxed</span></div>
+</div>
+</div>
+</section>
+
+<!-- 3 AI offline -->
+<section style="display: flex; flex-direction: column; gap: 14px; min-height: 0">
+<div style="display: flex; flex-direction: column; gap: 4px"><div style="font-size: 20px; font-weight: 700">AI offline · rules only</div><div style="font-size: 14px; color: #5E6168">Quiet: a neutral badge and one line. Readings continue from pose and audio rules.</div></div>
+<div role="status" style="display: flex; align-items: center; gap: 18px; height: 40px; padding: 0 14px; border-radius: 10px; background: #FFFFFF; border: 1px solid #E4E2DB; font-size: 13px; color: #5E6168">
+<span style="display: flex; align-items: center; gap: 8px; color: #17181A; font-weight: 600"><span style="width: 8px; height: 8px; border-radius: 4px; background: #0B7A83"></span>Connected</span>
+<span style="font-family: 'IBM Plex Mono', ui-monospace, monospace">24 fps</span>
+<span style="display: flex; align-items: center; gap: 8px"><span style="width: 8px; height: 8px; border-radius: 4px; border: 1.5px solid #5E6168; box-sizing: border-box"></span>AI offline · rules only</span>
+</div>
+<div style="flex-grow: 1; position: relative; overflow: hidden; border-radius: 14px; background: #FFFFFF; border: 1px solid #E4E2DB; display: flex; flex-direction: column">
+<div style="position: absolute; top: 0; left: 0; right: 0; height: 4px; background: #2F9461"></div>
+<div style="padding: 22px 22px 16px; display: flex; flex-direction: column; gap: 14px; flex-grow: 1">
+<div style="display: flex; align-items: center; gap: 10px">
+<div style="font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #5E6168">Right now</div><div style="flex-grow: 1"></div>
+<div style="display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 13px; background: #F1EFEA; color: #3E4146; font-size: 12px; font-weight: 700"><svg width="14" height="14" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"></path></svg>Rules</div>
+<div style="font-size: 12px; color: #5E6168; font-family: 'IBM Plex Mono', ui-monospace, monospace">updated 2s ago</div>
+</div>
+<div style="display: flex; align-items: center; gap: 16px">
+<div style="width: 64px; height: 64px; border-radius: 16px; background: #DDF1E6; display: flex; align-items: center; justify-content: center"><svg width="40" height="40" sc-camel-view-box="0 0 24 24" fill="none" stroke="#1E7148" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0z"></path><path d="M7.5 10c.5 1 2.5 1 3 0"></path><path d="M13.5 10c.5 1 2.5 1 3 0"></path><path d="M9 15c.8.8 1.8 1.2 3 1.2s2.2-.4 3-1.2"></path></svg></div>
+<div style="font-size: 44px; line-height: 1; font-weight: 700; letter-spacing: -0.025em; color: #1E7148">Relaxed</div>
+<div style="flex-grow: 1"></div>
+<div style="display: flex; flex-direction: column; gap: 6px; width: 140px"><div style="display: flex; justify-content: space-between; font-size: 12px"><span style="color: #5E6168; font-weight: 600">Confidence</span><span style="font-family: 'IBM Plex Mono', ui-monospace, monospace">64%</span></div><div style="height: 8px; border-radius: 4px; background: #ECEAE4"><div style="width: 64%; height: 100%; border-radius: 4px; background: #2F9461"></div></div></div>
+</div>
+<div style="font-size: 15px; line-height: 1.45">Tail at mid height, loose posture, low motion energy.</div>
+</div>
+<div style="display: flex; align-items: center; gap: 10px; padding: 12px 22px; background: #F1EFEA; font-size: 13px; color: #3E4146">
+<svg width="16" height="16" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0z"></path><path d="M12 11v5M12 8h.01"></path></svg>
+AI is unreachable, so readings come from rules and may be less nuanced. Retrying in 20 s.
+</div>
+</div>
+</section>
+
+<!-- 4 Demo mode -->
+<section style="display: flex; flex-direction: column; gap: 14px; min-height: 0">
+<div style="display: flex; flex-direction: column; gap: 4px"><div style="font-size: 20px; font-weight: 700">Demo mode</div><div style="font-size: 14px; color: #5E6168">Persistent banner so nobody mistakes a clip for live. Pick a clip to replay through the full pipeline.</div></div>
+<div role="status" style="display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 16px; border-radius: 12px; background: #E0F0F1; color: #075960">
+<svg width="18" height="18" sc-camel-view-box="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"></path></svg>
+<div style="font-size: 14px; font-weight: 700">Demo mode</div><div style="font-size: 14px">Playing a recorded clip, not the live camera</div>
+<div style="flex-grow: 1"></div>
+<button style="height: 36px; padding: 0 14px; border-radius: 9px; border: 1px solid #0B7A83; background: #FFFFFF; color: #075960; font: 700 13px 'Hanken Grotesk', sans-serif">Go live</button>
+</div>
+<div role="listbox" aria-label="Demo clips" style="flex-grow: 1; border-radius: 14px; background: #FFFFFF; border: 1px solid #E4E2DB; display: flex; flex-direction: column; overflow: hidden">
+<sc-for list="{{clips}}" as="c" hint-placeholder-count="6">
+<div role="option" aria-selected="{{c.on}}" style="position: relative; display: flex; align-items: center; gap: 12px; height: 48px; padding: 0 16px; border-bottom: 1px solid #F1EFEA; background: {{c.bg}}">
+<svg width="20" height="20" sc-camel-view-box="0 0 24 24" fill="none" stroke="{{c.fg}}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0z"></path><path d="{{c.a}}"></path><path d="{{c.b}}"></path><path d="{{c.c}}"></path></svg>
+<div style="font-size: 14px; font-weight: 600; flex-grow: 1">{{c.name}}</div>
+<div style="font-size: 12px; font-weight: 600; color: {{c.fg}}">{{c.label}}</div>
+<div style="width: 44px; text-align: right; font-size: 12px; color: #5E6168; font-family: 'IBM Plex Mono', ui-monospace, monospace">{{c.dur}}</div>
+<div style="position: absolute; left: 0; bottom: 0; height: 2px; width: {{c.prog}}; background: #0B7A83"></div>
+</div>
+</sc-for>
+</div>
+</section>
+
+<!-- 5 Permission denied -->
+<section style="display: flex; flex-direction: column; gap: 14px; min-height: 0">
+<div style="display: flex; flex-direction: column; gap: 4px"><div style="font-size: 20px; font-weight: 700">Camera or microphone blocked</div><div style="font-size: 14px; color: #5E6168">Neutral, with a fix and a fallback. The rest of the dashboard keeps working.</div></div>
+<div style="flex-grow: 1; border-radius: 14px; background: #FFFFFF; border: 1px solid #E4E2DB; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; padding: 24px">
+<div style="width: 56px; height: 56px; border-radius: 16px; background: #F1EFEA; display: flex; align-items: center; justify-content: center"><svg width="28" height="28" sc-camel-view-box="0 0 24 24" fill="none" stroke="#3E4146" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8a2 2 0 0 1 2-2h2l1.5-2h7L17 6h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><path d="M15 12.5a3 3 0 1 1-6 0a3 3 0 0 1 6 0z"></path><path d="M3 3l18 18"></path></svg></div>
+<div style="font-size: 18px; font-weight: 700">Camera blocked on the camera phone</div>
+<div style="font-size: 14px; line-height: 1.45; color: #5E6168; max-width: 380px">Open Claude Pet on that phone and allow camera access, or play a demo clip instead.</div>
+<div style="display: flex; gap: 10px">
+<button style="height: 44px; padding: 0 16px; border-radius: 10px; border: 0; background: #0B7A83; color: #FFFFFF; font: 700 14px 'Hanken Grotesk', sans-serif">How to fix</button>
+<button style="height: 44px; padding: 0 16px; border-radius: 10px; border: 1px solid #E4E2DB; background: #FFFFFF; color: #17181A; font: 600 14px 'Hanken Grotesk', sans-serif">Use a demo clip</button>
+</div>
+</div>
+<div style="display: flex; align-items: center; gap: 12px; height: 52px; padding: 0 8px 0 16px; border-radius: 12px; background: #FFFFFF; border: 1px dashed #BDBFC3">
+<svg width="18" height="18" sc-camel-view-box="0 0 24 24" fill="none" stroke="#3E4146" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M3 3l18 18"></path></svg>
+<div style="font-size: 14px; font-weight: 600">Microphone off</div>
+<div style="font-size: 13px; color: #5E6168; flex-grow: 1">Vocalisations aren’t analysed · audio strip hidden</div>
+<button style="height: 36px; padding: 0 12px; border-radius: 8px; border: 1px solid #E4E2DB; background: #FFFFFF; color: #17181A; font: 600 13px 'Hanken Grotesk', sans-serif">Enable</button>
+</div>
+</section>
+
+<!-- 6 First load / empty timeline -->
+<section style="display: flex; flex-direction: column; gap: 14px; min-height: 0">
+<div style="display: flex; flex-direction: column; gap: 4px"><div style="font-size: 20px; font-weight: 700">First load · empty timeline</div><div style="font-size: 14px; color: #5E6168">Explains what will appear and the one action worth knowing.</div></div>
+<div style="border-radius: 14px; background: #FFFFFF; border: 1px solid #E4E2DB; padding: 20px; display: flex; align-items: center; gap: 16px">
+<div style="width: 64px; height: 64px; flex-shrink: 0; border-radius: 16px; background: #ECEDEF; display: flex; align-items: center; justify-content: center"><svg width="38" height="38" sc-camel-view-box="0 0 24 24" fill="none" stroke="#5D6168" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0z" stroke-dasharray="2.2 2.4"></path><path d="M9.8 9.5a2.3 2.3 0 1 1 3.3 2.1c-.7.3-1.1.9-1.1 1.6v.3"></path><path d="M12 16.5h.01"></path></svg></div>
+<div style="display: flex; flex-direction: column; gap: 4px"><div style="font-size: 26px; font-weight: 700; letter-spacing: -0.015em">Waiting for Bruno</div><div style="font-size: 14px; color: #5E6168">Readings start when a dog enters the feeding zone.</div></div>
+</div>
+<div style="flex-grow: 1; border-radius: 14px; background: #FFFFFF; border: 1px solid #E4E2DB; padding: 20px; display: flex; flex-direction: column; gap: 12px">
+<div style="display: flex; align-items: baseline; gap: 12px"><div style="font-size: 16px; font-weight: 600">Session timeline</div><div style="font-size: 13px; color: #5E6168; font-family: 'IBM Plex Mono', ui-monospace, monospace">18:30 – now</div></div>
+<div style="flex-grow: 1; border-radius: 10px; border: 1.5px dashed #D6D4CD; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; text-align: center; padding: 16px">
+<div style="font-size: 15px; font-weight: 600">The timeline fills in as readings arrive</div>
+<div style="font-size: 13px; color: #5E6168">Press <span style="font-weight: 700; color: #075960">Treat dropped</span> to mark a moment and watch the response.</div>
+</div>
+<div style="display: flex; justify-content: space-between; font-size: 11px; color: #5E6168; font-family: 'IBM Plex Mono', ui-monospace, monospace"><span>18:30</span><span>18:35</span><span>18:40</span><span>18:45</span><span>18:50</span><span>18:55</span><span>19:00</span></div>
+</div>
+</section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:1600}}">
+var D = 'M8.6 10a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0M14.6 10a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0';
+var CL = [
+  ['Treat drop', 'Excited', '#A84A10', '0:42', 'M7.5 10c.5-1 2.5-1 3 0', 'M13.5 10c.5-1 2.5-1 3 0', 'M8 13.5h8c0 2.2-1.8 4-4 4s-4-1.8-4-4z'],
+  ['Doorbell rings', 'Anxious', '#85389F', '0:35', D, 'M7.5 8.5l2.5-1M16.5 8.5l-2.5-1', 'M8 16c.7-.8 1.3-.8 2 0s1.3.8 2 0 1.3-.8 2 0 1.3.8 2 0'],
+  ['Thunderclap', 'Fearful', '#3A4DB8', '0:50', 'M8.6 10.5a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0M14.6 10.5a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0', 'M7.5 7.5c.7-.7 2-.7 2.5 0M14 7.5c.5-.7 1.8-.7 2.5 0', 'M13.5 16a1.5 1.5 0 1 1-3 0a1.5 1.5 0 0 1 3 0z'],
+  ['Stranger at the door', 'Aggressive', '#B02E2E', '0:28', 'M8.6 11a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0M14.6 11a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0', 'M7.5 8l2.5 1.5M16.5 8l-2.5 1.5', 'M8.5 16.2c1-.8 2.2-1.2 3.5-1.2s2.5.4 3.5 1.2'],
+  ['After a long walk', 'Relaxed', '#1E7148', '1:10', 'M7.5 10c.5 1 2.5 1 3 0', 'M13.5 10c.5 1 2.5 1 3 0', 'M9 15c.8.8 1.8 1.2 3 1.2s2.2-.4 3-1.2'],
+  ['Full bowl, ignored', 'Disinterested', '#66643E', '0:40', 'M8 10.5h2.5M13.5 10.5H16', '', 'M9.5 15.5h5']
+];
+class Component extends DCLogic {
+  renderVals() {
+    return { clips: CL.map(function (c, i) { return { name: c[0], label: c[1], fg: c[2], dur: c[3], a: c[4], b: c[5], c: c[6], on: i === 0, bg: i === 0 ? '#F4F9F9' : '#FFFFFF', prog: i === 0 ? '38%' : '0%' }; }) };
+  }
+}
+</script>
+
+
+</body></html>

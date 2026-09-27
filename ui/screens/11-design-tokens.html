@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Claude Pet · Design tokens</title>
+
+</head>
+<body>
+<x-dc>
+
+<div style="width: 1440px; height: 2400px; box-sizing: border-box; padding: 64px; display: flex; flex-direction: column; gap: 48px; background: #F6F5F1; color: #17181A; font-family: 'Hanken Grotesk', ui-sans-serif, system-ui, sans-serif">
+<div style="display: flex; flex-direction: column; gap: 8px"><h1 style="margin: 0; font-size: 40px; font-weight: 700; letter-spacing: -0.02em">Claude Pet tokens</h1><div style="font-size: 16px; color: #5E6168">Every colour ships with an icon and a label. Solid for bars and spans, fg for text and icons, tint for fills behind them.</div></div>
+
+<!-- Emotion palette -->
+<section style="display: flex; flex-direction: column; gap: 16px">
+<div style="font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #5E6168">Emotion palette</div>
+<div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); border-radius: 16px; overflow: hidden; border: 1px solid #E4E2DB">
+<div style="background: #FFFFFF; padding: 20px 24px; display: flex; flex-direction: column">
+<div style="display: grid; grid-template-columns: 200px repeat(3, minmax(0, 1fr)); gap: 12px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #5E6168; padding-bottom: 10px"><span>Light</span><span>solid</span><span>fg · 4.5:1+</span><span>tint</span></div>
+<sc-for list="{{emos}}" as="e" hint-placeholder-count="8">
+<div style="display: grid; grid-template-columns: 200px repeat(3, minmax(0, 1fr)); gap: 12px; align-items: center; height: 60px; border-top: 1px solid #F1EFEA">
+<div style="display: flex; align-items: center; gap: 10px"><span style="width: 36px; height: 36px; border-radius: 10px; background: {{e.lt}}; display: flex; align-items: center; justify-content: center"><svg width="22" height="22" sc-camel-view-box="0 0 24 24" fill="none" stroke="{{e.lf}}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0z" stroke-dasharray="{{e.dash}}"></path><path d="{{e.a}}"></path><path d="{{e.b}}"></path><path d="{{e.c}}"></path></svg></span><span style="font-size: 15px; font-weight: 700; color: {{e.lf}}">{{e.label}}</span></div>
+<div style="display: flex; align-items: center; gap: 8px"><span style="width: 28px; height: 28px; border-radius: 7px; background: {{e.ls}}"></span><span style="font: 12px 'IBM Plex Mono', monospace">{{e.ls}}</span></div>
+<div style="display: flex; align-items: center; gap: 8px"><span style="width: 28px; height: 28px; border-radius: 7px; background: {{e.lf}}"></span><span style="font: 12px 'IBM Plex Mono', monospace">{{e.lf}}</span></div>
+<div style="display: flex; align-items: center; gap: 8px"><span style="width: 28px; height: 28px; border-radius: 7px; background: {{e.lt}}; box-shadow: inset 0 0 0 1px rgba(0,0,0,.06)"></span><span style="font: 12px 'IBM Plex Mono', monospace">{{e.lt}}</span></div>
+</div>
+</sc-for>
+</div>
+<div style="background: #171A1D; color: #ECEDEE; padding: 20px 24px; display: flex; flex-direction: column">
+<div style="display: grid; grid-template-columns: 200px repeat(3, minmax(0, 1fr)); gap: 12px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #A0A5AD; padding-bottom: 10px"><span>Dark</span><span>solid</span><span>fg · 4.5:1+</span><span>tint</span></div>
+<sc-for list="{{emos}}" as="e" hint-placeholder-count="8">
+<div style="display: grid; grid-template-columns: 200px repeat(3, minmax(0, 1fr)); gap: 12px; align-items: center; height: 60px; border-top: 1px solid #22262A">
+<div style="display: flex; align-items: center; gap: 10px"><span style="width: 36px; height: 36px; border-radius: 10px; background: {{e.dt}}; display: flex; align-items: center; justify-content: center"><svg width="22" height="22" sc-camel-view-box="0 0 24 24" fill="none" stroke="{{e.df}}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0z" stroke-dasharray="{{e.dash}}"></path><path d="{{e.a}}"></path><path d="{{e.b}}"></path><path d="{{e.c}}"></path></svg></span><span style="font-size: 15px; font-weight: 700; color: {{e.df}}">{{e.label}}</span></div>
+<div style="display: flex; align-items: center; gap: 8px"><span style="width: 28px; height: 28px; border-radius: 7px; background: {{e.ds}}"></span><span style="font: 12px 'IBM Plex Mono', monospace">{{e.ds}}</span></div>
+<div style="display: flex; align-items: center; gap: 8px"><span style="width: 28px; height: 28px; border-radius: 7px; background: {{e.df}}"></span><span style="font: 12px 'IBM Plex Mono', monospace">{{e.df}}</span></div>
+<div style="display: flex; align-items: center; gap: 8px"><span style="width: 28px; height: 28px; border-radius: 7px; background: {{e.dt}}; box-shadow: inset 0 0 0 1px rgba(255,255,255,.08)"></span><span style="font: 12px 'IBM Plex Mono', monospace">{{e.dt}}</span></div>
+</div>
+</sc-for>
+</div>
+</div>
+</section>
+
+<!-- Neutrals + accent -->
+<section style="display: flex; flex-direction: column; gap: 16px">
+<div style="font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #5E6168">Neutrals and accent</div>
+<div style="display: grid; grid-template-columns: repeat(11, minmax(0, 1fr)); gap: 10px">
+<sc-for list="{{neutrals}}" as="n" hint-placeholder-count="11">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<div style="height: 44px; border-radius: 10px 10px 0 0; background: {{n.l}}; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08)"></div>
+<div style="height: 44px; margin-top: -6px; border-radius: 0 0 10px 10px; background: {{n.d}}"></div>
+<div style="font-size: 12px; font-weight: 700">{{n.name}}</div>
+<div style="font: 11px/1.4 'IBM Plex Mono', monospace; color: #5E6168">{{n.l}}<br>{{n.d}}</div>
+</div>
+</sc-for>
+</div>
+</section>
+
+<!-- Type + spacing/radii -->
+<section style="display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 48px">
+<div style="display: flex; flex-direction: column; gap: 16px">
+<div style="font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #5E6168">Type scale · Hanken Grotesk + IBM Plex Mono</div>
+<div style="border-radius: 16px; background: #FFFFFF; border: 1px solid #E4E2DB; padding: 8px 24px">
+<sc-for list="{{type}}" as="y" hint-placeholder-count="9">
+<div style="display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: center; gap: 16px; padding: 10px 0; border-bottom: 1px solid #F1EFEA">
+<div style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 13px; font-weight: 700">{{y.name}}</span><span style="font: 11px 'IBM Plex Mono', monospace; color: #5E6168">{{y.spec}}</span></div>
+<div style="font-family: {{y.fam}}; font-size: {{y.size}}px; line-height: {{y.lh}}; font-weight: {{y.w}}; letter-spacing: {{y.ls}}; text-transform: {{y.tt}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{y.sample}}</div>
+</div>
+</sc-for>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 16px">
+<div style="font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #5E6168">Spacing · 4 px base (Tailwind default)</div>
+<div style="border-radius: 16px; background: #FFFFFF; border: 1px solid #E4E2DB; padding: 16px 24px; display: flex; flex-direction: column; gap: 8px">
+<sc-for list="{{space}}" as="s" hint-placeholder-count="9">
+<div style="display: flex; align-items: center; gap: 12px; height: 22px"><span style="width: 72px; font: 12px 'IBM Plex Mono', monospace">{{s.k}}</span><span style="height: 12px; width: {{s.px}}px; border-radius: 3px; background: #0B7A83"></span><span style="font: 12px 'IBM Plex Mono', monospace; color: #5E6168">{{s.px}}px</span></div>
+</sc-for>
+</div>
+<div style="font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #5E6168; margin-top: 8px">Radii · touch target</div>
+<div style="display: flex; gap: 14px; align-items: flex-end">
+<sc-for list="{{radii}}" as="r" hint-placeholder-count="5">
+<div style="display: flex; flex-direction: column; gap: 6px; align-items: center"><div style="width: 60px; height: 60px; border-radius: {{r.px}}px; background: #FFFFFF; border: 1.5px solid #17181A; box-sizing: border-box"></div><span style="font: 11px 'IBM Plex Mono', monospace">{{r.k}} · {{r.px}}</span></div>
+</sc-for>
+<div style="display: flex; flex-direction: column; gap: 6px; align-items: center"><div style="width: 44px; height: 44px; border-radius: 10px; border: 1.5px dashed #0B7A83; box-sizing: border-box"></div><span style="font: 11px 'IBM Plex Mono', monospace">min 44</span></div>
+</div>
+</div>
+</section>
+
+<!-- Tailwind -->
+<section style="display: flex; flex-direction: column; gap: 16px; flex-grow: 1; min-height: 0">
+<div style="display: flex; align-items: baseline; gap: 16px"><div style="font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #5E6168">Tailwind v4 · app/globals.css</div><div style="font-size: 13px; color: #5E6168">Semantic CSS variables flip with the <span style="font-family: 'IBM Plex Mono', monospace">.dark</span> class; use as <span style="font-family: 'IBM Plex Mono', monospace">bg-anxious-tint text-anxious-fg border-anxious</span>.</div></div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; flex-grow: 1; min-height: 0">
+<pre style="margin: 0; padding: 24px; border-radius: 16px; background: #171A1D; color: #D6D8DB; font: 12.5px/1.6 'IBM Plex Mono', ui-monospace, monospace; overflow: hidden; white-space: pre">@import "tailwindcss";
+@custom-variant dark (&amp;:where(.dark, .dark *));
+
+:root {
+  --bg: #F6F5F1;  --surface: #FFFFFF;  --surface-2: #F1EFEA;
+  --border: #E4E2DB;  --track: #ECEAE4;
+  --text: #17181A;  --text-soft: #3E4146;  --muted: #5E6168;
+  --accent: #0B7A83;  --accent-fg: #FFFFFF;
+  --accent-soft: #E0F0F1;  --accent-ink: #075960;
+  /*  emotion: solid / fg / tint  */
+  --happy: #E0A100;  --happy-fg: #8C6400;  --happy-tint: #FBF1D6;
+  --excited: #E4702A;  --excited-fg: #A84A10;  --excited-tint: #FCE8DA;
+  --relaxed: #2F9461;  --relaxed-fg: #1E7148;  --relaxed-tint: #DDF1E6;
+  --anxious: #A04FC0;  --anxious-fg: #85389F;  --anxious-tint: #F3E3F8;
+  --fearful: #4C63D6;  --fearful-fg: #3A4DB8;  --fearful-tint: #E3E7FA;
+  --aggressive: #D13F3F;  --aggressive-fg: #B02E2E;  --aggressive-tint: #FBE1E0;
+  --disinterested: #8C8A5E;  --disinterested-fg: #66643E;  --disinterested-tint: #EEEDE0;
+  --unknown: #8F949B;  --unknown-fg: #5D6168;  --unknown-tint: #ECEDEF;
+}
+
+.dark {
+  --bg: #0F1113;  --surface: #171A1D;  --surface-2: #1E2226;
+  --border: #2A2E33;  --track: #23272B;
+  --text: #ECEDEE;  --text-soft: #C9CCD0;  --muted: #A0A5AD;
+  --accent: #3FB8C1;  --accent-fg: #0F1113;
+  --accent-soft: #16343A;  --accent-ink: #8FDDE3;
+  --happy: #F0B429;  --happy-fg: #F5C451;  --happy-tint: #3A2F12;
+  --excited: #F08A4B;  --excited-fg: #F6A474;  --excited-tint: #3D2618;
+  --relaxed: #4CB981;  --relaxed-fg: #6FCB9B;  --relaxed-tint: #173326;
+  --anxious: #C27BDD;  --anxious-fg: #D19BE6;  --anxious-tint: #33203B;
+  --fearful: #7C8DF0;  --fearful-fg: #9AA7F4;  --fearful-tint: #202744;
+  --aggressive: #EE6A6A;  --aggressive-fg: #F48E8E;  --aggressive-tint: #3E1D1E;
+  --disinterested: #B4B282;  --disinterested-fg: #C7C59C;  --disinterested-tint: #2E2D22;
+  --unknown: #8E939A;  --unknown-fg: #B1B5BB;  --unknown-tint: #26292D;
+}</pre>
+<pre style="margin: 0; padding: 24px; border-radius: 16px; background: #171A1D; color: #D6D8DB; font: 12.5px/1.6 'IBM Plex Mono', ui-monospace, monospace; overflow: hidden; white-space: pre">@theme inline {
+  --font-sans: "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --color-bg: var(--bg);  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);  --color-border: var(--border);
+  --color-track: var(--track);  --color-text: var(--text);
+  --color-text-soft: var(--text-soft);  --color-muted: var(--muted);
+  --color-accent: var(--accent);  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-ink: var(--accent-ink);
+
+  /* repeat for each emotion: happy excited relaxed anxious
+     fearful aggressive disinterested unknown */
+  --color-happy: var(--happy);
+  --color-happy-fg: var(--happy-fg);
+  --color-happy-tint: var(--happy-tint);
+
+  /* type: size / line-height / weight / tracking */
+  --text-display-xl: 6.5rem;  --text-display-xl--line-height: 1;   /* 104 projector */
+  --text-display: 4rem;       --text-display--line-height: 1;      /* 64 desktop */
+  --text-display-sm: 2.75rem; --text-display-sm--line-height: 1;   /* 44 mobile */
+  --text-title: 1.625rem;     --text-title--line-height: 1.2;      /* 26 */
+  --text-heading: 1.0625rem;  --text-heading--line-height: 1.35;   /* 17 */
+  --text-body: 0.9375rem;     --text-body--line-height: 1.5;       /* 15 */
+  --text-small: 0.8125rem;    --text-small--line-height: 1.45;     /* 13 */
+  --text-micro: 0.6875rem;    --text-micro--line-height: 1.3;      /* 11 caps */
+  --tracking-display: -0.025em;  --tracking-micro: 0.08em;
+
+  --radius-sm: 6px;  --radius-md: 10px;  --radius-lg: 14px;
+  --radius-xl: 16px; --radius-2xl: 20px;
+
+  --shadow-toast: 0 8px 28px rgb(23 24 26 / 0.12);
+}
+
+/* Video overlay (fixed, both themes) */
+:root { --overlay-kp: #7FE3E8; --overlay-face: #F5E6B8;
+        --overlay-scrim: rgb(15 17 19 / 0.72); --live: #FF5A4E; }</pre>
+</div>
+</section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:2400}}">
+var D = 'M8.6 10a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0';
+var DR = 'M14.6 10a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0';
+var E = [
+  ['Happy', '#E0A100', '#8C6400', '#FBF1D6', '#F0B429', '#F5C451', '#3A2F12', D, DR, 'M8 14c1 1.6 2.4 2.4 4 2.4s3-.8 4-2.4'],
+  ['Excited', '#E4702A', '#A84A10', '#FCE8DA', '#F08A4B', '#F6A474', '#3D2618', 'M7.5 10c.5-1 2.5-1 3 0', 'M13.5 10c.5-1 2.5-1 3 0', 'M8 13.5h8c0 2.2-1.8 4-4 4s-4-1.8-4-4z'],
+  ['Relaxed', '#2F9461', '#1E7148', '#DDF1E6', '#4CB981', '#6FCB9B', '#173326', 'M7.5 10c.5 1 2.5 1 3 0', 'M13.5 10c.5 1 2.5 1 3 0', 'M9 15c.8.8 1.8 1.2 3 1.2s2.2-.4 3-1.2'],
+  ['Anxious', '#A04FC0', '#85389F', '#F3E3F8', '#C27BDD', '#D19BE6', '#33203B', D + DR, 'M7.5 8.5l2.5-1M16.5 8.5l-2.5-1', 'M8 16c.7-.8 1.3-.8 2 0s1.3.8 2 0 1.3-.8 2 0 1.3.8 2 0'],
+  ['Fearful', '#4C63D6', '#3A4DB8', '#E3E7FA', '#7C8DF0', '#9AA7F4', '#202744', 'M8.6 10.5a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0M14.6 10.5a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0', 'M7.5 7.5c.7-.7 2-.7 2.5 0M14 7.5c.5-.7 1.8-.7 2.5 0', 'M13.5 16a1.5 1.5 0 1 1-3 0a1.5 1.5 0 0 1 3 0z'],
+  ['Aggressive', '#D13F3F', '#B02E2E', '#FBE1E0', '#EE6A6A', '#F48E8E', '#3E1D1E', 'M8.6 11a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0M14.6 11a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0', 'M7.5 8l2.5 1.5M16.5 8l-2.5 1.5', 'M8.5 16.2c1-.8 2.2-1.2 3.5-1.2s2.5.4 3.5 1.2'],
+  ['Disinterested', '#8C8A5E', '#66643E', '#EEEDE0', '#B4B282', '#C7C59C', '#2E2D22', 'M8 10.5h2.5M13.5 10.5H16', '', 'M9.5 15.5h5'],
+  ['Unknown', '#8F949B', '#5D6168', '#ECEDEF', '#8E939A', '#B1B5BB', '#26292D', 'M9.8 9.5a2.3 2.3 0 1 1 3.3 2.1c-.7.3-1.1.9-1.1 1.6v.3', 'M12 16.5h.01', '']
+];
+var N = [['bg', '#F6F5F1', '#0F1113'], ['surface', '#FFFFFF', '#171A1D'], ['surface-2', '#F1EFEA', '#1E2226'], ['border', '#E4E2DB', '#2A2E33'], ['track', '#ECEAE4', '#23272B'], ['text', '#17181A', '#ECEDEE'], ['text-soft', '#3E4146', '#C9CCD0'], ['muted', '#5E6168', '#A0A5AD'], ['accent', '#0B7A83', '#3FB8C1'], ['accent-soft', '#E0F0F1', '#16343A'], ['accent-ink', '#075960', '#8FDDE3']];
+var SANS = "'Hanken Grotesk', sans-serif", MONO = "'IBM Plex Mono', monospace";
+var T = [
+  ['display-xl', '104 / 1.0 · 700', 104, 1, 700, '-0.025em', 'none', SANS, 'Excited'],
+  ['display', '64 / 1.0 · 700', 64, 1, 700, '-0.025em', 'none', SANS, 'Anxious'],
+  ['display-sm', '44 / 1.0 · 700', 44, 1, 700, '-0.025em', 'none', SANS, 'Relaxed'],
+  ['title', '26 / 1.2 · 700', 26, 1.2, 700, '-0.015em', 'none', SANS, 'Waiting for Bruno'],
+  ['heading', '17 / 1.35 · 600', 17, 1.35, 600, '0', 'none', SANS, 'Session timeline'],
+  ['body', '15 / 1.5 · 400', 15, 1.5, 400, '0', 'none', SANS, 'High, fast tail wag and open mouth as the treat dropped.'],
+  ['small', '13 / 1.45 · 500', 13, 1.45, 500, '0', 'none', SANS, 'since 18:27 · 3 min'],
+  ['micro', '11 / 1.3 · 700 caps', 11, 1.3, 700, '0.08em', 'uppercase', SANS, 'Right now'],
+  ['mono', '13–20 · Plex Mono', 18, 1.3, 500, '0', 'none', MONO, '4.2 Hz · 24 fps · 420 ms']
+];
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      emos: E.map(function (e) { return { label: e[0], ls: e[1], lf: e[2], lt: e[3], ds: e[4], df: e[5], dt: e[6], a: e[7], b: e[8], c: e[9], dash: e[0] === 'Unknown' ? '2.2 2.4' : 'none' }; }),
+      neutrals: N.map(function (n) { return { name: n[0], l: n[1], d: n[2] }; }),
+      type: T.map(function (y) { return { name: y[0], spec: y[1], size: y[2], lh: y[3], w: y[4], ls: y[5], tt: y[6], fam: y[7], sample: y[8] }; }),
+      space: [['1', 4], ['2', 8], ['3', 12], ['4', 16], ['5', 20], ['6', 24], ['8', 32], ['10', 40], ['12', 48]].map(function (s) { return { k: 'p-' + s[0], px: s[1] }; }),
+      radii: [['sm', 6], ['md', 10], ['lg', 14], ['xl', 16], ['2xl', 20]].map(function (r) { return { k: r[0], px: r[1] }; })
+    };
+  }
+}
+</script>
+
+
+</body></html>

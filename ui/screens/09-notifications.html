@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Claude Pet · Notifications</title>
+
+</head>
+<body>
+<x-dc>
+
+<div style="width: 1440px; height: 900px; box-sizing: border-box; padding: 48px; display: grid; grid-template-columns: minmax(0, 1fr) 460px; gap: 48px; background: #F6F5F1; color: #17181A; font-family: 'Hanken Grotesk', ui-sans-serif, system-ui, sans-serif">
+
+<div style="display: flex; flex-direction: column; gap: 14px; min-width: 0">
+<div style="font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #5E6168">In-app toasts · desktop, top-right, newest on top</div>
+<div style="position: relative; height: 520px; border-radius: 16px; background: #EDEBE5; border: 1px solid #E4E2DB; overflow: hidden">
+<div style="position: absolute; inset: 24px; display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 20px; opacity: .55" aria-hidden="true">
+<div style="border-radius: 12px; background: #2B2E31"></div>
+<div style="display: flex; flex-direction: column; gap: 12px"><div style="height: 200px; border-radius: 12px; background: #FFFFFF"></div><div style="height: 52px; border-radius: 12px; background: #0B7A83"></div><div style="flex-grow: 1; border-radius: 12px; background: #FFFFFF"></div></div>
+</div>
+<div role="region" aria-label="Notifications" style="position: absolute; top: 20px; right: 20px; width: 380px; display: flex; flex-direction: column; gap: 10px">
+<div role="alert" style="position: relative; overflow: hidden; border-radius: 14px; background: #FFFFFF; border: 1px solid #E4E2DB; box-shadow: 0 8px 28px rgba(23,24,26,.12); padding: 16px 16px 16px 16px; display: flex; gap: 12px">
+<div style="position: absolute; top: 0; left: 0; right: 0; height: 3px; background: #A04FC0"></div>
+<div style="width: 40px; height: 40px; flex-shrink: 0; border-radius: 10px; background: #F3E3F8; display: flex; align-items: center; justify-content: center"><svg width="24" height="24" sc-camel-view-box="0 0 24 24" fill="none" stroke="#85389F" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0z"></path><path d="M8.6 10a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0M14.6 10a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0"></path><path d="M7.5 8.5l2.5-1M16.5 8.5l-2.5-1"></path><path d="M8 16c.7-.8 1.3-.8 2 0s1.3.8 2 0 1.3-.8 2 0 1.3.8 2 0"></path></svg></div>
+<div style="display: flex; flex-direction: column; gap: 4px; flex-grow: 1; min-width: 0">
+<div style="display: flex; align-items: baseline; gap: 8px"><div style="font-size: 15px; font-weight: 700">Bruno seems <span style="color: #85389F">anxious</span></div><div style="flex-grow: 1"></div><div style="font-size: 12px; color: #5E6168; font-family: 'IBM Plex Mono', ui-monospace, monospace">18:08</div></div>
+<div style="font-size: 13px; line-height: 1.45; color: #3E4146">Ears pinned back, tail low, repeated lip licking; one whimper.</div>
+<div style="display: flex; gap: 8px; margin-top: 6px">
+<button style="height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid #E4E2DB; background: #FFFFFF; color: #17181A; font: 600 13px 'Hanken Grotesk', sans-serif">View moment</button>
+<button style="height: 32px; padding: 0 12px; border-radius: 8px; border: 0; background: transparent; color: #5E6168; font: 600 13px 'Hanken Grotesk', sans-serif">Dismiss</button>
+</div>
+</div>
+</div>
+<div role="status" style="position: relative; overflow: hidden; border-radius: 14px; background: #FFFFFF; border: 1px solid #E4E2DB; box-shadow: 0 4px 16px rgba(23,24,26,.08); padding: 14px 16px; display: flex; gap: 12px; align-items: flex-start">
+<div style="position: absolute; top: 0; left: 0; right: 0; height: 3px; background: #E4702A"></div>
+<div style="width: 36px; height: 36px; flex-shrink: 0; border-radius: 10px; background: #FCE8DA; display: flex; align-items: center; justify-content: center"><svg width="22" height="22" sc-camel-view-box="0 0 24 24" fill="none" stroke="#A84A10" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0z"></path><path d="M7.5 10c.5-1 2.5-1 3 0"></path><path d="M13.5 10c.5-1 2.5-1 3 0"></path><path d="M8 13.5h8c0 2.2-1.8 4-4 4s-4-1.8-4-4z"></path></svg></div>
+<div style="display: flex; flex-direction: column; gap: 3px; flex-grow: 1">
+<div style="display: flex; align-items: baseline; gap: 8px"><div style="font-size: 14px; font-weight: 700">Bruno is <span style="color: #A84A10">excited</span></div><div style="flex-grow: 1"></div><div style="font-size: 12px; color: #5E6168; font-family: 'IBM Plex Mono', ui-monospace, monospace">18:14</div></div>
+<div style="font-size: 13px; line-height: 1.45; color: #3E4146">Tail wag 4.2 Hz as the treat dropped; two yips.</div>
+</div>
+</div>
+<div role="status" style="border-radius: 12px; background: #FFFFFF; border: 1px solid #E4E2DB; padding: 12px 16px; display: flex; gap: 10px; align-items: center; font-size: 13px; color: #3E4146">
+<svg width="18" height="18" sc-camel-view-box="0 0 24 24" fill="none" stroke="#0B7A83" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l2 5 5 .5-4 3.5 1.5 5L12 14.5 7.5 17 9 12 5 8.5l5-.5z"></path></svg>
+<span style="flex-grow: 1">AI back online · fused readings resumed</span>
+<span style="font-size: 12px; color: #5E6168; font-family: 'IBM Plex Mono', ui-monospace, monospace">18:12</span>
+</div>
+</div>
+</div>
+
+<div style="font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #5E6168; margin-top: 12px">In-app toast · mobile, top</div>
+<div style="display: flex; gap: 24px; align-items: flex-start">
+<div style="width: 390px; height: 150px; border-radius: 20px 20px 0 0; background: #F6F5F1; border: 1px solid #E4E2DB; border-bottom: 0; padding: 12px; box-sizing: border-box; position: relative; overflow: hidden">
+<div style="position: absolute; left: 12px; right: 12px; top: 64px; height: 120px; border-radius: 16px; background: #FFFFFF; border: 1px solid #E4E2DB; opacity: .6" aria-hidden="true"></div>
+<div role="alert" style="position: relative; border-radius: 14px; background: #17181A; color: #ECEDEE; padding: 12px 14px; display: flex; gap: 12px; align-items: center; box-shadow: 0 8px 24px rgba(0,0,0,.2)">
+<div style="width: 36px; height: 36px; flex-shrink: 0; border-radius: 10px; background: #33203B; display: flex; align-items: center; justify-content: center"><svg width="22" height="22" sc-camel-view-box="0 0 24 24" fill="none" stroke="#D19BE6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0z"></path><path d="M8.6 10a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0M14.6 10a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0"></path><path d="M7.5 8.5l2.5-1M16.5 8.5l-2.5-1"></path><path d="M8 16c.7-.8 1.3-.8 2 0s1.3.8 2 0 1.3-.8 2 0 1.3.8 2 0"></path></svg></div>
+<div style="display: flex; flex-direction: column; gap: 2px; flex-grow: 1; min-width: 0">
+<div style="font-size: 14px; font-weight: 700">Anxious · 18:08</div>
+<div style="font-size: 12px; color: #C9CCD0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Ears pinned back, tail low, lip licking</div>
+</div>
+<button aria-label="Dismiss" style="width: 44px; height: 44px; margin: -8px -8px -8px 0; border: 0; background: transparent; color: #A0A5AD; display: flex; align-items: center; justify-content: center"><svg width="16" height="16" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+</div>
+</div>
+<div style="font-size: 13px; line-height: 1.55; color: #5E6168; max-width: 300px; padding-top: 8px">Negative states stay until dismissed. Positive and system toasts fade after 6 s. One toast per state change; repeats within 2 min are grouped.</div>
+</div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 14px">
+<div style="font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #5E6168">Owner phone alert</div>
+<div style="flex-grow: 1; border-radius: 36px; background: #1A1C1F; border: 8px solid #2A2D31; padding: 40px 16px 24px; display: flex; flex-direction: column; gap: 14px">
+<div style="border-radius: 18px; background: rgba(46,49,54,.92); padding: 12px 14px; display: flex; gap: 12px; align-items: center; color: #ECEDEE">
+<div style="display: flex; flex-direction: column; gap: 3px; flex-grow: 1; min-width: 0">
+<div style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #A0A5AD"><svg width="14" height="14" sc-camel-view-box="0 0 32 32" fill="none" aria-hidden="true"><rect x="1" y="1" width="30" height="30" rx="9" stroke="#3FB8C1" stroke-width="3"></rect><path d="M7 17h4l2.5-6 4 11 2.5-5H25" stroke="#3FB8C1" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></path></svg>Claude Pet<span style="flex-grow: 1"></span>now</div>
+<div style="font-size: 15px; font-weight: 700">Bruno seems anxious</div>
+<div style="font-size: 13px; line-height: 1.4; color: #C9CCD0">Ears pinned back, tail low, repeated lip licking; one whimper.</div>
+</div>
+<div style="width: 52px; height: 52px; flex-shrink: 0; border-radius: 10px; overflow: hidden; background: #2B2E31">
+<svg sc-camel-view-box="560 170 200 200" sc-camel-preserve-aspect-ratio="xMidYMid slice" style="width: 100%; height: 100%" aria-hidden="true"><rect x="0" y="0" width="1000" height="330" fill="#2B2E31"></rect><rect x="0" y="330" width="1000" height="300" fill="#3A3733"></rect><path d="M708 252C704 262 690 268 676 270C662 276 648 284 640 296L628 312C624 340 618 380 616 424L598 426C596 392 594 360 590 330L578 322C574 350 572 390 574 424L556 426C552 390 552 350 556 318C520 322 470 322 440 318L440 260C520 262 570 258 570 258C596 256 612 246 626 232C634 214 646 200 660 196L664 186C670 190 674 198 676 206C690 214 702 230 708 252Z" fill="#141210"></path></svg>
+</div>
+</div>
+
+<div style="border-radius: 20px; background: #F4F4F2; color: #17181A; overflow: hidden; display: flex; flex-direction: column">
+<div style="position: relative; height: 200px; background: #2B2E31">
+<svg sc-camel-view-box="300 150 540 300" sc-camel-preserve-aspect-ratio="xMidYMid slice" style="position: absolute; inset: 0; width: 100%; height: 100%" aria-hidden="true">
+<rect x="-2000" y="-2000" width="5000" height="2330" fill="#2B2E31"></rect>
+<rect x="-2000" y="330" width="5000" height="2700" fill="#3A3733"></rect>
+<rect x="700" y="398" width="160" height="44" rx="6" fill="#343E3D"></rect>
+<ellipse cx="778" cy="416" rx="46" ry="12" fill="#707679"></ellipse>
+<ellipse cx="512" cy="432" rx="210" ry="10" fill="#000" fill-opacity=".35"></ellipse>
+<path d="M708 256C704 266 690 272 676 274C662 280 648 290 640 304L628 322C624 350 620 390 618 428L600 430C598 396 596 366 592 338L580 330C576 358 574 394 576 428L558 430C554 394 554 356 558 326C520 330 470 332 440 330C446 360 442 386 426 408L426 430L406 432C404 414 404 400 410 386C404 368 396 350 392 330C386 316 388 306 392 298C380 300 360 316 346 330C344 324 346 318 350 312C362 300 378 290 396 284C440 276 520 272 570 268C596 266 612 256 626 244C634 232 646 226 656 226L652 214C660 216 668 222 672 230C688 236 702 244 708 256Z" fill="#191715" stroke="#fff" stroke-opacity=".07"></path>
+</svg>
+<div style="position: absolute; left: 12px; bottom: 12px; display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 15px; background: #F3E3F8; color: #85389F; font-size: 13px; font-weight: 700">
+<svg width="16" height="16" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0z"></path><path d="M8.6 10a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0M14.6 10a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0"></path><path d="M7.5 8.5l2.5-1M16.5 8.5l-2.5-1"></path><path d="M8 16c.7-.8 1.3-.8 2 0s1.3.8 2 0 1.3-.8 2 0 1.3.8 2 0"></path></svg>Anxious · 77%</div>
+</div>
+<div style="padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; align-items: baseline; gap: 8px"><div style="font-size: 17px; font-weight: 700">Bruno seems anxious</div><div style="flex-grow: 1"></div><div style="font-size: 12px; color: #5E6168; font-family: 'IBM Plex Mono', ui-monospace, monospace">18:08</div></div>
+<div style="font-size: 14px; line-height: 1.45; color: #3E4146">Ears pinned back, tail low, repeated lip licking; one whimper. Was relaxed for the previous 5 min.</div>
+<div style="font-size: 12px; color: #5E6168">Kitchen · feeding area · Fused reading</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid #E4E2DB">
+<a href="Main.dc.html" style="height: 52px; display: flex; align-items: center; justify-content: center; color: #0B7A83; font-size: 15px; font-weight: 700; text-decoration: none; border-right: 1px solid #E4E2DB">Open live view</a>
+<button style="height: 52px; border: 0; background: transparent; color: #3E4146; font: 600 15px 'Hanken Grotesk', sans-serif">Mute 30 min</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900}}">
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+
+
+</body></html>

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Claude Pet · Camera streaming (portrait)</title>
+
+</head>
+<body>
+<x-dc>
+
+<div style="position: relative; width: 390px; height: 844px; overflow: hidden; background: #1B1D1F; color: #fff; font-family: 'Hanken Grotesk', ui-sans-serif, system-ui, sans-serif">
+<svg sc-camel-view-box="300 120 540 460" sc-camel-preserve-aspect-ratio="xMidYMid meet" style="position: absolute; inset: 0; width: 100%; height: 100%" aria-hidden="true">
+<defs><radialGradient id="clVig" cx="50%" cy="50%" r="75%"><stop offset=".5" stop-color="#000" stop-opacity="0"></stop><stop offset="1" stop-color="#000" stop-opacity=".6"></stop></radialGradient></defs>
+<rect x="-2000" y="-2000" width="5000" height="2330" fill="#2B2E31"></rect>
+<rect x="-2000" y="330" width="5000" height="2700" fill="#3A3733"></rect>
+<rect x="-2000" y="322" width="5000" height="10" fill="#33363A"></rect>
+<path d="M-200 390H1200M-200 460H1200M-200 560H1200M-200 700H1200" stroke="#fff" stroke-opacity=".04"></path>
+<rect x="700" y="398" width="160" height="44" rx="6" fill="#343E3D"></rect>
+<ellipse cx="778" cy="416" rx="46" ry="12" fill="#707679"></ellipse>
+<ellipse cx="778" cy="412" rx="36" ry="7" fill="#3F4448"></ellipse>
+<ellipse cx="512" cy="432" rx="210" ry="10" fill="#000" fill-opacity=".35"></ellipse>
+<path d="M708 252C704 262 690 268 676 270C662 276 648 284 640 296L628 312C624 340 618 380 616 424L598 426C596 392 594 360 590 330L578 322C574 350 572 390 574 424L556 426C552 390 552 350 556 318C520 322 470 322 440 318C446 350 442 380 426 404L426 428L406 430C404 410 404 395 410 380C404 360 396 340 392 318C384 300 382 288 388 276C370 256 350 226 334 192C340 190 346 192 350 198C362 222 380 248 398 262C440 260 520 262 570 258C596 256 612 246 626 232C634 214 646 200 660 196L664 186C670 190 674 198 676 206C690 214 702 230 708 252Z" fill="#191715" stroke="#fff" stroke-opacity=".07"></path>
+<rect x="-2000" y="-2000" width="5000" height="5000" fill="url(#clVig)"></rect>
+</svg>
+
+<div style="position: absolute; left: 10px; top: 278px; width: 370px; height: 236px; border: 2px dashed #7FE3E8; border-radius: 16px; box-sizing: border-box"></div>
+<div style="position: absolute; left: 22px; top: 264px; height: 26px; padding: 0 10px; border-radius: 13px; background: #0F1113; color: #BFF2F4; font-size: 12px; font-weight: 700; display: flex; align-items: center; gap: 6px"><svg width="12" height="12" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>Dog in feeding zone</div>
+
+<div style="position: absolute; top: 56px; left: 16px; right: 16px; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; gap: 8px; align-items: center">
+<div style="height: 36px; padding: 0 12px; border-radius: 18px; background: rgba(15,17,19,.78); display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700"><span style="width: 8px; height: 8px; border-radius: 4px; background: #FF5A4E; box-shadow: 0 0 0 4px rgba(255,90,78,.25)"></span>Streaming<span style="font-family: 'IBM Plex Mono', ui-monospace, monospace; font-weight: 400; color: #D6D8DB">12:04</span></div>
+<div style="flex-grow: 1"></div>
+<div style="height: 36px; padding: 0 12px; border-radius: 18px; background: rgba(15,17,19,.78); display: flex; align-items: center; gap: 8px; font-size: 12px; color: #D6D8DB" aria-label="Connection good">
+<svg width="16" height="14" sc-camel-view-box="0 0 16 14" aria-hidden="true"><rect x="0" y="10" width="3" height="4" rx="1" fill="#7FE3E8"></rect><rect x="4.3" y="7" width="3" height="7" rx="1" fill="#7FE3E8"></rect><rect x="8.6" y="4" width="3" height="10" rx="1" fill="#7FE3E8"></rect><rect x="13" y="0" width="3" height="14" rx="1" fill="#4A4F55"></rect></svg>Good</div>
+<div style="height: 36px; padding: 0 12px; border-radius: 18px; background: rgba(15,17,19,.78); display: flex; align-items: center; font-size: 12px; color: #D6D8DB; font-family: 'IBM Plex Mono', ui-monospace, monospace">24 fps</div>
+</div>
+<div style="align-self: flex-start; height: 36px; padding: 0 12px; border-radius: 18px; background: rgba(15,17,19,.78); display: flex; align-items: center; gap: 10px" aria-label="Microphone level">
+<svg width="16" height="16" sc-camel-view-box="0 0 24 24" fill="none" stroke="#D6D8DB" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"></path></svg>
+<div style="display: flex; align-items: center; gap: 3px; height: 16px">
+<sc-for list="{{bars}}" as="b" hint-placeholder-count="14"><span style="width: 3px; height: {{b.h}}px; border-radius: 2px; background: {{b.c}}"></span></sc-for>
+</div>
+</div>
+</div>
+
+<div style="position: absolute; left: 16px; right: 16px; bottom: 32px; display: flex; flex-direction: column; gap: 14px; align-items: center">
+<div style="height: 34px; padding: 0 14px; border-radius: 17px; background: rgba(15,17,19,.78); display: flex; align-items: center; gap: 8px; font-size: 13px; color: #D6D8DB">
+<svg width="16" height="16" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"></path><path d="M16 12a4 4 0 1 1-8 0a4 4 0 0 1 8 0z"></path></svg>Keep this screen on · plugged in</div>
+<button style="width: 100%; height: 64px; border: 0; border-radius: 18px; background: #F4F4F2; color: #17181A; font: 700 18px 'Hanken Grotesk', sans-serif; display: flex; align-items: center; justify-content: center; gap: 12px">
+<span style="width: 16px; height: 16px; border-radius: 3px; background: #17181A"></span>Stop streaming</button>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;$preview&quot;:{&quot;width&quot;:390,&quot;height&quot;:844}}">
+class Component extends DCLogic {
+  renderVals() {
+    var lv = [.3, .5, .8, .6, .95, .7, .45, .6, .35, .2, .15, .1, .08, .05];
+    return { bars: lv.map(function (v, i) { return { h: Math.max(3, Math.round(v * 16)), c: i < 9 ? '#7FE3E8' : '#4A4F55' }; }) };
+  }
+}
+</script>
+
+
+</body></html>

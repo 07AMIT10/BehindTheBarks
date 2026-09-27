@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Claude Pet · Camera streaming (landscape)</title>
+
+</head>
+<body>
+<x-dc>
+
+<div style="position: relative; width: 844px; height: 390px; overflow: hidden; background: #1B1D1F; color: #fff; font-family: 'Hanken Grotesk', ui-sans-serif, system-ui, sans-serif">
+<svg sc-camel-view-box="260 140 620 330" sc-camel-preserve-aspect-ratio="xMidYMid meet" style="position: absolute; inset: 0; width: 100%; height: 100%" aria-hidden="true">
+<defs><radialGradient id="clsVig" cx="50%" cy="50%" r="75%"><stop offset=".5" stop-color="#000" stop-opacity="0"></stop><stop offset="1" stop-color="#000" stop-opacity=".6"></stop></radialGradient></defs>
+<rect x="-2000" y="-2000" width="5000" height="2330" fill="#2B2E31"></rect>
+<rect x="-2000" y="330" width="5000" height="2700" fill="#3A3733"></rect>
+<rect x="-2000" y="322" width="5000" height="10" fill="#33363A"></rect>
+<rect x="700" y="398" width="160" height="44" rx="6" fill="#343E3D"></rect>
+<ellipse cx="778" cy="416" rx="46" ry="12" fill="#707679"></ellipse>
+<ellipse cx="778" cy="412" rx="36" ry="7" fill="#3F4448"></ellipse>
+<ellipse cx="512" cy="432" rx="210" ry="10" fill="#000" fill-opacity=".35"></ellipse>
+<path d="M708 252C704 262 690 268 676 270C662 276 648 284 640 296L628 312C624 340 618 380 616 424L598 426C596 392 594 360 590 330L578 322C574 350 572 390 574 424L556 426C552 390 552 350 556 318C520 322 470 322 440 318C446 350 442 380 426 404L426 428L406 430C404 410 404 395 410 380C404 360 396 340 392 318C384 300 382 288 388 276C370 256 350 226 334 192C340 190 346 192 350 198C362 222 380 248 398 262C440 260 520 262 570 258C596 256 612 246 626 232C634 214 646 200 660 196L664 186C670 190 674 198 676 206C690 214 702 230 708 252Z" fill="#191715" stroke="#fff" stroke-opacity=".07"></path>
+<rect x="-2000" y="-2000" width="5000" height="5000" fill="url(#clsVig)"></rect>
+</svg>
+<div style="position: absolute; left: 120px; top: 36px; width: 600px; height: 322px; border: 2px dashed #7FE3E8; border-radius: 16px; box-sizing: border-box"></div>
+
+<div style="position: absolute; top: 20px; left: 20px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start">
+<div style="height: 34px; padding: 0 12px; border-radius: 17px; background: rgba(15,17,19,.78); display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700"><span style="width: 8px; height: 8px; border-radius: 4px; background: #FF5A4E; box-shadow: 0 0 0 4px rgba(255,90,78,.25)"></span>Streaming</div>
+<div style="height: 30px; padding: 0 10px; border-radius: 15px; background: rgba(15,17,19,.78); display: flex; align-items: center; gap: 6px; font-size: 12px; color: #D6D8DB"><svg width="14" height="12" sc-camel-view-box="0 0 16 14" aria-hidden="true"><rect x="0" y="10" width="3" height="4" rx="1" fill="#7FE3E8"></rect><rect x="4.3" y="7" width="3" height="7" rx="1" fill="#7FE3E8"></rect><rect x="8.6" y="4" width="3" height="10" rx="1" fill="#7FE3E8"></rect><rect x="13" y="0" width="3" height="14" rx="1" fill="#4A4F55"></rect></svg>Good</div>
+<div style="height: 30px; padding: 0 10px; border-radius: 15px; background: rgba(15,17,19,.78); display: flex; align-items: center; font-size: 12px; color: #D6D8DB; font-family: 'IBM Plex Mono', ui-monospace, monospace">24 fps</div>
+</div>
+<div style="position: absolute; left: 20px; bottom: 20px; height: 34px; padding: 0 12px; border-radius: 17px; background: rgba(15,17,19,.78); display: flex; align-items: center; gap: 10px" aria-label="Microphone level">
+<svg width="16" height="16" sc-camel-view-box="0 0 24 24" fill="none" stroke="#D6D8DB" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"></path></svg>
+<div style="display: flex; align-items: center; gap: 3px; height: 16px"><sc-for list="{{bars}}" as="b" hint-placeholder-count="10"><span style="width: 3px; height: {{b.h}}px; border-radius: 2px; background: {{b.c}}"></span></sc-for></div>
+</div>
+<div style="position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); height: 30px; padding: 0 12px; border-radius: 15px; background: rgba(15,17,19,.78); display: flex; align-items: center; font-size: 12px; color: #D6D8DB">Keep this screen on · plugged in</div>
+<button style="position: absolute; right: 20px; top: 50%; transform: translateY(-50%); width: 88px; height: 88px; border: 0; border-radius: 44px; background: #F4F4F2; color: #17181A; font: 700 13px 'Hanken Grotesk', sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px">
+<span style="width: 18px; height: 18px; border-radius: 4px; background: #17181A"></span>Stop</button>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;$preview&quot;:{&quot;width&quot;:844,&quot;height&quot;:390}}">
+class Component extends DCLogic {
+  renderVals() {
+    var lv = [.4, .7, .9, .6, .8, .5, .3, .2, .1, .06];
+    return { bars: lv.map(function (v, i) { return { h: Math.max(3, Math.round(v * 16)), c: i < 6 ? '#7FE3E8' : '#4A4F55' }; }) };
+  }
+}
+</script>
+
+
+</body></html>

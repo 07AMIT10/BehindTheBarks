@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Claude Pet · Mobile dashboard</title>
+
+</head>
+<body>
+<x-dc>
+
+<div style="position: relative; width: 390px; height: 1720px; box-sizing: border-box; padding: 12px 16px 104px; display: flex; flex-direction: column; gap: 16px; background: {{t.bg}}; color: {{t.text}}; font-family: 'Hanken Grotesk', ui-sans-serif, system-ui, sans-serif; overflow: hidden">
+
+<header style="display: flex; align-items: center; gap: 12px; height: 52px">
+<svg width="28" height="28" sc-camel-view-box="0 0 32 32" fill="none" aria-hidden="true"><rect x="1" y="1" width="30" height="30" rx="9" stroke="{{t.accent}}" stroke-width="2"></rect><path d="M7 17h4l2.5-6 4 11 2.5-5H25" stroke="{{t.accent}}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+<div style="display: flex; flex-direction: column; gap: 1px; flex-grow: 1">
+<div style="font-size: 17px; font-weight: 700">Bruno</div>
+<div style="font-size: 12px; color: {{t.muted}}">Claude Pet · Kitchen</div>
+</div>
+<button aria-label="Notifications, 3 new" style="position: relative; width: 44px; height: 44px; border-radius: 12px; border: 1px solid {{t.border}}; background: {{t.surface}}; color: {{t.text}}; display: flex; align-items: center; justify-content: center">
+<svg width="20" height="20" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"></path><path d="M10 20.5a2 2 0 0 0 4 0"></path></svg>
+<span style="position: absolute; top: 6px; right: 6px; min-width: 16px; height: 16px; border-radius: 8px; background: {{t.accent}}; color: {{t.accentText}}; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center">3</span>
+</button>
+</header>
+
+<div role="status" style="display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; color: {{t.muted}}">
+<div style="display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 14px; background: {{t.surface}}; border: 1px solid {{t.border}}; color: {{t.text}}; font-weight: 600"><span style="width: 7px; height: 7px; border-radius: 4px; background: {{t.accent}}"></span>Live</div>
+<div style="display: flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 14px; background: {{t.surface}}; border: 1px solid {{t.border}}">Connected</div>
+<div style="display: flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 14px; background: {{t.surface}}; border: 1px solid {{t.border}}; font-family: 'IBM Plex Mono', ui-monospace, monospace">24 fps</div>
+<div style="display: flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 14px; background: {{t.surface}}; border: 1px solid {{t.border}}">AI <span style="font-family: 'IBM Plex Mono', ui-monospace, monospace; margin-left: 4px">420 ms</span></div>
+</div>
+
+<section aria-label="Current emotion" style="position: relative; overflow: hidden; border-radius: 16px; background: {{t.surface}}; border: 1px solid {{t.border}}; padding: 20px; display: flex; flex-direction: column; gap: 16px">
+<div style="position: absolute; top: 0; left: 0; right: 0; height: 4px; background: {{cur.solid}}"></div>
+<div style="display: flex; align-items: center; gap: 8px">
+<div style="font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: {{t.muted}}">Right now</div>
+<div style="flex-grow: 1"></div>
+<div style="display: flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 12px; background: {{t.accentSoft}}; color: {{t.accentInk}}; font-size: 11px; font-weight: 700"><svg width="12" height="12" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4v5a6 6 0 0 0 12 0V4"></path><path d="M12 15v6"></path></svg>Fused</div>
+<div style="font-size: 11px; color: {{t.muted}}; font-family: 'IBM Plex Mono', ui-monospace, monospace">3s ago</div>
+</div>
+<div style="display: flex; align-items: center; gap: 16px">
+<div style="width: 68px; height: 68px; flex-shrink: 0; border-radius: 16px; background: {{cur.tint}}; display: flex; align-items: center; justify-content: center">
+<svg width="44" height="44" sc-camel-view-box="0 0 24 24" fill="none" stroke="{{cur.fg}}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0z" stroke-dasharray="{{cur.dash}}"></path><path d="{{cur.a}}"></path><path d="{{cur.b}}"></path><path d="{{cur.c}}"></path></svg>
+</div>
+<div style="display: flex; flex-direction: column; gap: 4px">
+<div style="font-size: 44px; line-height: 1; font-weight: 700; letter-spacing: -0.025em; color: {{cur.fg}}">{{cur.label}}</div>
+<div style="font-size: 13px; color: {{t.muted}}">since 18:27 · 3 min</div>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 6px">
+<div style="display: flex; justify-content: space-between; font-size: 12px"><span style="color: {{t.muted}}; font-weight: 600">Confidence</span><span style="font-family: 'IBM Plex Mono', ui-monospace, monospace">86%</span></div>
+<div role="meter" aria-label="Confidence" aria-valuenow="86" aria-valuemin="0" aria-valuemax="100" style="height: 8px; border-radius: 4px; background: {{t.track}}; overflow: hidden"><div style="width: 86%; height: 100%; border-radius: 4px; background: {{cur.solid}}"></div></div>
+</div>
+<p style="margin: 0; font-size: 16px; line-height: 1.45; text-wrap: pretty">High, fast tail wag and open mouth as the treat dropped; two short yips.</p>
+</section>
+
+<section aria-label="Live video" style="position: relative; height: 216px; border-radius: 16px; overflow: hidden; background: #1B1D1F; flex-shrink: 0">
+<svg sc-camel-view-box="300 150 540 300" sc-camel-preserve-aspect-ratio="xMidYMid slice" style="position: absolute; inset: 0; width: 100%; height: 100%" aria-hidden="true">
+<defs>
+<radialGradient id="mbVig" cx="50%" cy="55%" r="70%"><stop offset=".55" stop-color="#000" stop-opacity="0"></stop><stop offset="1" stop-color="#000" stop-opacity=".55"></stop></radialGradient>
+</defs>
+<rect x="-2000" y="-2000" width="5000" height="2330" fill="#2B2E31"></rect>
+<rect x="-2000" y="330" width="5000" height="2700" fill="#3A3733"></rect>
+<rect x="-2000" y="322" width="5000" height="10" fill="#33363A"></rect>
+<rect x="700" y="398" width="160" height="44" rx="6" fill="#343E3D"></rect>
+<ellipse cx="778" cy="416" rx="46" ry="12" fill="#707679"></ellipse>
+<ellipse cx="778" cy="412" rx="36" ry="7" fill="#3F4448"></ellipse>
+<ellipse cx="512" cy="432" rx="210" ry="10" fill="#000" fill-opacity=".35"></ellipse>
+<path d="M708 252C704 262 690 268 676 270C662 276 648 284 640 296L628 312C624 340 618 380 616 424L598 426C596 392 594 360 590 330L578 322C574 350 572 390 574 424L556 426C552 390 552 350 556 318C520 322 470 322 440 318C446 350 442 380 426 404L426 428L406 430C404 410 404 395 410 380C404 360 396 340 392 318C384 300 382 288 388 276C370 256 350 226 334 192C340 190 346 192 350 198C362 222 380 248 398 262C440 260 520 262 570 258C596 256 612 246 626 232C634 214 646 200 660 196L664 186C670 190 674 198 676 206C690 214 702 230 708 252Z" fill="#191715" stroke="#fff" stroke-opacity=".07"></path>
+<rect x="-2000" y="-2000" width="5000" height="5000" fill="url(#mbVig)"></rect>
+<rect x="318" y="172" width="408" height="266" rx="4" fill="none" stroke="#7FE3E8" stroke-width="2"></rect>
+<g stroke="#7FE3E8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke-opacity=".85">
+<path d="M680 228L628 262L566 268L480 270L404 276L390 272L360 232L338 196"></path>
+<path d="M566 268L596 300L600 352L606 422"></path><path d="M596 300L578 350L566 422"></path>
+<path d="M404 276L420 312L438 356L410 394L414 426"></path>
+</g>
+<g fill="#7FE3E8"><circle cx="680" cy="228" r="5"></circle><circle cx="628" cy="262" r="5"></circle><circle cx="566" cy="268" r="5"></circle><circle cx="480" cy="270" r="5"></circle><circle cx="404" cy="276" r="5"></circle><circle cx="338" cy="196" r="5"></circle><circle cx="596" cy="300" r="5"></circle><circle cx="600" cy="352" r="5"></circle><circle cx="606" cy="422" r="5"></circle><circle cx="566" cy="422" r="5"></circle><circle cx="438" cy="356" r="5"></circle><circle cx="414" cy="426" r="5"></circle></g>
+<g fill="#F5E6B8"><circle cx="704" cy="250" r="3"></circle><circle cx="676" cy="224" r="3"></circle><circle cx="664" cy="192" r="3"></circle><circle cx="694" cy="262" r="3"></circle><circle cx="698" cy="242" r="3"></circle></g>
+</svg>
+<div style="position: absolute; top: 12px; left: 12px; display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 7px; background: rgba(15,17,19,.72); color: #fff; font-size: 11px; font-weight: 700; letter-spacing: .06em"><span style="width: 7px; height: 7px; border-radius: 4px; background: #FF5A4E"></span>LIVE</div>
+<button aria-label="Expand video" style="position: absolute; top: 6px; right: 6px; width: 44px; height: 44px; border: 0; border-radius: 10px; background: transparent; color: #fff; display: flex; align-items: center; justify-content: center">
+<span style="width: 30px; height: 30px; border-radius: 7px; background: rgba(15,17,19,.72); display: flex; align-items: center; justify-content: center"><svg width="16" height="16" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path></svg></span>
+</button>
+</section>
+
+<section aria-label="Signals" style="border-radius: 16px; background: {{t.surface}}; border: 1px solid {{t.border}}; overflow: hidden">
+<button sc-camel-on-click="{{toggleSig}}" aria-expanded="{{sigOpen}}" style="width: 100%; height: 52px; padding: 0 16px; border: 0; background: transparent; color: {{t.text}}; display: flex; align-items: center; gap: 8px; font: 600 15px 'Hanken Grotesk', sans-serif">
+Signals<span style="font-size: 12px; font-weight: 500; color: {{t.muted}}">6 live</span><span style="flex-grow: 1"></span>
+<svg width="18" height="18" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate({{chev}}deg)"><path d="M6 9l6 6 6-6"></path></svg>
+</button>
+<sc-if value="{{sigOpen}}" hint-placeholder-val="{{ true }}">
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: {{t.border}}; border-top: 1px solid {{t.border}}">
+<sc-for list="{{signals}}" as="s" hint-placeholder-count="6">
+<div style="background: {{t.surface}}; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px">
+<div style="font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: {{t.muted}}">{{s.name}}</div>
+<div style="display: flex; align-items: baseline; gap: 4px"><span style="font: 500 18px 'IBM Plex Mono', ui-monospace, monospace">{{s.value}}</span><span style="font-size: 12px; color: {{t.muted}}">{{s.unit}}</span></div>
+<svg sc-camel-view-box="0 0 100 24" sc-camel-preserve-aspect-ratio="none" style="width: 100%; height: 22px" aria-hidden="true"><polyline points="{{s.pts}}" fill="none" stroke="{{t.accent}}" stroke-width="1.75" vector-effect="non-scaling-stroke" stroke-linejoin="round"></polyline></svg>
+</div>
+</sc-for>
+</div>
+</sc-if>
+</section>
+
+<section aria-label="Session timeline" style="border-radius: 16px; background: {{t.surface}}; border: 1px solid {{t.border}}; padding: 16px 0; display: flex; flex-direction: column; gap: 12px">
+<div style="display: flex; align-items: baseline; gap: 10px; padding: 0 16px">
+<div style="font-size: 16px; font-weight: 600">Timeline</div>
+<div style="font-size: 12px; color: {{t.muted}}; font-family: 'IBM Plex Mono', ui-monospace, monospace">18:00 – now</div>
+<div style="flex-grow: 1"></div>
+<div style="font-size: 12px; color: {{t.muted}}; display: flex; align-items: center; gap: 4px">Swipe<svg width="14" height="14" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M15 8l4 4-4 4M9 8l-4 4 4 4"></path></svg></div>
+</div>
+<div style="overflow-x: auto; padding: 0 16px 6px">
+<div style="position: relative; width: 820px">
+<div style="position: absolute; top: 24px; bottom: 20px; left: 0; right: 0; pointer-events: none">
+<sc-for list="{{markers}}" as="m" hint-placeholder-count="5"><div style="position: absolute; top: 0; bottom: 0; left: {{m.left}}; border-left: 1px dashed {{m.color}}; opacity: .7"></div></sc-for>
+</div>
+<div style="position: relative; height: 24px">
+<sc-for list="{{markers}}" as="m" hint-placeholder-count="5">
+<div title="{{m.title}}" style="position: absolute; top: 0; left: {{m.left}}; transform: translateX(-50%); width: 20px; height: 20px; border-radius: 10px; background: {{m.bg}}; color: {{m.color}}; display: flex; align-items: center; justify-content: center"><svg width="12" height="12" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{m.icon}}"></path></svg></div>
+</sc-for>
+</div>
+<div style="position: relative; height: 48px; border-radius: 8px; overflow: hidden; background: {{t.track}}">
+<sc-for list="{{spans}}" as="s" hint-placeholder-count="11">
+<button sc-camel-on-click="{{s.pick}}" aria-label="{{s.aria}}" style="position: absolute; top: 0; bottom: 0; left: {{s.left}}; width: {{s.width}}; padding: 0; border: 0; border-right: 2px solid {{t.surface}}; box-sizing: border-box; background: {{s.e.tint}}; display: flex; align-items: center; justify-content: center; box-shadow: {{s.ring}}">
+<span style="position: absolute; top: 0; left: 0; right: 0; height: 4px; background: {{s.e.solid}}"></span>
+<svg width="18" height="18" sc-camel-view-box="0 0 24 24" fill="none" stroke="{{s.e.fg}}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0z" stroke-dasharray="{{s.e.dash}}"></path><path d="{{s.e.a}}"></path><path d="{{s.e.b}}"></path><path d="{{s.e.c}}"></path></svg>
+</button>
+</sc-for>
+</div>
+<div style="height: 8px"></div>
+<div style="position: relative; height: 40px; border-radius: 8px; background: {{t.surface2}}">
+<div style="position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: {{t.border}}"></div>
+<sc-for list="{{audio}}" as="a" hint-placeholder-count="7">
+<div style="position: absolute; top: 50%; left: {{a.left}}; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border-radius: 12px; background: {{t.surface}}; border: 1px solid {{t.border}}; font-size: 11px; font-weight: 600; white-space: nowrap"><svg width="12" height="12" sc-camel-view-box="0 0 24 24" fill="none" stroke="{{t.muted}}" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 10v4"></path></svg>{{a.label}}</div>
+</sc-for>
+</div>
+<div style="position: relative; height: 20px; margin-top: 6px">
+<sc-for list="{{ticks}}" as="k" hint-placeholder-count="7"><div style="position: absolute; top: 0; left: {{k.left}}; transform: translateX({{k.shift}}); font-size: 11px; color: {{t.muted}}; font-family: 'IBM Plex Mono', ui-monospace, monospace">{{k.label}}</div></sc-for>
+</div>
+</div>
+</div>
+<div style="margin: 0 16px; padding: 12px 14px; border-radius: 12px; background: {{sel.e.tint}}; display: flex; flex-direction: column; gap: 6px">
+<div style="display: flex; align-items: center; gap: 8px">
+<svg width="20" height="20" sc-camel-view-box="0 0 24 24" fill="none" stroke="{{sel.e.fg}}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0z" stroke-dasharray="{{sel.e.dash}}"></path><path d="{{sel.e.a}}"></path><path d="{{sel.e.b}}"></path><path d="{{sel.e.c}}"></path></svg>
+<div style="font-size: 15px; font-weight: 700; color: {{sel.e.fg}}">{{sel.e.label}}</div>
+<div style="flex-grow: 1"></div>
+<div style="font-size: 12px; color: {{t.textSoft}}; font-family: 'IBM Plex Mono', ui-monospace, monospace">{{sel.range}}</div>
+</div>
+<div style="font-size: 14px; line-height: 1.45">{{sel.reason}}</div>
+<div style="font-size: 12px; color: {{t.textSoft}}">{{sel.src}} · {{sel.conf}} confidence</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; padding: 0 16px">
+<sc-for list="{{legend}}" as="e" hint-placeholder-count="8">
+<div style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: {{t.muted}}"><svg width="16" height="16" sc-camel-view-box="0 0 24 24" fill="none" stroke="{{e.fg}}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0z" stroke-dasharray="{{e.dash}}"></path><path d="{{e.a}}"></path><path d="{{e.b}}"></path><path d="{{e.c}}"></path></svg>{{e.label}}</div>
+</sc-for>
+</div>
+</section>
+
+<!-- Sticky bottom bar -->
+<div style="position: absolute; left: 0; right: 0; bottom: 0; padding: 12px 16px 24px; background: {{t.surface}}; border-top: 1px solid {{t.border}}; display: flex; gap: 10px">
+<button style="flex-grow: 1; height: 56px; border: 0; border-radius: 14px; background: {{t.accent}}; color: {{t.accentText}}; display: flex; align-items: center; justify-content: center; gap: 10px; font: 700 17px 'Hanken Grotesk', sans-serif">
+<svg width="22" height="22" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13h18a9 5 0 0 1-18 0z"></path><path d="M12 3v6"></path><path d="M9 6.5l3 3 3-3"></path></svg>Treat dropped</button>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;light&quot;,&quot;dark&quot;],&quot;default&quot;:&quot;light&quot;},&quot;$preview&quot;:{&quot;width&quot;:390,&quot;height&quot;:1720}}">
+var FACE_D = { L: 'M8.6 10a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0', R: 'M14.6 10a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0' };
+var EMO = {
+  happy:        { label: 'Happy',        l: ['#E0A100', '#8C6400', '#FBF1D6'], d: ['#F0B429', '#F5C451', '#3A2F12'], p: [FACE_D.L, FACE_D.R, 'M8 14c1 1.6 2.4 2.4 4 2.4s3-.8 4-2.4'] },
+  excited:      { label: 'Excited',      l: ['#E4702A', '#A84A10', '#FCE8DA'], d: ['#F08A4B', '#F6A474', '#3D2618'], p: ['M7.5 10c.5-1 2.5-1 3 0', 'M13.5 10c.5-1 2.5-1 3 0', 'M8 13.5h8c0 2.2-1.8 4-4 4s-4-1.8-4-4z'] },
+  relaxed:      { label: 'Relaxed',      l: ['#2F9461', '#1E7148', '#DDF1E6'], d: ['#4CB981', '#6FCB9B', '#173326'], p: ['M7.5 10c.5 1 2.5 1 3 0', 'M13.5 10c.5 1 2.5 1 3 0', 'M9 15c.8.8 1.8 1.2 3 1.2s2.2-.4 3-1.2'] },
+  anxious:      { label: 'Anxious',      l: ['#A04FC0', '#85389F', '#F3E3F8'], d: ['#C27BDD', '#D19BE6', '#33203B'], p: [FACE_D.L + ' ' + FACE_D.R, 'M7.5 8.5l2.5-1M16.5 8.5l-2.5-1', 'M8 16c.7-.8 1.3-.8 2 0s1.3.8 2 0 1.3-.8 2 0 1.3.8 2 0'] },
+  fearful:      { label: 'Fearful',      l: ['#4C63D6', '#3A4DB8', '#E3E7FA'], d: ['#7C8DF0', '#9AA7F4', '#202744'], p: ['M8.6 10.5a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0M14.6 10.5a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0', 'M7.5 7.5c.7-.7 2-.7 2.5 0M14 7.5c.5-.7 1.8-.7 2.5 0', 'M13.5 16a1.5 1.5 0 1 1-3 0a1.5 1.5 0 0 1 3 0z'] },
+  aggressive:   { label: 'Aggressive',   l: ['#D13F3F', '#B02E2E', '#FBE1E0'], d: ['#EE6A6A', '#F48E8E', '#3E1D1E'], p: ['M8.6 11a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0M14.6 11a.4.4 0 1 0 .8 0a.4.4 0 1 0 -.8 0', 'M7.5 8l2.5 1.5M16.5 8l-2.5 1.5', 'M8.5 16.2c1-.8 2.2-1.2 3.5-1.2s2.5.4 3.5 1.2'] },
+  disinterested:{ label: 'Disinterested',l: ['#8C8A5E', '#66643E', '#EEEDE0'], d: ['#B4B282', '#C7C59C', '#2E2D22'], p: ['M8 10.5h2.5M13.5 10.5H16', '', 'M9.5 15.5h5'] },
+  unknown:      { label: 'Unknown',      l: ['#8F949B', '#5D6168', '#ECEDEF'], d: ['#8E939A', '#B1B5BB', '#26292D'], p: ['M9.8 9.5a2.3 2.3 0 1 1 3.3 2.1c-.7.3-1.1.9-1.1 1.6v.3', 'M12 16.5h.01', ''] }
+};
+var ORDER = ['happy', 'excited', 'relaxed', 'anxious', 'fearful', 'aggressive', 'disinterested', 'unknown'];
+function emo(k, dark) { var e = EMO[k], c = dark ? e.d : e.l; return { key: k, label: e.label, solid: c[0], fg: c[1], tint: c[2], a: e.p[0], b: e.p[1], c: e.p[2], dash: k === 'unknown' ? '2.2 2.4' : 'none' }; }
+var THEMES = {
+  light: { bg: '#F6F5F1', surface: '#FFFFFF', surface2: '#F1EFEA', border: '#E4E2DB', text: '#17181A', textSoft: '#3E4146', muted: '#5E6168', accent: '#0B7A83', accentText: '#FFFFFF', accentSoft: '#E0F0F1', accentInk: '#075960', track: '#ECEAE4' },
+  dark:  { bg: '#0F1113', surface: '#171A1D', surface2: '#1E2226', border: '#2A2E33', text: '#ECEDEE', textSoft: '#C9CCD0', muted: '#A0A5AD', accent: '#3FB8C1', accentText: '#0F1113', accentSoft: '#16343A', accentInk: '#8FDDE3', track: '#23272B' }
+};
+var SPANS = [
+  [0, 3, 'unknown', 'Dog entering frame; not enough keypoints for a reading', 'Rules', 41],
+  [3, 8, 'relaxed', 'Loose body, tail at mid height, slow sniffing around the bowl', 'Fused', 82],
+  [8, 11, 'anxious', 'Ears pinned back, tail low, repeated lip licking; one whimper', 'Fused', 77],
+  [11, 14, 'relaxed', 'Lying beside the bowl, low motion energy, ears neutral', 'AI', 80],
+  [14, 16.5, 'excited', 'Tail wag 4.2 Hz and jumping as the first treat dropped; two yips', 'Fused', 90],
+  [16.5, 19.5, 'happy', 'Mid-high tail, soft open mouth, relaxed wag at 2.1 Hz', 'Fused', 84],
+  [19.5, 20.5, 'aggressive', 'Stiff stance and hard stare at the doorway; low growl for 1.8 s', 'Fused', 73],
+  [20.5, 23, 'disinterested', 'Head turned away from the bowl, minimal motion for 2 min', 'Rules', 68],
+  [23, 26, 'relaxed', 'Sitting, loose jaw, slow blinks, tail resting', 'AI', 79],
+  [26, 27.2, 'fearful', 'Body lowered and tail tucked after a loud bang; one sharp bark', 'Fused', 81],
+  [27.2, 30, 'excited', 'High, fast tail wag and open mouth as the treat dropped; two short yips', 'Fused', 86]
+];
+var AUDIO = [[5.5, 'bark'], [9.4, 'whimper'], [15.1, 'yip ×2'], [19.9, 'growl'], [24.1, 'howl'], [26.3, 'bark'], [28.4, 'yip ×2']];
+var TREAT_ICON = 'M3 13h18a9 5 0 0 1-18 0zM12 3v6';
+var BELL_ICON = 'M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20.5a2 2 0 0 0 4 0';
+function pct(m) { return (m / 30 * 100).toFixed(3) + '%'; }
+function clock(m) { var mm = Math.floor(m); return '18:' + (mm < 10 ? '0' : '') + mm; }
+function spark(vals) { var n = vals.length; return vals.map(function (v, i) { return (i / (n - 1) * 100).toFixed(1) + ',' + (22 - v * 20).toFixed(1); }).join(' '); }
+class Component extends DCLogic {
+  renderVals() {
+    var dark = (this.props.theme ?? 'light') === 'dark';
+    var t = THEMES[dark ? 'dark' : 'light'];
+    var sigOpen = this.state.sig === undefined ? true : this.state.sig;
+    var selIdx = this.state.sel === undefined ? 2 : this.state.sel;
+    var self = this;
+    var spans = SPANS.map(function (s, i) {
+      var e = emo(s[2], dark);
+      return { left: pct(s[0]), width: pct(s[1] - s[0]), e: e, aria: e.label + ', ' + clock(s[0]) + ' to ' + clock(s[1]),
+        ring: i === selIdx ? 'inset 0 0 0 2px ' + e.fg : 'none', pick: function () { self.setState({ sel: i }); } };
+    });
+    var s = SPANS[selIdx];
+    var sel = { e: emo(s[2], dark), range: clock(s[0]) + ' – ' + (selIdx === SPANS.length - 1 ? 'now' : clock(s[1])), reason: s[3], src: s[4], conf: s[5] + '%' };
+    var markers = [14, 27.2].map(function (m) { return { left: pct(m), color: t.accent, bg: t.accentSoft, icon: TREAT_ICON, title: 'Treat dropped ' + clock(m) }; })
+      .concat([8.2, 19.6, 26.1].map(function (m) { return { left: pct(m), color: t.muted, bg: t.surface2, icon: BELL_ICON, title: 'Owner notified ' + clock(m) }; }));
+    var ticks = [0, 5, 10, 15, 20, 25, 30].map(function (m, i) { return { left: pct(m), label: m === 30 ? 'now' : clock(m), shift: i === 0 ? '0' : (m === 30 ? '-100%' : '-50%') }; });
+    var signals = [
+      { name: 'Tail height', value: 'High', unit: '0.82', pts: spark([.5, .52, .55, .5, .48, .6, .7, .78, .82, .8, .84, .82]) },
+      { name: 'Tail wag', value: '4.2', unit: 'Hz', pts: spark([.2, .25, .22, .3, .28, .35, .6, .85, .9, .82, .88, .86]) },
+      { name: 'Ear position', value: 'Forward', unit: '', pts: spark([.5, .5, .45, .5, .55, .6, .75, .8, .8, .82, .8, .8]) },
+      { name: 'Mouth open', value: '64', unit: '%', pts: spark([.2, .2, .25, .3, .3, .28, .5, .6, .7, .66, .62, .64]) },
+      { name: 'Body lowering', value: '8', unit: '%', pts: spark([.3, .32, .3, .25, .2, .18, .12, .1, .08, .1, .08, .08]) },
+      { name: 'Motion energy', value: '0.71', unit: '', pts: spark([.2, .15, .2, .22, .3, .35, .6, .8, .75, .7, .72, .71]) }
+    ];
+    return {
+      t: t, cur: emo('excited', dark), sigOpen: sigOpen, chev: sigOpen ? 180 : 0,
+      toggleSig: function () { self.setState({ sig: !sigOpen }); },
+      legend: ORDER.map(function (k) { return emo(k, dark); }),
+      spans: spans, sel: sel, markers: markers, ticks: ticks, signals: signals,
+      audio: AUDIO.map(function (a) { return { left: pct(a[0]), label: a[1] }; })
+    };
+  }
+}
+</script>
+
+
+</body></html>
