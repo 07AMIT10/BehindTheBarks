@@ -310,6 +310,12 @@ no-ops (with one warning) unless the source type is `browser`. `status()` return
 `{"source", "state": "running" | "stalled" | "stopped", "fps", "last_frame_age_s", "audio_ok"}`.
 Web calls only these methods and never imports anything else from `vision/` or `audio/`.
 
+`scripts/run_pipeline.py --jsonl` (and the precomputed `events.jsonl` per fallback clip) writes one
+line per event in the same envelope as Web's WebSocket: `{"type": "frame" | "audio" | "rules" | "treat",
+"data": {...}}`, where `data` is the FrameEvent / AudioEvent / RulesLabel JSON (or `{"ts"}` for a treat).
+In `--fast` mode lines are in timestamp order. `FrameEvent.source` is `"live"` for browser, webcam and
+stream sources and `"file"` for clips.
+
 ## Two-day plan
 
 | When | Person A — Data | Person B — Web |
