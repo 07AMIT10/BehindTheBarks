@@ -24,7 +24,7 @@ Build window: 2 days. Demo: live camera, with a pre-recorded fallback that must 
 ## Architecture
 
 ```
-            ┌────────────── video source (webcam | stream | file) ──────────────┐
+            ┌───────── video source (browser | webcam | stream | file) ─────────┐
             ▼                                                                    │
   dog detection (YOLO, COCO "dog") ─► body keypoints (pretrained quadruped pose) │
             │                                  │                                 │
@@ -32,7 +32,7 @@ Build window: 2 days. Demo: live camera, with a pre-recorded fallback that must 
                                                ▼                                 │
                                      feature extraction ─► FrameEvent            │
                                                                                  │
-  audio source (mic | file) ─► YAMNet ─► AudioEvent                              │
+  audio source (browser | mic | file) ─► YAMNet ─► AudioEvent                    │
                                                                                  │
   FrameEvent + AudioEvent ─► fusion (rules + LLM interpreter) ─► EmotionState ─► dashboard
                                                                         └─► notifier (Telegram)
@@ -56,7 +56,7 @@ Build window: 2 days. Demo: live camera, with a pre-recorded fallback that must 
 ```
 /backend
   main.py              FastAPI app, WebSocket endpoint, event log
-  sources.py           input abstraction: webcam | stream | file (one config flag)
+  sources.py           input abstraction: browser | webcam | stream | file (one config flag)
   /vision
     detect.py          YOLO dog detection + crop
     pose.py            body keypoints
@@ -73,7 +73,7 @@ Build window: 2 days. Demo: live camera, with a pre-recorded fallback that must 
     telegram.py
   /demo
     cache/             pre-computed LLM responses for fallback clips
-/frontend              Next.js dashboard
+/frontend              Next.js dashboard + /camera page (phone as camera)
 /data
   fallback/            stock clips + audio used for the offline demo
 /config.yaml           source, thresholds, cooldowns, demo_mode flag
@@ -101,6 +101,28 @@ We cannot record our own video. The fallback therefore uses:
 - licence and source URL recorded for every file in `data/fallback/SOURCES.md`
 
 In demo mode, every LLM response for these clips is pre-computed and stored in `backend/demo/cache/`.
+
+## Phone camera (primary live source)
+
+The live demo uses a **phone as the camera and microphone**, running our own web page in its browser.
+Backup live source: a phone IP-camera app feeding the `stream` source (no extra code).
+
+- **Page:** `/camera` in the Next.js app (Person B). Captures camera + mic with `getUserMedia`, shows a
+  feeding-zone guide for positioning, keeps the screen awake, streams to the backend.
+- **Transport:** WebSocket `/ingest` on the backend (Person B). One phone at a time.
+  - First message, JSON text: `{"type": "hello", "width", "height", "fps", "sample_rate", "device"}`
+  - Then binary messages. First byte is the kind:
+    `0x01` + JPEG bytes (long side ~640 px, quality ~0.7, at the configured fps) ·
+    `0x02` + mono PCM, Int16 little-endian, at the hello's `sample_rate`, ~100 ms per chunk
+- **Handoff:** Web calls `pipeline.ingest_frame(jpeg, ts)` and `pipeline.ingest_audio(pcm16,
+  sample_rate, ts)` with `ts = time.time()` **at receipt on the server**, so video and audio share the
+  same clock as every other source. Data decodes, resamples to 16 kHz and feeds the normal pipeline.
+- **Source type:** `browser` in config. Frames may be portrait; nothing may assume landscape.
+- **HTTPS is mandatory:** browsers only allow camera/mic on HTTPS (or localhost). For the demo, run one
+  `cloudflared` quick tunnel per port (frontend and backend); the camera page takes the backend's
+  `wss://` URL from `NEXT_PUBLIC_BACKEND_URL` or a `?backend=` query parameter.
+- **Disconnects:** no frame for > 2 s → the source reports `stalled`, the rules go to `unknown`, and
+  everything recovers automatically when frames resume. No restart needed.
 
 ## Emotion vocabulary (fixed)
 
@@ -217,6 +239,7 @@ its confidence ≥ 0.7, otherwise the rules label. If no dog is detected for > 2
 - Timeline of emotion states for the session
 - Audio event strip (barks, whines)
 - Toggle: live / fallback clip
+- Phone camera page (`/camera`), mobile-first; the dashboard itself works on mobile and desktop
 
 ## Commands (fill in once scaffolded)
 ```
@@ -224,6 +247,9 @@ its confidence ≥ 0.7, otherwise the rules label. If no dog is detected for > 2
 uvicorn backend.main:app --reload
 # frontend
 cd frontend && npm run dev
+# HTTPS for the phone camera (one quick tunnel per port)
+cloudflared tunnel --url http://localhost:3000
+cloudflared tunnel --url http://localhost:8000
 # demo mode (offline, fallback clips)
 DEMO_MODE=1 uvicorn backend.main:app
 ```
@@ -241,7 +267,8 @@ the other's folders without asking.
 ### Person A — Data (models, signals, rules)
 Owns: `backend/sources.py`, `backend/vision/`, `backend/audio/`, `backend/fusion/rules.py`, `data/`
 
-- Input abstraction: webcam | stream | file, selected by one config flag
+- Input abstraction: browser | webcam | stream | file, selected by one config flag; the browser
+  source receives phone frames/audio through `Pipeline.ingest_*`
 - Dog detection, body keypoints, face landmarks, `keypoint_map.py`
 - Feature extraction into `FrameEvent`, YAMNet into `AudioEvent`
 - Rules v1 and tuning (the person who understands the features writes the rules)
@@ -257,6 +284,7 @@ Owns: `backend/main.py`, `backend/fusion/llm_interpreter.py`, `backend/fusion/st
 - FastAPI app, WebSocket push, event log, `/video` MJPEG endpoint from the pipeline's latest frame
 - LLM interpreter (Groq / OpenRouter switch), final-label logic, state machine, cooldowns
 - Telegram notifications
+- Phone camera page (`/camera`) and the `/ingest` WebSocket, HTTPS tunnels for the demo
 - Dashboard: live video with skeleton overlay drawn on a canvas from keypoints, current emotion,
   timeline, audio strip, live/fallback toggle, **"treat dropped" button**
 - Demo mode: replay `events.jsonl` + clip, serve cached LLM responses, zero network
@@ -269,10 +297,18 @@ class Pipeline:
     def __init__(self, config): ...
     async def run(self, on_frame_event, on_audio_event, on_rules_label): ...
     def latest_frame_jpeg(self) -> bytes | None: ...
+    def mark_treat(self, ts: float) -> None: ...                                  # treat button
+    def ingest_frame(self, jpeg: bytes, ts: float) -> None: ...                  # phone camera
+    def ingest_audio(self, pcm16: bytes, sample_rate: int, ts: float) -> None: ...  # phone mic
+    def status(self) -> dict: ...
     def stop(self): ...
 ```
 `on_rules_label` receives `{"ts", "emotion", "confidence", "scores": {emotion: score}}`.
-Web calls `run()` and never imports anything else from `vision/` or `audio/`.
+`mark_treat()` sets the rules engine's `treat_event_recent` flag for `data.rules.treat_window_s`
+(default 10 s). `ingest_*` are non-blocking, never raise, drop the oldest data when behind, and are
+no-ops (with one warning) unless the source type is `browser`. `status()` returns
+`{"source", "state": "running" | "stalled" | "stopped", "fps", "last_frame_age_s", "audio_ok"}`.
+Web calls only these methods and never imports anything else from `vision/` or `audio/`.
 
 ## Two-day plan
 
@@ -291,6 +327,6 @@ and Data's real signals slot in when ready. If Web falls behind, cut the audio s
 the live emotion card and one notification are the core of the demo.
 
 ## Open questions
-- Camera hardware and placement for the live demo
+- Phone placement and mount near the bowl (decided: phone browser is the live camera, IP-camera app as backup)
 - How treat events are detected (recommended: a manual "treat dropped" button on the dashboard)
 - Default provider and model for the demo (Groq vs. OpenRouter), decided from day-2 latency logs
