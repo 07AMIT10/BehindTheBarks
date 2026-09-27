@@ -77,6 +77,10 @@ class _Stats:
             out, self._ms = dict(self._ms), defaultdict(list)
         return out
 
+PIPELINE_METHODS: tuple[str, ...] = (
+    "run", "latest_frame_jpeg", "mark_treat", "ingest_frame", "ingest_audio", "status", "stop",
+)
+
 
 class Pipeline:
     def __init__(

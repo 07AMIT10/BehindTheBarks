@@ -69,9 +69,16 @@ Build window: 2 days. Demo: live camera, with a pre-recorded fallback that must 
     rules.py           heuristic emotion scoring
     llm_interpreter.py   provider-agnostic interpreter (Groq | OpenRouter)
     state.py           state machine, debouncing, cooldowns
+    prompts.py         LLM system prompt + request builder (iterate wording here)
+    llm_parse.py       defensive LLM reply parsing
+    llm_triggers.py    when to call the LLM (triggers, rate limit)
   /notify
+    base.py            Notifier port, caption format
+    dashboard.py       dashboard-only notifier ("would send to owner")
     telegram.py
+  /web                 Web runtime (Person B): settings.py, hub.py (WS fan-out), event_log.py, runtime.py (wiring)
   /demo
+    mock_pipeline.py   scripted MockPipeline (same interface as Pipeline)
     cache/             pre-computed LLM responses for fallback clips
 /frontend              Next.js dashboard + /camera page (phone as camera)
 /data
@@ -142,6 +149,8 @@ Backup live source: a phone IP-camera app feeding the `stream` source (no extra 
 - **HTTPS is mandatory:** browsers only allow camera/mic on HTTPS (or localhost). For the demo, run one
   `cloudflared` quick tunnel per port (frontend and backend); the camera page takes the backend's
   `wss://` URL from `NEXT_PUBLIC_BACKEND_URL` or a `?backend=` query parameter.
+- **Hello extensions (optional):** `facing` (`back` | `front`), `camera` (false = mic-only after the user denied camera permission; the dashboard shows the camera-blocked card instead of stalling).
+- **/ingest close codes:** `4400` bad hello, `4408` replaced by a newer phone after going quiet, `4409` another phone is already streaming.
 - **Disconnects:** no frame for > 2 s → the source reports `stalled`, the rules go to `unknown`, and
   everything recovers automatically when frames resume. No restart needed.
 
@@ -264,10 +273,19 @@ its confidence ≥ 0.7, otherwise the rules label. If no dog is detected for > 2
 
 ## Commands (fill in once scaffolded)
 ```
-# backend
-uvicorn backend.main:app --reload
-# frontend
-cd frontend && npm run dev
+# web backend (venv: uv pip install --python .venv/bin/python -r requirements-web.txt)
+make dev-backend            # uvicorn backend.main:app --reload --port 8000 (web.pipeline: mock | real)
+make test-web               # pytest tests/web
+python scripts/llm_smoke_test.py [frame.jpg]   # one real LLM call (reads .env)
+python scripts/telegram_test.py                # one test photo to Telegram
+make demo                     # DEMO_MODE=1 backend (offline fallback path; frontend: npm run start)
+python scripts/check_integration.py --seconds 30   # live-pipeline checklist (Step 10)
+python scripts/llm_benchmark.py --frames <dir> --n 20  # provider comparison (Step 11)
+python scripts/soak.py --minutes 20                    # leak + stall check (Step 11)
+# frontend (Next.js 16; first time: cd frontend && npm install)
+make dev-frontend           # http://localhost:3000 (backend URL: ?backend=… or NEXT_PUBLIC_BACKEND_URL)
+make test-frontend          # vitest + typecheck + lint
+python scripts/gen_ts_types.py   # after changing backend/contracts.py
 # HTTPS for the phone camera (one quick tunnel per port)
 cloudflared tunnel --url http://localhost:3000
 cloudflared tunnel --url http://localhost:8000

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Claude Pet · Camera setup</title>
+
+</head>
+<body>
+<x-dc>
+
+<div style="width: 390px; height: 844px; box-sizing: border-box; padding: 52px 20px 28px; display: flex; flex-direction: column; gap: 20px; background: #0F1113; color: #ECEDEE; font-family: 'Hanken Grotesk', ui-sans-serif, system-ui, sans-serif">
+<div style="display: flex; align-items: center; gap: 10px">
+<svg width="24" height="24" sc-camel-view-box="0 0 32 32" fill="none" aria-hidden="true"><rect x="1" y="1" width="30" height="30" rx="9" stroke="#3FB8C1" stroke-width="2"></rect><path d="M7 17h4l2.5-6 4 11 2.5-5H25" stroke="#3FB8C1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+<div style="font-size: 14px; font-weight: 600; color: #A0A5AD">Camera mode</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<h1 style="margin: 0; font-size: 26px; line-height: 1.2; font-weight: 700; letter-spacing: -0.015em">Use this phone as Bruno’s camera</h1>
+<p style="margin: 0; font-size: 15px; line-height: 1.45; color: #A0A5AD">Mount it near the food bowl and keep it plugged in. Your dashboard shows the feed.</p>
+</div>
+
+<ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 12px">
+<li style="padding: 16px; border-radius: 14px; background: #171A1D; border: 1px solid #2A2E33; display: flex; flex-direction: column; gap: 12px">
+<div style="display: flex; gap: 12px; align-items: flex-start">
+<span style="width: 24px; height: 24px; flex-shrink: 0; border-radius: 12px; background: #16343A; color: #8FDDE3; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center">1</span>
+<div style="display: flex; flex-direction: column; gap: 4px">
+<div style="font-size: 16px; font-weight: 600">Allow camera and microphone</div>
+<div style="font-size: 13px; line-height: 1.45; color: #A0A5AD">Used to read Bruno’s posture, face and sounds. Your browser will ask once.</div>
+</div>
+</div>
+<button style="height: 44px; border-radius: 10px; border: 1px solid #3FB8C1; background: transparent; color: #8FDDE3; font: 600 15px 'Hanken Grotesk', sans-serif; display: flex; align-items: center; justify-content: center; gap: 8px">
+<svg width="18" height="18" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8a2 2 0 0 1 2-2h2l1.5-2h7L17 6h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><path d="M15 12.5a3 3 0 1 1-6 0a3 3 0 0 1 6 0z"></path></svg>Allow access</button>
+</li>
+<li style="padding: 16px; border-radius: 14px; background: #171A1D; border: 1px solid #2A2E33; display: flex; flex-direction: column; gap: 12px">
+<div style="display: flex; gap: 12px; align-items: center">
+<span style="width: 24px; height: 24px; flex-shrink: 0; border-radius: 12px; background: #16343A; color: #8FDDE3; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center">2</span>
+<div style="font-size: 16px; font-weight: 600">Choose camera</div>
+</div>
+<div role="radiogroup" aria-label="Camera" style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; padding: 4px; border-radius: 12px; background: #1E2226">
+<sc-for list="{{cams}}" as="c" hint-placeholder-count="2">
+<button role="radio" aria-checked="{{c.on}}" sc-camel-on-click="{{c.pick}}" style="height: 44px; border: 0; border-radius: 9px; background: {{c.bg}}; color: {{c.fg}}; font: 600 14px 'Hanken Grotesk', sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0">{{c.label}}<span style="font-size: 11px; font-weight: 500; opacity: .75">{{c.sub}}</span></button>
+</sc-for>
+</div>
+</li>
+<li style="padding: 16px; border-radius: 14px; background: #171A1D; border: 1px solid #2A2E33; display: flex; flex-direction: column; gap: 12px">
+<div style="display: flex; gap: 12px; align-items: center">
+<span style="width: 24px; height: 24px; flex-shrink: 0; border-radius: 12px; background: #16343A; color: #8FDDE3; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center">3</span>
+<div style="font-size: 16px; font-weight: 600">Point at the food bowl</div>
+</div>
+<div style="position: relative; height: 150px; border-radius: 10px; overflow: hidden; background: #1B1D1F">
+<svg sc-camel-view-box="560 300 360 180" sc-camel-preserve-aspect-ratio="xMidYMid slice" style="position: absolute; inset: 0; width: 100%; height: 100%" aria-hidden="true">
+<rect x="-2000" y="-2000" width="5000" height="2330" fill="#2B2E31"></rect>
+<rect x="-2000" y="330" width="5000" height="2700" fill="#3A3733"></rect>
+<rect x="-2000" y="322" width="5000" height="10" fill="#33363A"></rect>
+<rect x="700" y="398" width="160" height="44" rx="6" fill="#343E3D"></rect>
+<ellipse cx="778" cy="416" rx="46" ry="12" fill="#707679"></ellipse>
+<ellipse cx="778" cy="412" rx="36" ry="7" fill="#3F4448"></ellipse>
+</svg>
+<div style="position: absolute; left: 22%; right: 12%; top: 30%; bottom: 14%; border: 2px dashed #7FE3E8; border-radius: 12px"></div>
+<div style="position: absolute; left: 22%; top: 30%; transform: translateY(-120%); font-size: 11px; font-weight: 700; color: #BFF2F4">Feeding zone</div>
+</div>
+<div style="font-size: 13px; line-height: 1.45; color: #A0A5AD">Fit the bowl and about a metre around it inside the dashed zone. Waist height works best.</div>
+</li>
+</ol>
+<div style="flex-grow: 1"></div>
+<button style="height: 56px; border: 0; border-radius: 14px; background: #3FB8C1; color: #0F1113; font: 700 17px 'Hanken Grotesk', sans-serif">Start streaming</button>
+<div style="font-size: 12px; text-align: center; color: #A0A5AD">Paired with dashboard · code <span style="font-family: 'IBM Plex Mono', ui-monospace, monospace; color: #ECEDEE">4821</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;$preview&quot;:{&quot;width&quot;:390,&quot;height&quot;:844}}">
+class Component extends DCLogic {
+  renderVals() {
+    var self = this;
+    var cur = this.state.cam || 'back';
+    var cams = [{ id: 'back', label: 'Back', sub: 'Recommended' }, { id: 'front', label: 'Front', sub: 'Selfie' }];
+    return {
+      cams: cams.map(function (c) {
+        var on = c.id === cur;
+        return { label: c.label, sub: c.sub, on: on, bg: on ? '#2A3035' : 'transparent', fg: on ? '#ECEDEE' : '#A0A5AD', pick: function () { self.setState({ cam: c.id }); } };
+      })
+    };
+  }
+}
+</script>
+
+
+</body></html>

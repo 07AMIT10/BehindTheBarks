@@ -119,3 +119,53 @@ data:
       happy: {growl: 1.0}
       relaxed: {growl: 1.0}
       excited: {growl: 0.5}
+
+# ---------------------------------------------------------------- Person B (Web)
+web:
+  pipeline: mock              # mock | real
+  log_dir: out
+  ws:
+    frame_fps: 8              # max frame messages/s per client
+    client_queue: 64          # per-client buffer; oldest dropped when full
+    history: 2000             # non-frame events kept for GET /events
+  video:
+    fps: 8                    # MJPEG rate for GET /video
+  state:
+    persist_s: 3.0            # new emotion must hold this long to become the state
+    no_dog_unknown_s: 2.0
+    llm_override_conf: 0.7    # LLM wins a disagreement only at/above this
+    llm_stale_s: 12.0         # ignore LLM results older than this
+    cooldown_s: 60.0          # default per-emotion notification cooldown
+    cooldowns: {}             # per-emotion override, e.g. {excited: 120}
+    always_notify: [fearful, aggressive, disinterested]
+    quiet: [unknown]
+    tick_hz: 4
+    live_hz: 1
+  llm:
+    min_interval_s: 3.0
+    heartbeat_s: 10.0
+    audio_trigger_score: 0.6
+    timeout_s: 8.0
+    context_s: 3.0            # seconds of features sent
+    max_feature_samples: 6
+    image_max_side: 512
+    json_mode: true
+    temperature: 0.2
+    max_tokens: 200
+    openrouter_referer: http://localhost:3000
+    openrouter_title: Behind The Barks
+  notify:
+    mode: dashboard_only      # telegram | dashboard_only
+  demo:
+    manifest: data/fallback/manifest.json   # Person A's file; falls back to backend/demo/clips/manifest.json
+    clips_dir: backend/demo/clips           # web-owned placeholder clips
+    telegram_first: false                   # also send the first demo notification via Telegram if configured
+  ingest:                     # /ingest phone camera (Task 3); every key optional, defaults live in settings.py
+    stale_s: 5.0              # a quiet phone counts as gone; a newcomer replaces it
+    status_every_s: 2.0       # phone status broadcast to dashboards
+    fps_window_s: 3.0         # sliding window for received-fps metering
+    max_message_bytes: 2000000
+  profile:                    # shown in the UI header and Telegram captions (ui/screens)
+    dog_name: Bruno
+    location: Kitchen
+    zone_label: feeding area

@@ -3,7 +3,7 @@
 Mirrors the "JSON contracts" section of CLAUDE.md exactly. Change a field only after agreeing it
 with the consumer, and update CLAUDE.md in the same commit.
 
-EmotionState (fusion -> dashboard) is owned by Web and lives on their side of the boundary.
+EmotionState and LLMResult (fusion -> dashboard) are owned by Web.
 """
 
 from __future__ import annotations
@@ -93,3 +93,27 @@ class RulesLabel(_Contract):
             if not 0.0 <= score <= 1.0:
                 raise ValueError(f"score for {emotion!r} is {score}, outside 0..1")
         return v
+
+
+class EmotionState(_Contract):
+    """Fusion -> dashboard / notifier (owned by Web). `snapshot` is a base64 JPEG or URL, or None."""
+
+    ts: float
+    emotion: Emotion
+    confidence: float = Field(ge=0.0, le=1.0)
+    source: Literal["rules", "llm", "fused"]
+    reason: str
+    snapshot: str | None = None
+
+
+class LLMResult(_Contract):
+    """One parsed LLM interpretation (Web-internal, broadcast to the dashboard as type "llm")."""
+
+    ts: float
+    emotion: Emotion
+    confidence: float = Field(ge=0.0, le=1.0)
+    reason: str
+    provider: str
+    model: str
+    latency_ms: float
+    trigger: str
