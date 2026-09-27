@@ -133,11 +133,15 @@ Ranges: `tail_height` −1 (tucked) to 1 (high). `mouth_open`, `body_lowering` a
 run from 0 to 1. `ear_position` is `up | neutral | back | unknown`. Any feature may be `null` if
 keypoints are missing or low confidence (< 0.3).
 
-### AudioEvent (audio → fusion), one per YAMNet window (~0.96 s)
+### AudioEvent (audio → fusion), debounced from YAMNet windows (~0.96 s, 0.48 s hop)
 ```json
 { "ts": 1727340000.5, "label": "bark", "score": 0.82 }
 ```
 `label` is `bark | yip | growl | whimper | howl | silence | other`.
+`ts` is the end of the window. Events are emitted on onsets and changes, not every window: a dog
+label at most once per `data.audio.debounce_s` (default 1 s), `silence`/`other` only when they differ
+from the previous window. Consumers must not assume a steady rate; the current sound is the latest
+event. `debounce_s: 0` gives one event per window.
 
 ### EmotionState (fusion → dashboard / notifier)
 ```json

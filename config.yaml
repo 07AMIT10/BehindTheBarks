@@ -57,6 +57,19 @@ data:
       mouth_open: 0.5
       body_lowering: 0.4
       motion_energy: 0.5
+  audio:                     # YAMNet AudioEvents (Step 7)
+    model_dir: models/yamnet   # TF Hub saved model; fetched once on first use (needs network once), then offline
+    hop_s: 0.48                # window hop (window is 0.96 s, so 50% overlap)
+    threshold: 0.3             # best mapped-class score below this -> "other"
+    silence_rms: 0.005         # window RMS below this -> "silence" (model is skipped)
+    debounce_s: 1.0            # min gap between events with the same dog label; 0 = one event per window
+    max_gap_s: 0.5             # a timestamp gap larger than this (dropped mic chunks) restarts the window buffer
+    label_map:                 # our label -> AudioSet display names; score = max over the listed classes
+      bark: [Bark, Bow-wow]
+      yip: [Yip]
+      growl: [Growling]
+      whimper: [Whimper (dog)]
+      howl: [Howl]
   # Rules thresholds; tuned in Step 11.
   rules:
     window_s: 3.0

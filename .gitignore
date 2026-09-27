@@ -9,3 +9,5 @@ out/
 .DS_Store
 data/fallback/raw/
 *.tflite
+models/yamnet/
+data/esc50/
