@@ -50,7 +50,7 @@ class Hub:
                                "data": data.model_dump(mode="json") if isinstance(data, BaseModel) else data}
         if meta:
             env["meta"] = meta
-        if type != "frame":
+        if type not in ("frame", "status"):  # status is live-only: GET /status is the source of truth
             self._history.append(env)
         if self._log:
             self._log.write(env)

@@ -76,3 +76,12 @@ def test_event_log_writes_jsonl(tmp_path):
     lines = [json.loads(l) for l in log.path.read_text().splitlines()]
     assert [m["type"] for m in lines] == ["treat", "frame"]
     assert log.path.name.startswith("session-") and log.path.suffix == ".jsonl"
+
+
+def test_status_envelopes_are_live_only():
+    hub = Hub(clock=Clock())
+    q = hub.subscribe()
+    hub.publish("status", {"phone": None})
+    hub.publish("treat", {"i": 1})
+    assert [m["type"] for m in hub.history()] == ["treat"]
+    assert q.qsize() == 2

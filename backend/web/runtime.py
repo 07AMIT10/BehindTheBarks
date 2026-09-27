@@ -14,12 +14,13 @@ import threading
 import time
 from collections import deque
 from dataclasses import asdict
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from backend.contracts import AudioEvent, EmotionState, Features, FrameEvent, RulesLabel
 from backend.fusion.llm_triggers import TriggerPolicy
 from backend.fusion.state import FusionState, StateConfig
 from backend.web.hub import Hub
+from backend.web.ingest import Hello, IngestSession
 from backend.web.settings import is_demo
 
 log = logging.getLogger("runtime")
@@ -44,6 +45,12 @@ class Runtime:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._loop_thread: int | None = None
         self._stopped = False
+        ing = cfg["web"]["ingest"]
+        self._stale_s, self._phone_every_s = float(ing["stale_s"]), float(ing["status_every_s"])
+        self._fps_window_s, self._max_msg = float(ing["fps_window_s"]), int(ing["max_message_bytes"])
+        self.phone: IngestSession | None = None
+        self._phone_prev: IngestSession | None = None
+        self._phone_closer: Callable[[], Awaitable[None]] | None = None
 
     # -- lifecycle ----------------------------------------------------------------------------
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
@@ -54,6 +61,7 @@ class Runtime:
         self._tasks = [
             asyncio.create_task(self._run_pipeline(), name="pipeline"),
             asyncio.create_task(self._tick_loop(), name="tick"),
+            asyncio.create_task(self._phone_loop(), name="phone-status"),
         ]
 
     async def stop(self) -> None:
@@ -85,6 +93,12 @@ class Runtime:
             except Exception:  # noqa: BLE001
                 log.exception("tick failed")
             await asyncio.sleep(period)
+
+    async def _phone_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self._phone_every_s)
+            if self.phone is not None:
+                self.publish_phone()
 
     # -- callbacks ----------------------------------------------------------------------------
     def _off_loop(self, fn, arg) -> bool:
@@ -143,6 +157,49 @@ class Runtime:
         if reason:
             self._llm_task = self._spawn(self._run_llm(reason, now))
 
+    # -- phone (/ingest) ----------------------------------------------------------------------
+    def phone_open(self, hello: Hello, closer: Callable[[], Awaitable[None]] | None = None) -> IngestSession | None:
+        """Register a phone that sent a valid hello. Returns None if another phone is active (busy).
+
+        A phone that has sent nothing for ingest.stale_s counts as gone (half-open socket after a
+        Wi-Fi drop), so the newcomer replaces it and the old socket is closed via its closer."""
+        now = self.clock()
+        old = self.phone
+        if old is not None:
+            if old.idle_s(now) < self._stale_s:
+                return None
+            old.connected = False
+            if self._phone_closer is not None:
+                self._spawn(self._phone_closer())
+            log.warning("phone %r went quiet for %.1fs; replaced", old.hello.device, old.idle_s(now))
+        self.phone = IngestSession(hello, self.pipeline, clock=self.clock, fps_window_s=self._fps_window_s,
+                                   max_message_bytes=self._max_msg)
+        self._phone_closer = closer
+        log.info("phone connected: %s", hello)
+        self.publish_phone()
+        return self.phone
+
+    def phone_close(self, session: IngestSession, code: int | None = None) -> None:
+        """The phone's socket ended. Ignored if this session was already replaced.
+
+        Close code 1000 means the Stop button: the phone is forgotten (status "phone": null). Anything
+        else (page killed, Wi-Fi drop) keeps a disconnected snapshot so the dashboard can say so."""
+        session.connected = False
+        if self.phone is not session:
+            return
+        stopped = code == 1000
+        self.phone, self._phone_closer = None, None
+        self._phone_prev = None if stopped else session
+        log.info("phone %s: %s (code %s)", "stopped" if stopped else "disconnected", session.hello.device, code)
+        self.publish_phone()
+
+    def phone_status(self) -> dict | None:
+        s = self.phone or self._phone_prev
+        return None if s is None else s.snapshot(self.clock())
+
+    def publish_phone(self) -> None:
+        self.hub.publish("status", {"phone": self.phone_status(), "pipeline_status": self._pipeline_status()})
+
     # -- tasks --------------------------------------------------------------------------------
     def _spawn(self, coro) -> asyncio.Task:
         task = asyncio.get_running_loop().create_task(coro)
@@ -189,11 +246,14 @@ class Runtime:
             return None
 
     # -- read models --------------------------------------------------------------------------
-    def status(self) -> dict:
+    def _pipeline_status(self) -> dict | None:
         try:
-            ps = self.pipeline.status()
+            return self.pipeline.status()
         except Exception:  # noqa: BLE001 - includes NotImplementedError on the stub
-            ps = None
+            return None
+
+    def status(self) -> dict:
+        ps = self._pipeline_status()
         ft = list(self._frame_times)
         fps = round((len(ft) - 1) / (ft[-1] - ft[0]), 1) if len(ft) > 1 and ft[-1] > ft[0] else 0.0
         s = getattr(self.interpreter, "s", None)
@@ -209,6 +269,7 @@ class Runtime:
             "clients": self.hub.client_count,
             "fps": fps,
             "profile": self.cfg["web"]["profile"],
+            "phone": self.phone_status(),
         }
 
     def timeline(self) -> list[dict]:

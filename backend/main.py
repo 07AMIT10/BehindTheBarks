@@ -20,6 +20,7 @@ from backend.fusion.llm_interpreter import LLMInterpreter
 from backend.notify import build_notifier
 from backend.web.event_log import EventLog
 from backend.web.hub import Hub
+from backend.web.ingest import CLOSE_BAD_HELLO, CLOSE_BUSY, CLOSE_REPLACED, HelloError, parse_hello
 from backend.web.runtime import Runtime
 from backend.web.settings import LLMSettings, load_config
 
@@ -105,6 +106,45 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             pass
         finally:
             app.state.hub.unsubscribe(q)
+
+    @app.websocket("/ingest")
+    async def ingest(sock: WebSocket) -> None:
+        """Phone camera: JSON hello, then binary 0x01+JPEG / 0x02+PCM16 (backend/web/ingest.py)."""
+        await sock.accept()
+        rt = app.state.rt
+        first = await sock.receive()
+        if first["type"] == "websocket.disconnect":
+            return
+        try:
+            hello = parse_hello(first.get("text"))
+        except HelloError as err:
+            await sock.close(code=CLOSE_BAD_HELLO, reason=str(err))
+            return
+
+        async def close_replaced() -> None:
+            try:
+                await sock.close(code=CLOSE_REPLACED, reason="Replaced by a newer phone connection")
+            except RuntimeError:
+                pass  # already closed
+
+        session = rt.phone_open(hello, closer=close_replaced)
+        if session is None:
+            await sock.close(code=CLOSE_BUSY, reason="Another phone is already streaming")
+            return
+        code: int | None = None
+        try:
+            while True:
+                msg = await sock.receive()
+                if msg["type"] == "websocket.disconnect":
+                    code = msg.get("code")
+                    break
+                data = msg.get("bytes")
+                if data is not None:
+                    session.handle(data)
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            rt.phone_close(session, code)
 
     return app
 

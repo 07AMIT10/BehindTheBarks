@@ -128,6 +128,8 @@ Backup live source: a phone IP-camera app feeding the `stream` source (no extra 
 - **HTTPS is mandatory:** browsers only allow camera/mic on HTTPS (or localhost). For the demo, run one
   `cloudflared` quick tunnel per port (frontend and backend); the camera page takes the backend's
   `wss://` URL from `NEXT_PUBLIC_BACKEND_URL` or a `?backend=` query parameter.
+- **Hello extensions (optional):** `facing` (`back` | `front`), `camera` (false = mic-only after the user denied camera permission; the dashboard shows the camera-blocked card instead of stalling).
+- **/ingest close codes:** `4400` bad hello, `4408` replaced by a newer phone after going quiet, `4409` another phone is already streaming.
 - **Disconnects:** no frame for > 2 s → the source reports `stalled`, the rules go to `unknown`, and
   everything recovers automatically when frames resume. No restart needed.
 

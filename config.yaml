@@ -155,6 +155,11 @@ web:
     openrouter_title: Behind The Barks
   notify:
     mode: dashboard_only      # telegram | dashboard_only
+  ingest:                     # /ingest phone camera (Task 3); every key optional, defaults live in settings.py
+    stale_s: 5.0              # a quiet phone counts as gone; a newcomer replaces it
+    status_every_s: 2.0       # phone status broadcast to dashboards
+    fps_window_s: 3.0         # sliding window for received-fps metering
+    max_message_bytes: 2000000
   profile:                    # shown in the UI header and Telegram captions (ui/screens)
     dog_name: Bruno
     location: Kitchen

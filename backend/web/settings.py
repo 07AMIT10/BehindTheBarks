@@ -28,6 +28,7 @@ WEB_DEFAULTS: dict[str, Any] = {
         "openrouter_title": "Behind The Barks",
     },
     "notify": {"mode": "dashboard_only"},
+    "ingest": {"stale_s": 5.0, "status_every_s": 2.0, "fps_window_s": 3.0, "max_message_bytes": 2_000_000},
     "profile": {"dog_name": "Bruno", "location": "Kitchen", "zone_label": "feeding area"},
 }
 

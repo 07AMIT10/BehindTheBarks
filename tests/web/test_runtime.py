@@ -147,5 +147,88 @@ async def test_start_stop_with_real_loop(tmp_path):
     await rt.stop()
     assert mp.status()["state"] == "stopped"
     st = rt.status()
-    assert set(st) == {"pipeline", "pipeline_status", "demo_mode", "llm", "notify_mode", "clients", "fps", "profile"}
+    assert set(st) == {"pipeline", "pipeline_status", "demo_mode", "llm", "notify_mode", "clients", "fps", "profile",
+                       "phone"}
     assert st["profile"]["dog_name"] == "Bruno" and st["llm"]["online"] is True
+
+
+# -- phone (/ingest) ---------------------------------------------------------------------------
+from backend.web.ingest import KIND_FRAME, parse_hello  # noqa: E402
+
+HELLO = parse_hello('{"type": "hello", "width": 360, "height": 640, "fps": 8, "sample_rate": 48000, '
+                    '"device": "Pixel 7", "facing": "back"}')
+PHONE_JPEG = b"\xff\xd8\xff\xe0phone\xff\xd9"
+
+
+async def test_phone_open_publishes_status_and_feeds_pipeline(tmp_path):
+    rt, mp, hub, q, clock = make(tmp_path)
+    assert rt.status()["phone"] is None
+    s = rt.phone_open(HELLO)
+    assert s is not None and rt.phone is s
+    msgs = [m for m in drain(q) if m["type"] == "status"]
+    assert msgs[-1]["data"]["phone"]["connected"] is True
+    assert msgs[-1]["data"]["phone"]["device"] == "Pixel 7"
+    assert set(msgs[-1]["data"]) == {"phone", "pipeline_status"}
+    s.handle(bytes([KIND_FRAME]) + PHONE_JPEG)
+    mp.step(clock["t"])
+    assert mp.latest_frame_jpeg() == PHONE_JPEG
+    assert set(rt.status()["phone"]) == {"connected", "device", "facing", "camera", "fps", "width", "height",
+                                         "sample_rate", "last_frame_age_s"}
+
+
+async def test_second_phone_is_busy_while_first_is_active(tmp_path):
+    rt, mp, hub, q, clock = make(tmp_path)
+    first = rt.phone_open(HELLO)
+    clock["t"] += 1.0
+    assert rt.phone_open(HELLO) is None
+    assert rt.phone is first
+
+
+async def test_quiet_phone_is_replaced_and_its_socket_closed(tmp_path):
+    rt, mp, hub, q, clock = make(tmp_path)
+    closed = []
+
+    async def closer():
+        closed.append(True)
+
+    first = rt.phone_open(HELLO, closer=closer)
+    clock["t"] += 6.0  # > ingest.stale_s (5 s) without a message
+    second = rt.phone_open(HELLO)
+    await settle(rt)
+    assert second is not None and second is not first and rt.phone is second
+    assert first.connected is False and closed == [True]
+    rt.phone_close(first)  # the old handler's finally: must not disconnect the new phone
+    assert rt.phone is second
+
+
+async def test_phone_close_keeps_last_snapshot_disconnected(tmp_path):
+    rt, mp, hub, q, clock = make(tmp_path)
+    s = rt.phone_open(HELLO)
+    drain(q)
+    rt.phone_close(s, 1001)  # page closed / killed
+    assert rt.phone is None
+    st = rt.status()["phone"]
+    assert st["connected"] is False and st["device"] == "Pixel 7" and st["fps"] == 0.0
+    assert [m["data"]["phone"]["connected"] for m in drain(q) if m["type"] == "status"] == [False]
+    assert rt.phone_open(HELLO) is not None  # a new phone can connect straight away
+
+
+async def test_phone_status_broadcast_every_interval(tmp_path):
+    rt, mp, hub, q, clock = make(tmp_path)
+    rt._phone_every_s = 0.05
+    task = asyncio.create_task(rt._phone_loop())
+    rt.phone_open(HELLO)
+    drain(q)
+    await asyncio.sleep(0.18)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert len([m for m in drain(q) if m["type"] == "status"]) >= 2
+
+
+async def test_phone_stop_button_forgets_the_phone(tmp_path):
+    rt, mp, hub, q, clock = make(tmp_path)
+    s = rt.phone_open(HELLO)
+    drain(q)
+    rt.phone_close(s, 1000)  # the page's Stop button closes with 1000
+    assert rt.status()["phone"] is None
+    assert [m["data"]["phone"] for m in drain(q) if m["type"] == "status"] == [None]
