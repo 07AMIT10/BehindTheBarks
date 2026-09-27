@@ -13,3 +13,4 @@ models/yamnet/
 data/esc50/
 data/fallback/events/*.debug.mp4
 data/fallback/overlays/
+data/fallback/tuning/
