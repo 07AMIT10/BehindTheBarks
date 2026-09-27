@@ -37,6 +37,26 @@ data:
     min_head_points: 3        # head keypoints needed, one of them an eye or ear base
     min_inside_frac: 0.9      # plausibility: fraction of landmarks that must fall inside the crop
     min_spread: 0.25          # plausibility: landmark extent as a fraction of the crop side
+  features:                   # FrameEvent feature extraction (Step 6); every key is optional, defaults live in features.py
+    window_s: 3.0             # rolling keypoint window
+    gap_reset_s: 2.0          # no dog for this long empties the window
+    tail_height_scale: 0.4    # tail-tip offset from the back line, in body lengths, that maps to +-1
+    wag_min_std: 0.03         # tail oscillation (body lengths, std) below which the tail counts as still
+    wag_min_peak_ratio: 0.3   # share of spectral power at the peak below which the wag is "not periodic"
+    ear_up_min: 0.6           # ear vector upward cosine for "up"
+    ear_back_cos: 0.85        # cosine to the backward head axis for "back"
+    mouth_closed: 0.03        # lip gap / face size that reads as 0
+    mouth_full: 0.25          # lip gap / face size that reads as 1
+    baseline_s: 30.0          # history used for the standing-height baseline
+    lowering_deadband: 0.05   # fractional height drop ignored as noise
+    lowering_full: 0.4        # fractional height drop that reads as 1
+    motion_floor: 0.2         # keypoint speed (body lengths/s) that reads as 0 (pose jitter; provisional, tune in Step 11)
+    motion_full: 1.0          # keypoint speed (body lengths/s) that reads as 1
+    smooth:                   # EMA weight of the newest value per feature (1.0 = no smoothing)
+      tail_height: 0.4
+      mouth_open: 0.5
+      body_lowering: 0.4
+      motion_energy: 0.5
   # Rules thresholds; tuned in Step 11.
   rules:
     window_s: 3.0
