@@ -14,6 +14,10 @@ FrameCallback = Callable[[FrameEvent], None]
 AudioCallback = Callable[[AudioEvent], None]
 RulesCallback = Callable[[RulesLabel], None]
 
+PIPELINE_METHODS: tuple[str, ...] = (
+    "run", "latest_frame_jpeg", "mark_treat", "ingest_frame", "ingest_audio", "status", "stop",
+)
+
 
 class Pipeline:
     def __init__(self, config: dict[str, Any]) -> None:
@@ -43,6 +47,23 @@ class Pipeline:
 
     def latest_frame_jpeg(self) -> bytes | None:
         """Newest raw frame as JPEG (no overlay drawn), or None before the first frame."""
+        raise NotImplementedError
+
+    def mark_treat(self, ts: float) -> None:
+        """Treat button: set the rules engine's treat_event_recent for data.rules.treat_window_s."""
+        raise NotImplementedError
+
+    def ingest_frame(self, jpeg: bytes, ts: float) -> None:
+        """Phone camera frame (browser source). Non-blocking, never raises, drops oldest when behind;
+        a no-op with one warning unless the source type is `browser`."""
+        raise NotImplementedError
+
+    def ingest_audio(self, pcm16: bytes, sample_rate: int, ts: float) -> None:
+        """Phone mic chunk: mono Int16 LE PCM. Same rules as ingest_frame."""
+        raise NotImplementedError
+
+    def status(self) -> dict:
+        """{"source", "state": "running"|"stalled"|"stopped", "fps", "last_frame_age_s", "audio_ok"}."""
         raise NotImplementedError
 
     def stop(self) -> None:
