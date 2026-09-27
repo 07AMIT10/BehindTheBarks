@@ -1,4 +1,4 @@
-# Data-side dependencies (Person A). Python 3.11, macOS arm64. Generated from a verified venv.
+# Data-side dependencies (Person A). Python 3.11-3.12, macOS arm64. Generated from a verified venv.
 # setuptools<81 is required: tensorflow-hub 0.16 imports pkg_resources, removed in newer setuptools.
 matplotlib==3.11.2
 numpy==2.4.6
@@ -9,11 +9,18 @@ pyyaml==6.0.3
 scipy==1.17.1
 setuptools==80.10.2
 sounddevice==0.5.6
-tensorflow==2.21.0
+# tensorflow/tf-keras pinned to 2.20.x, not the newer 2.21.0: 2.21.0 caps h5py<3.15, which
+# is unsatisfiable alongside deeplabcut 3.0.2's h5py>=3.15.1 (macOS). 2.20.0 only floors
+# h5py>=3.11.0, so both resolve onto one h5py. Keep tensorflow and tf-keras on the same minor.
+tensorflow==2.20.0
 tensorflow-hub==0.16.1
-tf-keras==2.21.0
+tf-keras==2.20.1
 torch==2.14.0
 torchvision==0.29.0
-ultralytics==8.4.163
+# ultralytics pinned below 8.4.163: 8.4.163 added a filelock>=3.16.1 requirement that's
+# unsatisfiable alongside deeplabcut 3.0.2's filelock<3.16. 8.4.100 has no filelock
+# dependency at all, so it resolves onto deeplabcut's constraint. Bump only after re-checking
+# both pins together (`pip install --dry-run -r requirements-data.txt`).
+ultralytics==8.4.100
 # Body pose (Step 4): DeepLabCut SuperAnimal-Quadruped. Pulls opencv-python-headless next to opencv-python (cv2 still imports fine).
 deeplabcut==3.0.2
