@@ -11,6 +11,8 @@ and its frames and audio go in through Pipeline.ingest_frame / ingest_audio, exa
 --jsonl writes every event as one line: {"type": "frame" | "audio" | "rules" | "treat", "data": {...}}
 (the same envelope as Web's WebSocket), in timestamp order when --fast is used.
 --treat-at SECONDS (repeatable) presses the "treat dropped" button that many seconds into the clip.
+--rebase-ts (file source) writes every "ts" in --jsonl as seconds from the clip start instead of wall time,
+which makes the output deterministic; scripts/precompute_events.py uses it for the fallback pack.
 """
 
 from __future__ import annotations
@@ -93,6 +95,7 @@ def parse_args(argv):
     ap.add_argument("--duration", type=float, help="stop after this many seconds")
     ap.add_argument("--treat-at", type=float, action="append", default=[], metavar="S", help="treat dropped S seconds into the clip")
     ap.add_argument("--jsonl", help="write every event here, one JSON per line")
+    ap.add_argument("--rebase-ts", action="store_true", help="file only: jsonl timestamps are seconds from clip start")
     ap.add_argument("--debug-video", help="write an annotated mp4 here")
     ap.add_argument("--portrait", action="store_true", help="browser: the fake phone rotates frames 90 degrees")
     ap.add_argument("--phone-fps", type=float, default=10.0, help="browser: frames per second the fake phone sends")
@@ -139,9 +142,12 @@ async def amain(args) -> dict:
     def write(kind: str, data: dict) -> None:
         counts[kind] += 1
         if out_fh:
+            if origin:
+                data["ts"] = round(data["ts"] - origin, 3)
             out_fh.write(json.dumps({"type": kind, "data": data}) + "\n")
 
     written_treats = 0
+    origin = 0.0  # subtracted from every jsonl "ts"; set once the pipeline's clock exists (--rebase-ts)
 
     def flush_treats(upto: float) -> None:
         nonlocal written_treats
@@ -161,6 +167,10 @@ async def amain(args) -> dict:
     if args.debug_video:
         Path(args.debug_video).parent.mkdir(parents=True, exist_ok=True)
     pipeline = Pipeline(cfg, frame_tap=tap if args.debug_video else None)
+    if args.rebase_ts:
+        if is_browser or src.get("type") != "file":
+            raise SystemExit("--rebase-ts only applies to file sources (live sources have no clip clock)")
+        origin = pipeline.clock_start()
 
     if args.treat_at:
         if is_browser or src.get("type") != "file":
