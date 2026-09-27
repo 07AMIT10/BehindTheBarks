@@ -257,6 +257,10 @@ make dev-backend            # uvicorn backend.main:app --reload --port 8000 (web
 make test-web               # pytest tests/web
 python scripts/llm_smoke_test.py [frame.jpg]   # one real LLM call (reads .env)
 python scripts/telegram_test.py                # one test photo to Telegram
+make demo                     # DEMO_MODE=1 backend (offline fallback path; frontend: npm run start)
+python scripts/check_integration.py --seconds 30   # live-pipeline checklist (Step 10)
+python scripts/llm_benchmark.py --frames <dir> --n 20  # provider comparison (Step 11)
+python scripts/soak.py --minutes 20                    # leak + stall check (Step 11)
 # frontend (Next.js 16; first time: cd frontend && npm install)
 make dev-frontend           # http://localhost:3000 (backend URL: ?backend=… or NEXT_PUBLIC_BACKEND_URL)
 make test-frontend          # vitest + typecheck + lint

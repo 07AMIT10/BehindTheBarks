@@ -51,3 +51,21 @@ Troubleshooting:
 - Backend down: the dashboard shows "Reconnecting to Claude Pet · attempt n". Restart the backend;
   the page recovers without a reload.
 - Camera dead: switch to the fallback path (Plan 4: demo clips). Until then, restart the phone page.
+
+## Offline fallback demo
+
+1. While online: `.venv/bin/python scripts/precompute_demo.py` (commits fresh timelines), then
+   `cd frontend && npm run build` (fonts + pages baked in).
+2. Switch the laptop to airplane mode. Start the backend: `DEMO_MODE=1 make dev-backend`.
+   Start the frontend: `cd frontend && npm run start` (NOT `dev` — dev mode needs network for HMR).
+3. Open http://localhost:3000, flip to **Demo**, pick a clip. Video, emotions, toasts and timeline
+   all run from localhost. Full test: airplane mode, full run-through of one clip.
+
+## Failure drills (rehearse once before the demo)
+
+- Kill the network mid-session: dashboard shows "Reconnecting…", keeps the last state greyed, recovers
+  without reload. LLM calls fail → "AI offline · rules only".
+- Revoke the API key (bad `LLM_API_KEY`): same rules-only fallback; check `llm_smoke_test.py` reports `error`.
+- Stop the pipeline / kill the backend: banner + paused card; restart, everything resumes.
+- Disconnect the phone page: camera banner appears; reopen the page, streaming resumes.
+- WebSocket hard refresh mid-demo: `/events` bootstrap restores timeline + last state.
