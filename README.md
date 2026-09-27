@@ -31,7 +31,7 @@ WagWatch puts an old phone next to the food bowl. It watches from a distance, wi
 <p align="center"><sub>16-second loop from the live run. Click for the full 90-second video.</sub></p>
 
 <div align="center">
-  <a href="./assets/WagWatch_Showcase_90s.mp4"><img src="https://img.shields.io/badge/%E2%96%B6%20Watch%20the%2090s%20demo-ef4444?style=for-the-badge" alt="Watch the 90 second demo video"></a>
+  <a href="https://drive.google.com/file/d/1hFtcWJiUTKwAFoDsJZX7ldm5-II10bWf/view?usp=drive_link"><img src="https://img.shields.io/badge/%E2%96%B6%20Watch%20the%2090s%20demo-ef4444?style=for-the-badge" alt="Watch the 90 second demo video"></a>
 </div>
 
 **What just happened**
@@ -41,9 +41,6 @@ WagWatch puts an old phone next to the food bowl. It watches from a distance, wi
 3. **Result:** the dashboard went *No dog in view → Excited → Happy* as Bruno arrived and settled. It also queued an owner alert.
 
 ## Photos
-
-> [!IMPORTANT]
-> Photos needed: **team photo**, **you with your build**. Add them to `./assets` and attach them to the GitHub Release for this submission.
 
 <table>
   <tr>
@@ -58,8 +55,6 @@ WagWatch puts an old phone next to the food bowl. It watches from a distance, wi
   </tr>
   <tr>
     <td align="center"><img src="./assets/bts-sketch-2.jpg" width="260" alt="Sticky note demo plan: Pablo, Coco, dashboard rec, phone screen rec, actions (treat, light and sound triggers)"><br><sub><b>Behind the scenes:</b> demo shot list</sub></td>
-    <td align="center"><sub><b>Photo needed:</b><br>team photo</sub></td>
-    <td align="center"><sub><b>Photo needed:</b><br>you with your build</sub></td>
   </tr>
 </table>
 
