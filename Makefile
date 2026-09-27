@@ -1,5 +1,5 @@
 PY ?= .venv/bin/python
-.PHONY: dev-backend dev-frontend dev demo test-web test-frontend
+.PHONY: dev-backend dev-frontend dev demo test-web test-frontend tunnel-backend tunnel-frontend
 dev-backend:
 	$(PY) -m uvicorn backend.main:app --reload --port 8000
 dev-frontend:
@@ -12,3 +12,8 @@ test-web:
 	$(PY) -m pytest -q tests/web
 test-frontend:
 	cd frontend && npm run test && npm run typecheck && npm run lint
+
+tunnel-backend:
+	cloudflared tunnel --url http://localhost:8000
+tunnel-frontend:
+	cloudflared tunnel --url http://localhost:3000
