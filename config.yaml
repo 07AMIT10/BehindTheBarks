@@ -70,18 +70,50 @@ data:
       growl: [Growling]
       whimper: [Whimper (dog)]
       howl: [Howl]
-  # Rules thresholds; tuned in Step 11.
+  # Rules engine (Step 8); provisional values, tuned in Step 11. Every key is optional, defaults live in rules.py.
   rules:
-    window_s: 3.0
-    hysteresis_s: 1.5
-    no_dog_unknown_s: 2.0
-    disinterested_s: 8.0
+    window_s: 3.0                       # AudioEvents newer than this count as "recent"
+    hysteresis_s: 1.5                   # a new top label must win this long before it replaces the current one
+    no_dog_unknown_s: 2.0               # no dog for longer than this -> unknown (shorter gaps keep the last label)
+    disinterested_s: 8.0                # in zone + low motion for this long -> disinterested
+    disinterested_grace_s: 1.0          # a blip of motion/null shorter than this doesn't restart the idle timer
+    disinterested_min_score: 0.7        # score when the threshold is first crossed; reaches 1.0 at twice the threshold
     aggressive_max_conf_without_growl: 0.5
+    growl_min_score: 0.3                # a recent growl at or above this score counts as "growl present"
+    min_score: 0.3                      # evidence bar: the best emotion must beat this or the label is unknown
+    min_coverage: 0.5                   # share of an emotion's feature weight that must be non-null for full credit
     thresholds:
       tail_high: 0.3
       tail_low: -0.3
+      tail_tucked: -0.6
       wag_fast_hz: 3.0
+      wag_moderate_min_hz: 1.0
       motion_high: 0.6
       motion_low: 0.15
+      body_lowering_mild: 0.2
       body_lowering_high: 0.5
       mouth_open: 0.4
+    softness:                           # half-width of the fuzzy edge around each threshold, in the feature's units
+      tail_height: 0.2
+      wag_hz: 1.0
+      motion: 0.15
+      body_lowering: 0.1
+      mouth_open: 0.15
+    weights:                            # per emotion: how much each piece of evidence counts (relative, not normalised)
+      happy: {tail_ok: 1.0, wag_moderate: 1.5, mouth_open: 1.0, ears_neutral: 1.0, not_lowered: 0.5, motion_moderate: 0.5}
+      excited: {wag_fast: 2.0, tail_high: 1.5, motion_high: 2.0, ears_up: 0.5, mouth_open: 0.5}
+      relaxed: {motion_low: 2.0, tail_neutral: 1.5, wag_slow: 1.0, ears_neutral: 1.0, not_lowered: 1.0}
+      anxious: {tail_low: 1.5, ears_back: 1.0, lowering_some: 1.0, pacing: 1.5}
+      fearful: {tail_tucked: 2.0, ears_back: 1.5, lowering_high: 2.0, away_from_zone: 0.5}
+      aggressive: {still_tail: 1.0, motion_low: 1.0, ears_up: 1.0, tail_high: 1.0, mouth_open: 0.5}
+    # Added to (bonus) or scaled off (penalty, score *= 1 - p * signal) an emotion's score. Signals are the
+    # recent AudioEvent labels (their best score in the window) plus `treat` (1.0 when treat_event_recent).
+    event_bonus:
+      excited: {yip: 0.25, bark: 0.15, treat: 0.25}
+      anxious: {whimper: 0.3, howl: 0.15}
+      fearful: {whimper: 0.15}
+      aggressive: {growl: 0.4}
+    event_penalty:
+      happy: {growl: 1.0}
+      relaxed: {growl: 1.0}
+      excited: {growl: 0.5}
