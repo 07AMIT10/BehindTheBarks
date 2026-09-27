@@ -29,6 +29,14 @@ data:
     model: hrnet_w32                     # weights auto-download once into the deeplabcut package, then offline
     device: auto                         # auto (MPS if available, else CPU) | mps | cpu
     crop_pad: 0.15                       # padding around the dog bbox before pose, fraction per side
+  face:
+    model: models/dog_face_landmarks_full.tflite   # DogFLW 46-point model; run scripts/fetch_face_model.py once (CC BY-NC 4.0)
+    threads: 6                # TFLite CPU threads (M2: 1=263 ms, 2=135, 4=71, 6=62, 8=60)
+    crop_pad: 0.25            # head-keypoint box padded by this fraction per side, then squared
+    min_crop_px: 48           # smaller head crops return None (too small to read a mouth)
+    min_head_points: 3        # head keypoints needed, one of them an eye or ear base
+    min_inside_frac: 0.9      # plausibility: fraction of landmarks that must fall inside the crop
+    min_spread: 0.25          # plausibility: landmark extent as a fraction of the crop side
   # Rules thresholds; tuned in Step 11.
   rules:
     window_s: 3.0

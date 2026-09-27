@@ -8,3 +8,4 @@ out/
 *.onnx
 .DS_Store
 data/fallback/raw/
+*.tflite

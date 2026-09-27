@@ -42,7 +42,9 @@ Build window: 2 days. Demo: live camera, with a pre-recorded fallback that must 
 
 - **Backend:** Python 3.11, FastAPI, WebSocket push to the dashboard
 - **Vision:** Ultralytics YOLO (detection), DeepLabCut SuperAnimal-Quadruped or MMPose AP-10K
-  (body keypoints), DogFLW-based landmark model (face)
+  (body keypoints), DogFLW-based landmark model (face: pretrained 46-point TFLite from
+  `hugocornellier/dog-face-landmarks` on Hugging Face, fetched once by `scripts/fetch_face_model.py`;
+  weights are CC BY-NC 4.0, non-commercial, not committed)
 - **Audio:** YAMNet via TensorFlow Hub, stock AudioSet classes
 - **Interpreter:** provider-agnostic LLM layer over an OpenAI-compatible API (Groq or OpenRouter,
   chosen by config). No provider or model is hard-coded (see "LLM interpreter" below)
