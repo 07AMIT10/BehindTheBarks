@@ -11,3 +11,4 @@ data/fallback/raw/
 *.tflite
 models/yamnet/
 data/esc50/
+.env
