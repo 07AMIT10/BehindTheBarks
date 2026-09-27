@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { phoneNotice } from "@/lib/phone";
 import { serverNow } from "@/lib/store";
 import { spanAt } from "@/lib/timeline";
 import { useBackend } from "@/lib/useBackend";
@@ -24,8 +25,10 @@ export default function Dashboard() {
   const nowSec = serverNow(state, nowMs);
   const projector = useMemo(() => new URLSearchParams(window.location.search).get("size") === "projector", []);
   const profile = state.status?.profile ?? { dog_name: "your dog", location: "Kitchen", zone_label: "feeding area" };
-  const stalled = state.status?.pipeline_status?.state === "stalled";
-  const paused = (!state.connected && state.everConnected) || stalled;
+  const notice = phoneNotice(state.status);
+  // A mic-only phone stalls the browser source on purpose; the camera-blocked card explains it instead.
+  const stalled = state.status?.pipeline_status?.state === "stalled" && notice !== "blocked";
+  const paused = (!state.connected && state.everConnected) || stalled || notice === "dropped";
   const lastSeenEmotion = useMemo(() => [...state.spans].reverse().find((s) => s.emotion !== "unknown")?.emotion ?? null, [state.spans]);
 
   const [treatFlash, setTreatFlash] = useState(false);
@@ -64,7 +67,7 @@ export default function Dashboard() {
         <StatusBar connected={state.connected} everConnected={state.everConnected} reconnectAttempt={state.reconnectAttempt}
           status={state.status} onMode={(m) => void setMode(m)} />
         <SystemNotice connected={state.connected} everConnected={state.everConnected} reconnectAttempt={state.reconnectAttempt}
-          status={state.status} lastFrameTs={state.frame?.ts ?? null} />
+          status={state.status} lastFrameTs={state.frame?.ts ?? null} onDemo={() => void setMode("demo")} />
         <div className="grid gap-4 [grid-template-areas:'card'_'video'_'signals'] lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:grid-rows-[auto_auto_1fr] lg:gap-6 lg:[grid-template-areas:'video_card'_'video_treat'_'video_signals']">
           <div className="min-h-[216px] [grid-area:video] lg:min-h-[480px]">
             <VideoPanel http={backend.http} frame={state.frame} nowSec={nowSec} location={profile.location}

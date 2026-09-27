@@ -13,7 +13,8 @@ export const metadata: Metadata = {
 export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover" };
 
 // Runs before first paint: apply the saved (or system) theme so there is no light->dark flash.
-const THEME_SCRIPT = `(function(){try{var t=localStorage.getItem('theme');if(!t){t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'}if(t==='dark'){document.documentElement.classList.add('dark')}}catch(e){}})();`;
+// The phone camera page (/camera) is always dark (ui/screens/05-08), whatever the saved theme.
+const THEME_SCRIPT = `(function(){try{var t=localStorage.getItem('theme');if(!t){t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'}if(location.pathname.indexOf('/camera')===0){t='dark'}if(t==='dark'){document.documentElement.classList.add('dark')}}catch(e){}})();`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

@@ -1,3 +1,4 @@
+import { deviceLabel } from "@/lib/phone";
 import type { Status } from "@/lib/types";
 
 type Props = {
@@ -7,14 +8,6 @@ type Props = {
   status: Status | null;
   onMode?: (mode: "live" | "demo") => void;
 };
-
-function deviceLabel(s: Status | null): string {
-  if (s?.phone?.connected) return `${s.phone.device ?? "Phone"} · ${s.phone.facing ?? "back"} camera`;
-  const src = s?.pipeline_status?.source;
-  if (src === "mock") return "Mock camera";
-  if (src === "browser") return "Phone camera · waiting";
-  return src ? `${src} source` : "No camera yet";
-}
 
 export default function StatusBar({ connected, everConnected, reconnectAttempt, status, onMode }: Props) {
   const llm = status?.llm;

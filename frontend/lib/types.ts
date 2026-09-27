@@ -19,6 +19,18 @@ export type PipelineStatus = {
   audio_ok: boolean;
 };
 
+export type PhoneStatus = {
+  connected: boolean;
+  device: string | null;
+  facing: string | null; // "back" | "front" | null
+  camera?: boolean; // false: camera permission denied, streaming microphone only
+  fps: number; // frames/s received by the backend
+  width?: number;
+  height?: number;
+  sample_rate?: number;
+  last_frame_age_s?: number | null;
+};
+
 export type Status = {
   pipeline?: string;
   pipeline_status?: PipelineStatus | null;
@@ -35,7 +47,7 @@ export type Status = {
   clients?: number;
   fps?: number;
   profile?: { dog_name: string; location: string; zone_label: string };
-  phone?: { connected: boolean; device: string | null; facing: string | null; fps: number } | null; // Plan 3
+  phone?: PhoneStatus | null; // Plan 3: null until a phone has connected this session
   modes?: string[]; // Plan 4: ["live", "demo"] when demo clips exist
   mode?: "live" | "demo"; // Plan 4
 };
