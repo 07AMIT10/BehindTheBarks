@@ -12,3 +12,6 @@ data/fallback/raw/
 models/yamnet/
 data/esc50/
 .env
+frontend/node_modules/
+frontend/.next/
+frontend/next-env.d.ts
