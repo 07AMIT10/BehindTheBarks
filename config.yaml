@@ -3,11 +3,12 @@
 
 data:
   source:
-    type: file            # webcam | stream | file
+    type: file            # browser (phone, pushed via Pipeline.ingest_*) | webcam | stream | file
     path: null            # video path (file) or URL (stream)
     device: 0             # webcam device index
     audio: null           # optional audio override path (file mode) or null for mic/embedded track
     loop: false
+    stall_s: 2.0          # browser: no frame for this long -> status 'stalled'; recovers when frames resume
   fps: 8
   keypoint_conf_threshold: 0.3
   # Feeding zone polygon in normalised (0..1) image coords, clockwise from top-left.

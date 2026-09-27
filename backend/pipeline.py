@@ -1,7 +1,7 @@
 """The handoff interface between Data and Web.
 
 Web constructs a Pipeline, awaits run() with three callbacks, and never imports anything else from
-backend/vision/ or backend/audio/. Implemented in Step 9; signatures are frozen now.
+backend/vision/ or backend/audio/. Implemented in Step 10; signatures are frozen now.
 """
 
 from __future__ import annotations
