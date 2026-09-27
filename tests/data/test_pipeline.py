@@ -183,6 +183,59 @@ def test_never_connected_browser_is_stalled_after_the_grace_period():
     assert second["last_frame_age_s"] is None and second["audio_ok"] is False
 
 
+def test_mic_or_audio_pipeline_failing_drops_audio_but_not_video():
+    """Step 13 degradation: a dead mic/audio path ends the audio thread quietly; video keeps running."""
+
+    class RaisingAudio:
+        def push(self, ts, chunk):
+            raise RuntimeError("audio pipeline exploded")
+
+    async def go():
+        pipe = Pipeline(cfg(stall_s=0.2), components=parts(audio=RaisingAudio()))
+        col = Collector()
+        task = asyncio.create_task(pipe.run(col.on_frame, col.on_audio, col.on_rules))
+        await feed_phone(pipe, 1.0)
+        st = pipe.status()
+        pipe.stop()
+        await asyncio.wait_for(task, 5)
+        return col, st
+
+    col, st = asyncio.run(go())
+    assert len(col.frames) >= 5 and len(col.rules) == len(col.frames)  # video is unaffected
+    assert col.audio == []  # no audio events, ever
+    assert st["state"] == "running" and st["audio_ok"] is False  # audio marked down, pipeline otherwise fine
+
+
+def test_pose_or_face_model_failing_still_emits_detection_only_frame_events():
+    """Step 13 degradation: a broken pose/face model must not take the frame's detection down with it."""
+
+    class RaisingPose:
+        def estimate(self, frame, bbox):
+            raise RuntimeError("pose model exploded")
+
+    class RaisingFace:
+        def estimate(self, frame, kps):
+            raise RuntimeError("face model exploded")
+
+    async def go():
+        pipe = Pipeline(cfg(), components=parts(pose=RaisingPose(), face=RaisingFace()))
+        col = Collector()
+        task = asyncio.create_task(pipe.run(col.on_frame, col.on_audio, col.on_rules))
+        await feed_phone(pipe, 1.0)
+        pipe.stop()
+        await asyncio.wait_for(task, 5)
+        return col
+
+    col = asyncio.run(go())
+    assert len(col.frames) >= 5 and len(col.rules) == len(col.frames)  # frames aren't dropped
+    assert all(f.dog_detected and f.bbox is not None for f in col.frames)  # detection survives
+    assert all(f.features.in_feeding_zone is True for f in col.frames)  # zone comes from detection, not pose
+    pose_derived = ("tail_height", "tail_wag_hz", "mouth_open", "body_lowering", "motion_energy")
+    assert all(getattr(f.features, k) is None for f in col.frames for k in pose_derived)
+    assert all(f.features.ear_position == "unknown" for f in col.frames)  # its own "no data" sentinel, not None
+    assert all(set(r.scores) == set(EMOTIONS) for r in col.rules)  # rules still runs on the degraded event
+
+
 def test_stop_is_idempotent_and_ends_run_and_all_threads():
     async def go():
         pipe = Pipeline(cfg(), components=parts())

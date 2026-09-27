@@ -21,6 +21,7 @@ and "right" are the annotators' labels, taken as given, same policy as keypoint_
 from __future__ import annotations
 
 import argparse
+import logging
 import time
 import warnings
 from collections import deque
@@ -32,6 +33,9 @@ import numpy as np
 
 from backend.vision.keypoint_map import Keypoint
 from backend.vision.videoio import DebugVideoWriter
+
+log = logging.getLogger(__name__)
+ERROR_LOG_INTERVAL_S = 5.0  # a broken model would otherwise log every frame
 
 # -- DogFLW landmark indices ------------------------------------------------------------------
 
@@ -110,6 +114,7 @@ class FaceLandmarker:
         self.latencies_ms: deque[float] = deque(maxlen=200)
         self.first_call_ms: float | None = None  # first call is slow (XNNPACK setup); kept out of stats
         self._warmed = runner is None
+        self._last_error_log = 0.0
         if self._warmed:
             self.runner(np.zeros((1, INPUT_SIZE, INPUT_SIZE, 3), np.float32))
 
@@ -166,7 +171,11 @@ class FaceLandmarker:
         return float(cx - side / 2), float(cy - side / 2), float(side)
 
     def estimate(self, frame: np.ndarray, kps: dict[str, Keypoint | None]) -> list[list[float]] | None:
-        """46 [x, y] landmarks in full-frame pixels (DogFLW order), or None if no usable face."""
+        """46 [x, y] landmarks in full-frame pixels (DogFLW order), or None if no usable face.
+
+        Never raises: a broken model (bad weights, interpreter crash) yields None like any other
+        "no usable face" case, so body pose and detection still reach the FrameEvent.
+        """
         box = self.head_box(kps)
         if box is None:
             return None
@@ -177,7 +186,14 @@ class FaceLandmarker:
         x = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB).astype(np.float32)[None] / 255.0
 
         t = time.perf_counter()
-        out = np.asarray(self.runner(x), dtype=np.float64).reshape(-1)
+        try:
+            out = np.asarray(self.runner(x), dtype=np.float64).reshape(-1)
+        except Exception:
+            now = time.monotonic()
+            if now - self._last_error_log >= ERROR_LOG_INTERVAL_S:
+                self._last_error_log = now
+                log.exception("face landmark model failed; no landmarks for this frame")
+            return None
         ms = (time.perf_counter() - t) * 1000
         if self.first_call_ms is None and self._warmed:
             self.first_call_ms = ms

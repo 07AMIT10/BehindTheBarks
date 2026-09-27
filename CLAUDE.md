@@ -271,7 +271,31 @@ its confidence ≥ 0.7, otherwise the rules label. If no dog is detected for > 2
 - Toggle: live / fallback clip
 - Phone camera page (`/camera`), mobile-first; the dashboard itself works on mobile and desktop
 
-## Commands (fill in once scaffolded)
+## Commands
+
+Data side (Person A):
+```
+# one-time setup
+python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements-data.txt
+python scripts/check_env.py                 # verify torch/MPS, tensorflow, ultralytics etc. actually import
+python scripts/fetch_face_model.py          # downloads the DogFLW TFLite model once (needs network)
+
+# run the pipeline directly (bypassing Web's FastAPI app)
+python scripts/run_pipeline.py --source file --path data/fallback/clips/eating_home.mp4 --fast \
+    --jsonl out/events.jsonl --debug-video out/debug.mp4 --treat-at 6
+python scripts/run_pipeline.py --source browser --path some_clip.mp4 --portrait   # simulate a phone
+python scripts/run_pipeline.py --source webcam --duration 30
+
+# fallback pack (data/fallback/): source clips into raw/ yourself, then
+python scripts/sources_stub.py                          # stub SOURCES.md rows for new raw/ files
+python scripts/mux_audio.py raw/x.mp4 --add SOUND@4.5    # overlay audio, write to clips/
+python scripts/precompute_events.py                      # build events/*.jsonl + manifest.json
+python scripts/tune.py                                    # per-clip timeline plots + match table
+
+pytest                                       # full data-side test suite
+```
+
+Web side (Person B):
 ```
 # web backend (venv: uv pip install --python .venv/bin/python -r requirements-web.txt)
 make dev-backend            # uvicorn backend.main:app --reload --port 8000 (web.pipeline: mock | real)

@@ -4,6 +4,8 @@
         --jsonl out/events.jsonl --debug-video out/debug.mp4 --treat-at 6
     python scripts/run_pipeline.py --source browser --path clip.mp4 --portrait --jsonl out/phone.jsonl
     python scripts/run_pipeline.py --source webcam --duration 30
+    python scripts/run_pipeline.py --source webcam --device 1 --show      # phone as webcam, live window
+    python scripts/run_pipeline.py --source stream --path http://PHONE_IP:8080/video --show
 
 `--source browser` drives the pipeline in-process through scripts/fake_phone.py: the clip is the phone,
 and its frames and audio go in through Pipeline.ingest_frame / ingest_audio, exactly as Web's /ingest will.
@@ -11,14 +13,18 @@ and its frames and audio go in through Pipeline.ingest_frame / ingest_audio, exa
 --jsonl writes every event as one line: {"type": "frame" | "audio" | "rules" | "treat", "data": {...}}
 (the same envelope as Web's WebSocket), in timestamp order when --fast is used.
 --treat-at SECONDS (repeatable) presses the "treat dropped" button that many seconds into the clip.
+--show opens a live annotated window (T = treat dropped, Q/Esc = quit); frames are the pipeline's, at data.fps.
 --rebase-ts (file source) writes every "ts" in --jsonl as seconds from the clip start instead of wall time,
-which makes the output deterministic; scripts/precompute_events.py uses it for the fallback pack.
+which makes timestamps reproducible; scripts/precompute_events.py uses it for the fallback pack. The
+frame-by-frame *values* are not bit-for-bit reproducible run to run (MPS inference jitter) -- see
+"--fast" mode's docstring in backend/pipeline.py.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import bisect
 import copy
 import json
 import logging
@@ -97,6 +103,7 @@ def parse_args(argv):
     ap.add_argument("--jsonl", help="write every event here, one JSON per line")
     ap.add_argument("--rebase-ts", action="store_true", help="file only: jsonl timestamps are seconds from clip start")
     ap.add_argument("--debug-video", help="write an annotated mp4 here")
+    ap.add_argument("--show", action="store_true", help="live annotated window (T = treat, Q/Esc = quit)")
     ap.add_argument("--portrait", action="store_true", help="browser: the fake phone rotates frames 90 degrees")
     ap.add_argument("--phone-fps", type=float, default=10.0, help="browser: frames per second the fake phone sends")
     return ap.parse_args(argv)
@@ -155,18 +162,24 @@ async def amain(args) -> dict:
             write("treat", {"ts": treats[written_treats]})
             written_treats += 1
 
+    latest_view = None  # newest annotated frame for --show (written by the pipeline thread)
+
     def tap(frame, ev, label, audio) -> None:
-        nonlocal writer
+        nonlocal writer, latest_view
         from backend.vision.videoio import DebugVideoWriter
 
-        if writer is None:
-            writer = DebugVideoWriter(args.debug_video, cfg["data"].get("fps", 8))
         active = any(t <= ev.ts <= t + treat_window for t in treats)
-        writer.write(draw_overlay(frame, ev, label, audio, zone, active))
+        view = draw_overlay(frame, ev, label, audio, zone, active)
+        if args.show:
+            latest_view = view
+        if args.debug_video:
+            if writer is None:
+                writer = DebugVideoWriter(args.debug_video, cfg["data"].get("fps", 8))
+            writer.write(view)
 
     if args.debug_video:
         Path(args.debug_video).parent.mkdir(parents=True, exist_ok=True)
-    pipeline = Pipeline(cfg, frame_tap=tap if args.debug_video else None)
+    pipeline = Pipeline(cfg, frame_tap=tap if args.debug_video or args.show else None)
     if args.rebase_ts:
         if is_browser or src.get("type") != "file":
             raise SystemExit("--rebase-ts only applies to file sources (live sources have no clip clock)")
@@ -213,6 +226,27 @@ async def amain(args) -> dict:
     elif args.duration:
         loop.call_later(args.duration, lambda: loop.run_in_executor(None, pipeline.stop))
 
+    async def preview() -> None:
+        # cv2 windows must live on the main thread (macOS), which is the one running this event loop.
+        title = "Behind The Barks (T = treat, Q = quit)"
+        shown = None
+        while not task.done():
+            if latest_view is not None and latest_view is not shown:
+                shown = latest_view
+                cv2.imshow(title, shown)
+            key = cv2.waitKey(1) & 0xFF
+            if key in (ord("q"), 27):
+                loop.run_in_executor(None, pipeline.stop)
+            elif key == ord("t"):
+                now = time.time()
+                bisect.insort(treats, now)
+                pipeline.mark_treat(now)
+                logging.info("treat dropped")
+            await asyncio.sleep(0.02)
+        cv2.destroyAllWindows()
+        cv2.waitKey(1)
+
+    viewer = asyncio.create_task(preview()) if args.show else None
     try:
         await task
     except asyncio.CancelledError:
@@ -221,6 +255,8 @@ async def amain(args) -> dict:
         if phone is not None:
             phone.stop()
         pipeline.stop()
+        if viewer is not None:
+            await viewer
         flush_treats(float("inf"))
         if writer is not None:
             writer.release()

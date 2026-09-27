@@ -60,6 +60,20 @@ def test_empty_model_output_gives_all_none_without_crashing():
     assert all(v is None for v in pose.estimate(FRAME, (100, 40, 140, 90)).values())
 
 
+def test_model_raising_gives_all_none_instead_of_crashing_the_frame():
+    pose, runner = make()
+
+    def boom(items):
+        raise RuntimeError("model exploded")
+
+    runner.inference = boom
+    kps = pose.estimate(FRAME, (100, 40, 140, 90))
+    assert set(kps) == set(CANONICAL_NAMES)
+    assert all(v is None for v in kps.values())
+    # a second failing call must not raise either (no crash from repeated model errors)
+    assert all(v is None for v in pose.estimate(FRAME, (100, 40, 140, 90)).values())
+
+
 def test_degenerate_bbox_gives_all_none_and_skips_the_model():
     pose, runner = make()
     kps = pose.estimate(FRAME, (500, 500, 510, 510))  # outside the frame -> empty crop

@@ -25,9 +25,13 @@ If the callbacks fall behind, the oldest events are dropped (real-time sources) 
 without bound. Frames are dropped upstream by the source: live and real-time file sources hand over
 only the newest frame when inference is slower than the frame rate.
 
-`--fast` file mode (data.source.fast) is the offline batch mode and is deterministic: audio is
-analysed first, then video, and audio events are emitted merged into the frame stream by timestamp.
-Nothing is dropped and the timings don't depend on machine speed.
+`--fast` file mode (data.source.fast) is the offline batch mode: audio is analysed first, then video,
+and audio events are emitted merged into the frame stream by timestamp. Nothing is dropped and the
+*control flow* (frame order, timing, which events fire) doesn't depend on machine speed. The
+*numbers* inside FrameEvents can still vary run to run, though: YOLO/DeepLabCut inference on MPS isn't
+bit-for-bit reproducible, so a rules decision that's a near-tie between two emotions (e.g. very close
+scores) can land on either one from one precompute run to the next. See "Known weaknesses" in
+docs/DATA_HANDOFF.md.
 """
 
 from __future__ import annotations
@@ -376,9 +380,9 @@ class Pipeline:
             self._last_ts = ts
             det = self.detector.detect(frame)
             t1 = clock()
-            kps = self.pose.estimate(frame, det.bbox) if det is not None else {}
+            kps = self._safe_pose(frame, det.bbox) if det is not None else {}
             t2 = clock()
-            lms = self.face.estimate(frame, kps) if kps else None
+            lms = self._safe_face(frame, kps) if kps else None
             t3 = clock()
             ev = self.features.update(ts, det, kps, lms)
             t4 = clock()
@@ -408,6 +412,22 @@ class Pipeline:
                 self.frame_tap(frame, ev, label, audio)
             except Exception:
                 self._limited("tap", "frame_tap raised", exc_info=True)
+
+    def _safe_pose(self, frame: np.ndarray, bbox: Any) -> dict:
+        """Isolate a broken pose model: detection (bbox, dog_detected) must still reach the FrameEvent."""
+        try:
+            return self.pose.estimate(frame, bbox)
+        except Exception:
+            self._limited("pose", "pose model failed; no keypoints for this frame", exc_info=True)
+            return {}
+
+    def _safe_face(self, frame: np.ndarray, kps: dict) -> Any:
+        """Isolate a broken face model: body pose must still reach the FrameEvent."""
+        try:
+            return self.face.estimate(frame, kps)
+        except Exception:
+            self._limited("face", "face model failed; no landmarks for this frame", exc_info=True)
+            return None
 
     def _recent_audio(self, ts: float) -> list[AudioEvent]:
         with self._lock:

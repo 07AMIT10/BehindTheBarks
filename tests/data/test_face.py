@@ -118,6 +118,18 @@ def test_non_finite_or_wrong_size_output_is_rejected():
     assert make(np.full(90, 0.5))[0].estimate(FRAME, HEAD) is None
 
 
+def test_model_raising_gives_none_instead_of_crashing_the_frame():
+    face, _ = make()
+
+    def boom(x):
+        raise RuntimeError("interpreter crashed")
+
+    face.runner = boom  # replace the callable outright; FakeRunner.__call__ can't be patched per-instance
+    assert face.estimate(FRAME, HEAD) is None
+    # a second failing call must not raise either (no crash from repeated model errors)
+    assert face.estimate(FRAME, HEAD) is None
+
+
 def test_latency_stats_count_calls():
     face, _ = make()
     assert face.latency_stats()["n"] == 0

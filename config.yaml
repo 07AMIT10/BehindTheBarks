@@ -28,6 +28,10 @@ data:
   pose:
     superanimal: superanimal_quadruped   # DeepLabCut model zoo dataset name
     model: hrnet_w32                     # weights auto-download once into the deeplabcut package, then offline
+                                          # Step 13 perf pass (M2): tried resnet_50 for speed (pose ~37ms vs
+                                          # ~92ms, mean fps 4.7 -> 7.5 on a real dog clip) but its keypoint
+                                          # values shifted rules output enough to break 2 of 5 tuned fallback
+                                          # matches (5/7 -> 3/7); reverted. See docs/DATA_HANDOFF.md.
     device: auto                         # auto (MPS if available, else CPU) | mps | cpu
     crop_pad: 0.15                       # padding around the dog bbox before pose, fraction per side
   face:

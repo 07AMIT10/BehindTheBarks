@@ -21,6 +21,7 @@ them.
 from __future__ import annotations
 
 import argparse
+import logging
 import time
 from collections import deque
 from pathlib import Path
@@ -33,7 +34,10 @@ from backend.vision.detect import BBox, crop_padded, pick_device
 from backend.vision.keypoint_map import CANONICAL_NAMES, SKELETON, Keypoint, to_canonical
 from backend.vision.videoio import DebugVideoWriter
 
+log = logging.getLogger(__name__)
+
 OUTSIDE_MARGIN = 0.05  # keypoints may fall this fraction of the crop size outside it before being dropped
+ERROR_LOG_INTERVAL_S = 5.0  # a broken model would otherwise log every frame
 
 
 class PoseEstimator:
@@ -56,6 +60,7 @@ class PoseEstimator:
         self.latencies_ms: deque[float] = deque(maxlen=200)
         self.first_call_ms: float | None = None  # first call compiles on MPS; kept out of stats
         self._warmed = owns_model
+        self._last_error_log = 0.0
         if owns_model:
             self._infer(np.zeros((256, 256, 3), np.uint8))
 
@@ -84,7 +89,9 @@ class PoseEstimator:
         """Canonical keypoints for the dog in `bbox`, in full-frame pixel coords.
 
         Every canonical name is a key; the value is (x, y, conf), or None when the point is missing,
-        below the confidence threshold or outside the dog's crop.
+        below the confidence threshold or outside the dog's crop. Never raises: a broken model (bad
+        weights, device gone) yields all-None keypoints instead of losing the frame's detection too,
+        since features/rules still want dog_detected + bbox even with no pose.
         """
         crop, (ox, oy) = crop_padded(frame, bbox, self.pad)
         h, w = crop.shape[:2]
@@ -92,7 +99,14 @@ class PoseEstimator:
             return {name: None for name in CANONICAL_NAMES}
 
         t = time.perf_counter()
-        pts = self._infer(crop)
+        try:
+            pts = self._infer(crop)
+        except Exception:
+            now = time.monotonic()
+            if now - self._last_error_log >= ERROR_LOG_INTERVAL_S:
+                self._last_error_log = now
+                log.exception("pose model inference failed; no keypoints for this frame")
+            return {name: None for name in CANONICAL_NAMES}
         ms = (time.perf_counter() - t) * 1000
         if self.first_call_ms is None and self._warmed:
             self.first_call_ms = ms

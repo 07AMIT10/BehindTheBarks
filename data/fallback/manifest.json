@@ -15,9 +15,8 @@
       "observed": {
         "dominant": "relaxed",
         "seconds": {
-          "happy": 4.9,
-          "relaxed": 21.5,
-          "disinterested": 4.3
+          "happy": 5.7,
+          "relaxed": 24.9
         }
       }
     },
@@ -32,11 +31,11 @@
       "debug_video": "events/idle_labrador.debug.mp4",
       "frames": 105,
       "observed": {
-        "dominant": "happy",
+        "dominant": "relaxed",
         "seconds": {
-          "happy": 7.2,
-          "relaxed": 4.0,
-          "unknown": 1.8
+          "happy": 3.0,
+          "relaxed": 8.4,
+          "unknown": 1.6
         }
       }
     },
@@ -53,10 +52,10 @@
       "observed": {
         "dominant": "relaxed",
         "seconds": {
-          "excited": 4.9,
-          "relaxed": 14.9,
-          "fearful": 2.5,
-          "aggressive": 2.0
+          "excited": 7.4,
+          "relaxed": 13.0,
+          "fearful": 2.0,
+          "aggressive": 1.9
         }
       }
     },
@@ -76,8 +75,8 @@
       "observed": {
         "dominant": "happy",
         "seconds": {
-          "happy": 8.7,
-          "unknown": 3.1
+          "happy": 10.0,
+          "unknown": 1.8
         }
       }
     },
@@ -87,17 +86,17 @@
       "treats": [
         0.5
       ],
-      "notes": "Poodle stares up at a raised treat; portrait; one ESC-50 bark overlaid at 3.0 s (Pexels 17029736)",
+      "notes": "Poodle stares up at a raised treat; portrait; one bark (Freesound 170015, CC0) overlaid at 3.0 s (Pexels 17029736). Note (Step 13): its rules scores are a near-exact tie between excited and happy (~48-52% either way), so the dominant label can flip between precompute_events.py runs due to MPS inference jitter (confirmed: two identical runs gave different results) -- not a code or tuning bug.",
       "clip": "clips/treat_poodle.mp4",
       "duration_s": 5.17,
       "events": "events/treat_poodle.jsonl",
       "debug_video": "events/treat_poodle.debug.mp4",
       "frames": 42,
       "observed": {
-        "dominant": "excited",
+        "dominant": "happy",
         "seconds": {
-          "happy": 2.5,
-          "excited": 2.7
+          "happy": 2.6,
+          "excited": 2.5
         }
       }
     },
@@ -112,10 +111,10 @@
       "debug_video": "events/vocal_chained.debug.mp4",
       "frames": 113,
       "observed": {
-        "dominant": "happy",
+        "dominant": "excited",
         "seconds": {
-          "happy": 7.5,
-          "excited": 6.5
+          "happy": 3.3,
+          "excited": 10.8
         }
       }
     },
