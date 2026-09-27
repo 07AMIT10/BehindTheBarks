@@ -17,6 +17,7 @@ from dataclasses import asdict
 from typing import Any, Awaitable, Callable
 
 from backend.contracts import AudioEvent, EmotionState, Features, FrameEvent, RulesLabel
+from backend.demo.clips import DemoClips
 from backend.fusion.llm_triggers import TriggerPolicy
 from backend.fusion.state import FusionState, StateConfig
 from backend.web.hub import Hub
@@ -27,7 +28,7 @@ log = logging.getLogger("runtime")
 
 
 class Runtime:
-    def __init__(self, cfg: dict, pipeline: Any, interpreter: Any, notifier: Any, hub: Hub, clock=time.time):
+    def __init__(self, cfg: dict, pipeline: Any, interpreter: Any, notifier: Any, hub: Hub, clock=time.time, demo_clips: DemoClips | None = None):
         self.cfg, self.pipeline, self.interpreter, self.notifier, self.hub, self.clock = (
             cfg, pipeline, interpreter, notifier, hub, clock)
         self.state = FusionState(StateConfig.from_config(cfg))
@@ -51,6 +52,9 @@ class Runtime:
         self.phone: IngestSession | None = None
         self._phone_prev: IngestSession | None = None
         self._phone_closer: Callable[[], Awaitable[None]] | None = None
+        self.demo = demo_clips
+        self.mode: str = "demo" if is_demo(cfg) and demo_clips and demo_clips.available else "live"
+        self.demo_notified: set[str] = set()
 
     # -- lifecycle ----------------------------------------------------------------------------
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
@@ -141,6 +145,32 @@ class Runtime:
         self.triggers.note_treat()
         self.hub.publish("treat", {"ts": now})
         return now
+
+    def set_mode(self, mode: str) -> str:
+        if mode not in ("live", "demo"):
+            raise ValueError(f"mode must be live|demo, got {mode!r}")
+        if mode == "demo" and (self.demo is None or not self.demo.available):
+            raise ValueError("no demo clips available")
+        self.mode = mode
+        self.hub.publish("status", {"mode": mode, "modes": self._modes()})
+        return mode
+
+    def _modes(self) -> list[str]:
+        return ["live", "demo"] if self.demo is not None and self.demo.available else ["live"]
+
+    async def demo_notify(self, clip_id: str, t: float) -> dict:
+        """First demo notification per clip: real Telegram only when telegram_first is on and the
+        notifier is a Telegram one; otherwise a dashboard_only record. Always idempotent."""
+        if clip_id in self.demo_notified:
+            return {"status": "dashboard_only", "duplicate": True}
+        self.demo_notified.add(clip_id)
+        if self.cfg["web"]["demo"].get("telegram_first") and type(self.notifier).__name__ == "TelegramNotifier":
+            jpeg = self._latest_jpeg()
+            res = await self.notifier.send(
+                EmotionState(ts=t, emotion="unknown", confidence=0.0, source="rules",
+                             reason=f"Demo clip {clip_id} at {t:.1f}s."), jpeg)
+            return {"status": res.status, "detail": res.detail, "duplicate": False}
+        return {"status": "dashboard_only", "detail": "would send to owner", "duplicate": False}
 
     def step(self, now: float) -> None:
         t = self.state.tick(now)
@@ -270,6 +300,8 @@ class Runtime:
             "fps": fps,
             "profile": self.cfg["web"]["profile"],
             "phone": self.phone_status(),
+            "modes": self._modes(),
+            "mode": self.mode,
         }
 
     def timeline(self) -> list[dict]:

@@ -148,7 +148,8 @@ async def test_start_stop_with_real_loop(tmp_path):
     assert mp.status()["state"] == "stopped"
     st = rt.status()
     assert set(st) == {"pipeline", "pipeline_status", "demo_mode", "llm", "notify_mode", "clients", "fps", "profile",
-                       "phone"}
+                       "phone", "modes", "mode"}
+    assert st["modes"] == ["live"] and st["mode"] == "live"  # no demo clips in this test
     assert st["profile"]["dog_name"] == "Bruno" and st["llm"]["online"] is True
 
 

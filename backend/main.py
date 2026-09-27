@@ -12,11 +12,12 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from backend.fusion.llm_interpreter import LLMInterpreter
+from backend.demo.clips import load_demo_clips
 from backend.notify import build_notifier
 from backend.web.event_log import EventLog
 from backend.web.hub import Hub
@@ -48,10 +49,11 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     async def lifespan(app: FastAPI):
         hub = Hub(client_queue=web["ws"]["client_queue"], history=web["ws"]["history"],
                   frame_fps=web["ws"]["frame_fps"], log=EventLog(web["log_dir"]))
+        demo = load_demo_clips(cfg)
         rt = Runtime(cfg, pipeline or build_pipeline(cfg),
                      interpreter or LLMInterpreter(LLMSettings.from_config(cfg)),
-                     notifier or build_notifier(cfg), hub)
-        app.state.hub, app.state.rt = hub, rt
+                     notifier or build_notifier(cfg), hub, demo_clips=demo)
+        app.state.hub, app.state.rt, app.state.demo = hub, rt, demo
         await rt.start()
         try:
             yield
@@ -77,6 +79,47 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     @app.post("/treat")
     async def treat() -> dict:
         return {"ts": app.state.rt.treat()}
+
+    @app.get("/demo/clips")
+    async def demo_clips() -> list[dict]:
+        from dataclasses import asdict
+        return [asdict(c) for c in app.state.demo.list()]
+
+    @app.get("/demo/clips/{cid}/video")
+    async def demo_video(cid: str) -> FileResponse:
+        try:
+            path = app.state.demo.video_path(cid)
+        except KeyError:
+            raise HTTPException(404, f"unknown demo clip {cid!r}")
+        return FileResponse(path, media_type="video/mp4")
+
+    @app.get("/demo/clips/{cid}/events")
+    async def demo_events(cid: str) -> dict:
+        try:
+            return {"events": app.state.demo.events(cid)}
+        except KeyError:
+            raise HTTPException(404, f"unknown demo clip {cid!r}")
+
+    @app.get("/demo/clips/{cid}/timeline")
+    async def demo_timeline(cid: str) -> dict:
+        try:
+            tl = app.state.demo.timeline(cid)
+        except KeyError:
+            raise HTTPException(404, f"unknown demo clip {cid!r}")
+        if tl is None:
+            raise HTTPException(404, f"no timeline for {cid!r} (run scripts/precompute_demo.py)")
+        return tl
+
+    @app.post("/mode")
+    async def set_mode(body: dict) -> dict:
+        try:
+            return {"mode": app.state.rt.set_mode(body.get("mode"))}
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
+    @app.post("/demo/notify")
+    async def demo_notify(body: dict) -> dict:
+        return await app.state.rt.demo_notify(body.get("clip", ""), float(body.get("t", 0.0)))
 
     @app.get("/video")
     async def video(max_frames: int = 0) -> StreamingResponse:
