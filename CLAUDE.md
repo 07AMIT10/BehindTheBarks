@@ -69,9 +69,16 @@ Build window: 2 days. Demo: live camera, with a pre-recorded fallback that must 
     rules.py           heuristic emotion scoring
     llm_interpreter.py   provider-agnostic interpreter (Groq | OpenRouter)
     state.py           state machine, debouncing, cooldowns
+    prompts.py         LLM system prompt + request builder (iterate wording here)
+    llm_parse.py       defensive LLM reply parsing
+    llm_triggers.py    when to call the LLM (triggers, rate limit)
   /notify
+    base.py            Notifier port, caption format
+    dashboard.py       dashboard-only notifier ("would send to owner")
     telegram.py
+  /web                 Web runtime (Person B): settings.py, hub.py (WS fan-out), event_log.py, runtime.py (wiring)
   /demo
+    mock_pipeline.py   scripted MockPipeline (same interface as Pipeline)
     cache/             pre-computed LLM responses for fallback clips
 /frontend              Next.js dashboard + /camera page (phone as camera)
 /data
@@ -243,8 +250,11 @@ its confidence ≥ 0.7, otherwise the rules label. If no dog is detected for > 2
 
 ## Commands (fill in once scaffolded)
 ```
-# backend
-uvicorn backend.main:app --reload
+# web backend (venv: uv pip install --python .venv/bin/python -r requirements-web.txt)
+make dev-backend            # uvicorn backend.main:app --reload --port 8000 (web.pipeline: mock | real)
+make test-web               # pytest tests/web
+python scripts/llm_smoke_test.py [frame.jpg]   # one real LLM call (reads .env)
+python scripts/telegram_test.py                # one test photo to Telegram
 # frontend
 cd frontend && npm run dev
 # HTTPS for the phone camera (one quick tunnel per port)
