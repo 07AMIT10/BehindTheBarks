@@ -329,6 +329,10 @@ class MediaSources:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
+    def start_clock(self) -> float:
+        """Wall time of media time 0 (file sources stamp `t0 + media_time`). Starts the clock if needed."""
+        return self._start_clock()
+
     def _start_clock(self) -> float:
         with self._t0_lock:
             if self._t0 is None:

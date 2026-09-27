@@ -23,10 +23,15 @@ export async function fetchClip(http: string, meta: ClipMeta): Promise<LoadedCli
     if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
     return r.json();
   };
-  const [events, timeline] = await Promise.all([
+  const [raw, timeline] = await Promise.all([
     get(`/demo/clips/${meta.id}/events`).then((d: { events: ClipEvent[] }) => d.events),
     get(`/demo/clips/${meta.id}/timeline`),
   ]);
+  // Person A lines carry no t; the time lives in data.ts (clip-relative via --rebase-ts).
+  const events = raw
+    .map((e) => ({ ...e, t: typeof e.t === "number" ? e.t : (e.data as { ts?: unknown }).ts }))
+    .filter((e): e is ClipEvent => typeof e.t === "number")
+    .sort((a, b) => a.t - b.t);
   return { meta, events, timeline: timeline as DemoTimeline };
 }
 

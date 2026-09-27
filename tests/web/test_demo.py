@@ -84,3 +84,26 @@ def test_demo_notify_once_and_disabled(tmp_path):
         assert r1["status"] == "dashboard_only"  # default: telegram_first false
         r2 = c.post("/demo/notify", json={"clip": "c1", "t": 2.0}).json()
         assert r2["duplicate"] is True
+
+
+def test_clips_loader_person_a_schema(tmp_path):
+    from backend.demo.clips import DemoClips
+    base = tmp_path / "pack"
+    (base / "clips").mkdir(parents=True)
+    (base / "events").mkdir(parents=True)
+    (base / "clips" / "x.mp4").write_bytes(b"v")
+    (base / "events" / "x.jsonl").write_text(
+        '{"type": "frame", "data": {"ts": 0.0, "source": "file", "dog_detected": false}}\n'
+        '{"type": "rules", "data": {"ts": 0.0, "emotion": "unknown", "confidence": 1.0, '
+        '"scores": {"unknown": 1.0}}}\n')
+    (base / "manifest.json").write_text(json.dumps({
+        "version": 1, "ts_origin": "clip_start",
+        "clips": [{"name": "x", "expected_emotion": "relaxed", "treats": [1.5], "notes": "",
+                   "clip": "clips/x.mp4", "duration_s": 2.0, "events": "events/x.jsonl"}]}))
+    clips = DemoClips(base / "manifest.json", tmp_path / "bundled-missing")
+    assert clips.available
+    meta = clips.list()[0]
+    assert (meta.id, meta.name, meta.emotion, meta.duration_s) == ("x", "x", "relaxed", 2.0)
+    evs = clips.events("x")
+    assert [e["t"] for e in evs] == [0.0, 0.0, 1.5]
+    assert evs[-1]["type"] == "treat"

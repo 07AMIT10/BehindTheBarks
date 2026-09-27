@@ -109,6 +109,27 @@ We cannot record our own video. The fallback therefore uses:
 
 In demo mode, every LLM response for these clips is pre-computed and stored in `backend/demo/cache/`.
 
+### Fallback pack (Data produces, Web replays)
+```
+data/fallback/
+  clips/<name>.mp4          H.264 + AAC, constant 30 fps (scripts/mux_audio.py)
+  events/<name>.jsonl       one envelope per line, same as the WebSocket; ts = seconds from clip start
+  events/<name>.debug.mp4   annotated video for tuning (not committed)
+  manifest.json
+```
+`manifest.json` (paths relative to its folder; `treats` and `expected_emotion` are filled by hand, the rest
+by `scripts/precompute_events.py`):
+```json
+{ "version": 1, "ts_origin": "clip_start",
+  "clips": [ { "name": "treat_drop", "clip": "clips/treat_drop.mp4", "events": "events/treat_drop.jsonl",
+               "duration_s": 24.3, "frames": 194, "treats": [4.0, 15.5], "expected_emotion": "excited",
+               "observed": { "dominant": "excited", "seconds": { "excited": 9.1, "relaxed": 12.0 } },
+               "notes": "" } ] }
+```
+In `events/*.jsonl` every `ts` (frames, audio, rules, treat) is seconds from the clip start, not wall time:
+replay by adding your own start time. `treats` are in the same seconds, and each has a `treat` line in the
+events file. `expected_emotion` is `null` until filled and is otherwise from the emotion vocabulary.
+
 ## Phone camera (primary live source)
 
 The live demo uses a **phone as the camera and microphone**, running our own web page in its browser.
@@ -327,6 +348,12 @@ class Pipeline:
 no-ops (with one warning) unless the source type is `browser`. `status()` returns
 `{"source", "state": "running" | "stalled" | "stopped", "fps", "last_frame_age_s", "audio_ok"}`.
 Web calls only these methods and never imports anything else from `vision/` or `audio/`.
+
+`scripts/run_pipeline.py --jsonl` (and the precomputed `events.jsonl` per fallback clip) writes one
+line per event in the same envelope as Web's WebSocket: `{"type": "frame" | "audio" | "rules" | "treat",
+"data": {...}}`, where `data` is the FrameEvent / AudioEvent / RulesLabel JSON (or `{"ts"}` for a treat).
+In `--fast` mode lines are in timestamp order. `FrameEvent.source` is `"live"` for browser, webcam and
+stream sources and `"file"` for clips.
 
 ## Two-day plan
 

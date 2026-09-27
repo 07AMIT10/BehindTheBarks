@@ -74,6 +74,7 @@ data:
   # Rules engine (Step 8); provisional values, tuned in Step 11. Every key is optional, defaults live in rules.py.
   rules:
     window_s: 3.0                       # AudioEvents newer than this count as "recent"
+    treat_window_s: 10.0                # Pipeline.mark_treat(): treat_event_recent stays set this long after the treat
     hysteresis_s: 1.5                   # a new top label must win this long before it replaces the current one
     no_dog_unknown_s: 2.0               # no dog for longer than this -> unknown (shorter gaps keep the last label)
     disinterested_s: 8.0                # in zone + low motion for this long -> disinterested

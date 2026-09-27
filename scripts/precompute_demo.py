@@ -20,13 +20,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from dotenv import load_dotenv  # noqa: E402
 
+from backend.demo.clips import load_demo_clips  # noqa: E402
 from backend.demo.replay import replay_clip  # noqa: E402
 from backend.fusion.llm_interpreter import LLMInterpreter  # noqa: E402
 from backend.web.settings import LLMSettings, load_config  # noqa: E402
-
-
-def read_events(clip_dir: Path) -> list[dict]:
-    return [json.loads(line) for line in (clip_dir / "events.jsonl").read_text().splitlines() if line.strip()]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -36,21 +33,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--clip", default=None)
     a = ap.parse_args(argv)
     cfg = load_config()
-    demo = cfg["web"]["demo"]
-    manifest_path = Path(a.manifest or demo["manifest"])
-    if not manifest_path.exists():
-        manifest_path = Path(demo["clips_dir"]) / "manifest.json"
-    manifest = json.loads(manifest_path.read_text())
+    if a.manifest:
+        cfg["web"]["demo"]["manifest"] = a.manifest
+    clips = load_demo_clips(cfg)
+    if not clips.available:
+        sys.exit("no demo clips found (check web.demo.manifest and backend/demo/clips/manifest.json)")
     cache = Path("backend/demo/cache")
     cache.mkdir(parents=True, exist_ok=True)
     settings = LLMSettings.from_config(cfg)
     print("LLM:", "enabled" if settings.enabled else "disabled (rules-only timelines)")
-    for c in manifest["clips"]:
-        if a.clip and c["id"] != a.clip:
+    for meta in clips.list():
+        if a.clip and meta.id != a.clip:
             continue
-        d = manifest_path.parent / c["dir"]
-        cap = cv2.VideoCapture(str(d / "clip.mp4"))
-        fps = cap.get(cv2.CAP_PROP_FPS) or 8.0
+        video = clips.video_path(meta.id)
+        cap = cv2.VideoCapture(str(video))
 
         def get_frame(t: float, cap=cap):
             cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000)
@@ -60,10 +56,10 @@ def main(argv: list[str] | None = None) -> int:
             ok2, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             return buf.tobytes() if ok2 else None
 
-        tl = asyncio.run(replay_clip(read_events(d), get_frame, LLMInterpreter(settings)))
-        tl["clip"] = c["id"]
-        (cache / f"{c['id']}.timeline.json").write_text(json.dumps(tl))
-        print(f"{c['id']}: {len(tl['states'])} states, {len(tl['llm'])} llm, {len(tl['notifications'])} notes")
+        tl = asyncio.run(replay_clip(clips.events(meta.id), get_frame, LLMInterpreter(settings)))
+        tl["clip"] = meta.id
+        (cache / f"{meta.id}.timeline.json").write_text(json.dumps(tl))
+        print(f"{meta.id}: {len(tl['states'])} states, {len(tl['llm'])} llm, {len(tl['notifications'])} notes")
     return 0
 
 
