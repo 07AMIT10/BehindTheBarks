@@ -155,6 +155,10 @@ web:
     openrouter_title: Behind The Barks
   notify:
     mode: dashboard_only      # telegram | dashboard_only
+  demo:
+    manifest: data/fallback/manifest.json   # Person A's file; falls back to backend/demo/clips/manifest.json
+    clips_dir: backend/demo/clips           # web-owned placeholder clips
+    telegram_first: false                   # also send the first demo notification via Telegram if configured
   ingest:                     # /ingest phone camera (Task 3); every key optional, defaults live in settings.py
     stale_s: 5.0              # a quiet phone counts as gone; a newcomer replaces it
     status_every_s: 2.0       # phone status broadcast to dashboards
