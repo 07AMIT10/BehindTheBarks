@@ -18,7 +18,11 @@ Build window: 2 days. Demo: live camera, with a pre-recorded fallback that must 
 - **Components talk only through the JSON contracts below.** Change a contract only after agreeing on it
   with whoever consumes it, and update this file in the same commit.
 - **Emotion labels come from the fixed vocabulary below.** Nothing else reaches the dashboard.
-- **No native mobile app.** Notifications go through a Telegram bot (web push only if time allows).
+- **The only native mobile app allowed is the on-device event producer** (`android/`: a Kotlin Android app that
+  runs the whole perception stack on the phone and streams the JSON contracts below to `/ingest-events`).
+  It may not change a contract, and while it exists the browser `/camera` page (`/ingest`, server inference)
+  and the server pipeline stay in place as the fallback path — neither may be deleted in the same phase.
+  Notifications still go through a Telegram bot (web push only if time allows).
 - Feature freeze: early afternoon of day 2. After that, only bug fixes and rehearsal.
 
 ## Architecture
@@ -84,6 +88,8 @@ Build window: 2 days. Demo: live camera, with a pre-recorded fallback that must 
     mock_pipeline.py   scripted MockPipeline (same interface as Pipeline)
     cache/             pre-computed LLM responses for fallback clips
 /frontend              Next.js dashboard + /camera page (phone as camera)
+/android               Kotlin Android app: perception on-device, streams events to /ingest-events
+  app/src/main/assets/models/   git-ignored; filled by scripts/fetch_android_models.py (weights, never committed)
 /data
   fallback/            stock clips + audio used for the offline demo
 /config.yaml           source, thresholds, cooldowns, demo_mode flag
@@ -165,8 +171,8 @@ The on-device path inverts the division of labour: an Android app runs detection
 face → audio → features → rules on the phone and the backend only receives the events it already
 speaks. The JSON contracts below do not change, so the dashboard, the LLM, the notifier and demo mode
 are untouched; only the producer of the envelopes moves. (Plan:
-`docs/superpowers/plans/2026-10-02-android-ondevice-v2.md`. This contradicts the "No native mobile
-app" non-negotiable above, so it is a proposal until that line is amended.)
+   `docs/superpowers/plans/2026-10-02-android-ondevice-v2.md`. The "no native mobile app"
+   non-negotiable above was amended to allow exactly this app, as an event producer and nothing else.)
 
 - **Server role:** `web.pipeline: remote` (`backend/web/remote_pipeline.py`) — a `Pipeline`
   implementation with **no models, no source and no watchdog**. Events arrive over the socket, preview
@@ -178,7 +184,7 @@ app" non-negotiable above, so it is a proposal until that line is amended.)
   1. text hello: `{"type": "hello", "proto": 1, "device", "phone_time": <epoch s>, "models": {...},
      "profile": "mobile"}` (`models`, `profile` and `proto` are optional; `phone_time` is seconds).
      The server replies `{"type": "hello_ack", "server_time": <epoch s>}`.
-2. text envelopes, the same `{"type": "frame" | "audio" | "rules" | "treat", "data": {...}}` shape
+  2. text envelopes, the same `{"type": "frame" | "audio" | "rules" | "treat", "data": {...}}` shape
      as `events/*.jsonl` and the dashboard feed. `data` is validated with the pydantic contract, so an
      unknown key, a missing `ts` or a label outside the vocabulary is **counted in `status.phone.dropped`
      and thrown away** — one bad envelope never closes the socket. A callback inside the Runtime that
@@ -381,6 +387,15 @@ cloudflared tunnel --url http://localhost:3000
 cloudflared tunnel --url http://localhost:8000
 # demo mode (offline, fallback clips)
 DEMO_MODE=1 uvicorn backend.main:app
+```
+
+On-device phone (`android/`, needs `ANDROID_HOME` = the Android SDK root):
+```
+# one-time setup: install platform-tools, platforms;android-35, build-tools;35.0.0 and accept licences
+sdkmanager --sdk_root="$ANDROID_HOME" --licenses
+make android-build      # ./gradlew :app:assembleDebug, then zipalign -c -P 16 -v 4 (16 KB page size)
+make android-test       # ./gradlew :app:testDebugUnitTest
+make android-install    # ./gradlew :app:installDebug (phone over USB with USB debugging on)
 ```
 
 ## Environment variables

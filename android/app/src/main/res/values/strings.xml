@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Behind The Barks</string>
+    <string name="scaffold_notice">On-device perception app (scaffold).</string>
+</resources>
