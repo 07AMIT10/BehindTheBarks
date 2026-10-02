@@ -117,10 +117,11 @@ Backend = Callable[[Candidate, Job], Path]
 def candidates_for(superanimal: str = DEFAULT_SUPERANIMAL) -> tuple[Candidate, ...]:
     """The Phase 0 candidate set. `superanimal` names the DLC snapshot the pose baseline comes from.
 
-    The order is empirical rather than tidy: the SuperAnimal LiteRT conversion needs ~4 GB, and on a
-    7 GB machine a run that had already converted a detector before reaching it was OOM-killed part
-    way through, twice, so the cheap detector exports go first. `run()` writes the report after every
-    candidate, so a machine that still cannot fit the conversion keeps the records before it.
+    The order is empirical rather than tidy. The SuperAnimal LiteRT conversion needs ~4 GB; on a 7 GB
+    machine the two runs that put it first both finished it and were then OOM-killed on the candidate
+    right after, while every run with the cheap detector exports ahead of it finished (it is 6th of
+    13). `run()` writes the report after every candidate, so a machine that still cannot fit a
+    conversion keeps the records of everything before it.
     """
     return (
         # -- detector, 320x320 (plan section 1.1 T1) ------------------------------------------------
