@@ -1,6 +1,7 @@
 package com.btb.ondevice.contracts
 
 import com.google.common.truth.Truth.assertThat
+import com.google.common.truth.Truth.assertWithMessage
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.MissingFieldException
 import kotlinx.serialization.SerializationException
@@ -48,6 +49,17 @@ class ContractsTest {
         assertThat(frame["features"]!!.jsonObject).containsKey("in_feeding_zone")
     }
 
+    @Test
+    fun `the shared Json is configured the way the pydantic models serialise`() {
+        val configuration = ContractsJson.configuration
+
+        // extra="forbid": an unknown key is a failure, not a silently dropped field.
+        assertThat(configuration.ignoreUnknownKeys).isFalse()
+        // _Contract.to_json() writes every key, nulls and defaults included.
+        assertThat(configuration.explicitNulls).isTrue()
+        assertThat(configuration.encodeDefaults).isTrue()
+    }
+
     @ParameterizedTest(name = "{0}.json rejects an unknown key, like extra=forbid")
     @ValueSource(strings = ["features", "frame_event", "audio_event", "rules_label", "emotion_state",
         "llm_result"])
@@ -59,6 +71,8 @@ class ContractsTest {
         assertThat(thrown).isInstanceOf(SerializationException::class.java)
     }
 
+    // MissingFieldException is the only experimental API this test touches in kotlinx 1.9.0;
+    // Json.configuration and the three builder flags are stable, so they need no opt-in.
     @OptIn(ExperimentalSerializationApi::class)
     @Test
     fun `a missing required field is a decode failure`() {
@@ -156,13 +170,14 @@ class ContractsTest {
         fun assertJsonEquals(expected: JsonElement, actual: JsonElement, path: String = "value") {
             when {
                 expected is JsonObject && actual is JsonObject -> {
-                    assertThat(actual.keys).containsExactlyElementsIn(expected.keys)
+                    assertWithMessage("at $path").that(actual.keys)
+                        .containsExactlyElementsIn(expected.keys)
                     expected.keys.forEach { key ->
                         assertJsonEquals(expected.getValue(key), actual.getValue(key), "$path.$key")
                     }
                 }
                 expected is JsonArray && actual is JsonArray -> {
-                    assertThat(actual.size).isEqualTo(expected.size)
+                    assertWithMessage("at $path (length)").that(actual.size).isEqualTo(expected.size)
                     expected.forEachIndexed { index, element ->
                         assertJsonEquals(element, actual[index], "$path[$index]")
                     }
@@ -171,9 +186,10 @@ class ContractsTest {
                     val want = expected.jsonPrimitive
                     val got = actual.jsonPrimitive
                     if (want.doubleOrNull != null && got.doubleOrNull != null) {
-                        assertThat(got.doubleOrNull!!).isWithin(1e-9).of(want.doubleOrNull!!)
+                        assertWithMessage("at $path (number)")
+                            .that(got.doubleOrNull!!).isWithin(1e-9).of(want.doubleOrNull!!)
                     } else {
-                        assertThat(got.content).isEqualTo(want.content)
+                        assertWithMessage("at $path").that(got.content).isEqualTo(want.content)
                     }
                 }
             }

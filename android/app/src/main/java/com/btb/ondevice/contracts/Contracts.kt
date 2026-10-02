@@ -120,8 +120,10 @@ data class FrameEvent(
     /** min 0.0, max 1.0 */
     @SerialName("bbox_conf")
     val bboxConf: Double? = null,
+    /** exactly 3 numbers, each value is [x, y, conf] and conf 0.0..1.0 */
     @SerialName("body_keypoints")
     val bodyKeypoints: Map<String, List<Double>?> = emptyMap(),
+    /** exactly 2 numbers */
     @SerialName("face_landmarks")
     val faceLandmarks: List<List<Double>>? = null,
     val features: Features = Features(),
@@ -143,6 +145,7 @@ data class RulesLabel(
     val emotion: Emotion,
     /** min 0.0, max 1.0 */
     val confidence: Double,
+    /** every score 0.0..1.0 */
     val scores: Map<Emotion, Double>,
 )
 

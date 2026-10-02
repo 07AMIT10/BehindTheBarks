@@ -125,8 +125,30 @@ def snake(name: str) -> str:
     return "_".join(token.lower() for token in re.findall(r"[A-Z]+(?![a-z])|[A-Z][a-z0-9]*|[a-z0-9]+", name))
 
 
+def validated_fields(model: type[c._Contract]) -> set[str]:
+    """The fields a @field_validator checks; its rule is invisible in model_json_schema()."""
+    return {f for d in model.__pydantic_decorators__.field_validators.values() for f in d.info.fields}
+
+
 def kdoc(text: str) -> str:
     return text.replace("*/", "*&#47;").replace("\n", " ")
+
+
+# Every JSON-schema keyword this generator knows how to read. Anything else in a property schema
+# raises: a constraint that silently vanishes is a contract change that only one side notices.
+KNOWN_KEYWORDS = frozenset({
+    "$defs", "$ref", "additionalProperties", "anyOf", "default", "description", "enum", "items",
+    "maxItems", "maximum", "minItems", "minimum", "prefixItems", "properties", "propertyNames",
+    "required", "title", "type",
+})
+
+# A field_validator's rule never reaches model_json_schema(), so it cannot be generated: it is
+# written down here and lands on the field as KDoc. data_class refuses to emit a model whose
+# validators are not all covered, so a new validator cannot slip in unnoticed.
+VALIDATOR_NOTES: dict[tuple[str, str], str] = {
+    ("FrameEvent", "body_keypoints"): "each value is [x, y, conf] and conf 0.0..1.0",
+    ("RulesLabel", "scores"): "every score 0.0..1.0",
+}
 
 
 class Emitter:
@@ -192,18 +214,31 @@ class Emitter:
         raise ValueError(f"unsupported schema {s}")
 
     def constraints(self, s: dict) -> str | None:
-        """Kotlin cannot express pydantic's ranges, so keep them in the file instead of losing them."""
-        notes = []
+        """Kotlin cannot express the JSON-schema constraints pydantic puts in a schema, so keep them
+        in the file instead of losing them: the bounds behind `ge`/`le` and the arity behind a
+        fixed-length tuple, at any depth (`items`, `additionalProperties`, `prefixItems`). A keyword
+        that is not listed in KNOWN_KEYWORDS raises rather than vanishing. The range checks in
+        backend/contracts.py's field_validators never reach the schema at all; those are written
+        down in VALIDATOR_NOTES instead.
+        """
+        notes: list[str] = []
         for option in s.get("anyOf", [s]):
+            unknown = sorted(set(option) - KNOWN_KEYWORDS)
+            if unknown:
+                raise ValueError(f"unhandled JSON-schema keyword(s) {unknown} in {option}")
             for json_schema_key, word in (("minimum", "min"), ("maximum", "max")):
                 if json_schema_key in option:
                     notes.append(f"{word} {option[json_schema_key]}")
             if "minItems" in option and option.get("maxItems") == option["minItems"]:
                 notes.append(f"exactly {option['minItems']} numbers")
-            for unhandled in ("exclusiveMinimum", "exclusiveMaximum", "minLength", "maxLength"):
-                if unhandled in option:
-                    raise ValueError(f"constraint {unhandled} is not mirrored: {option}")
-        return ", ".join(notes) or None
+            nested = [x for x in (option.get("items"), option.get("additionalProperties"))
+                      if isinstance(x, dict)]
+            nested += [x for x in option.get("prefixItems", []) if isinstance(x, dict)]
+            for subschema in nested:
+                note = self.constraints(subschema)
+                if note:
+                    notes.append(note)
+        return ", ".join(dict.fromkeys(notes)) or None
 
     def default(self, model: type[c._Contract], name: str) -> str | None:
         field = model.model_fields[name]
@@ -231,9 +266,18 @@ class Emitter:
 
     def data_class(self, model: type[c._Contract]) -> str:
         schema = model.model_json_schema(ref_template="#/$defs/{model}")
+        noted = {field for owner, field in VALIDATOR_NOTES if owner == model.__name__}
+        unnoted = sorted(validated_fields(model) - noted)
+        if unnoted:
+            raise ValueError(
+                f"{model.__name__}.{unnoted} has a field_validator whose rule never reaches the JSON "
+                "schema; add it to VALIDATOR_NOTES so the Kotlin mirror keeps the check"
+            )
         fields = []
         for name, prop in schema["properties"].items():
-            note = self.constraints(prop)
+            note = ", ".join(
+                n for n in (self.constraints(prop), VALIDATOR_NOTES.get((model.__name__, name))) if n
+            )
             if note:
                 fields.append(f"    /** {note} */")
             if name != camel(name):
