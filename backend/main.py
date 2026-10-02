@@ -1,7 +1,8 @@
 """FastAPI app (Person B). Routes only; all behaviour lives in backend/web/runtime.py.
 
-    uvicorn backend.main:app --reload          # pipeline from config.yaml web.pipeline (mock|real)
+    uvicorn backend.main:app --reload          # pipeline from config.yaml web.pipeline (mock|real|remote)
     DEMO_MODE=1 uvicorn backend.main:app       # LLM off, notifications dashboard-only
+    WEB_PIPELINE=remote uvicorn backend.main:app   # the phone produces the events (web.pipeline: remote)
 """
 
 from __future__ import annotations
@@ -22,10 +23,12 @@ from backend.notify import build_notifier
 from backend.web.event_log import EventLog
 from backend.web.hub import Hub
 from backend.web.ingest import CLOSE_BAD_HELLO, CLOSE_BUSY, CLOSE_REPLACED, HelloError, parse_hello
+from backend.web.ingest_events import RemoteSession, bind_pipeline, parse_remote_hello
 from backend.web.runtime import Runtime
 from backend.web.settings import LLMSettings, load_config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+log = logging.getLogger("ingest-events")
 
 
 def build_pipeline(cfg: dict) -> Any:
@@ -33,6 +36,10 @@ def build_pipeline(cfg: dict) -> Any:
         from backend.pipeline import Pipeline  # lazy: heavy deps only when asked for
 
         return Pipeline(cfg)
+    if cfg["web"]["pipeline"] == "remote":
+        from backend.web.remote_pipeline import RemotePipeline  # lazy: the phone is the producer
+
+        return RemotePipeline(cfg)
     from backend.demo.mock_pipeline import MockPipeline
 
     return MockPipeline(cfg)
@@ -121,6 +128,18 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     async def demo_notify(body: dict) -> dict:
         return await app.state.rt.demo_notify(body.get("clip", ""), float(body.get("t", 0.0)))
 
+    @app.post("/phone/config")
+    async def phone_config(body: dict) -> dict:
+        """Push data.rules overrides to the phone, so retuning needs no APK rebuild (web.pipeline:
+        remote only). With no `rules`, the server's own data.rules section is sent."""
+        push = getattr(app.state.rt.pipeline, "push_config", None)
+        if push is None:
+            raise HTTPException(400, "web.pipeline must be 'remote' to push phone config")
+        rules = body.get("rules")
+        if rules is not None and not isinstance(rules, dict):
+            raise HTTPException(400, "rules must be an object")
+        return {"sent": bool(push(rules))}
+
     @app.get("/video")
     async def video(max_frames: int = 0) -> StreamingResponse:
         period = 1.0 / float(web["video"]["fps"])
@@ -187,6 +206,66 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         except (WebSocketDisconnect, RuntimeError):
             pass
         finally:
+            rt.phone_close(session, code)
+
+    @app.websocket("/ingest-events")
+    async def ingest_events(sock: WebSocket) -> None:
+        """Phone that runs the perception itself: JSON hello, then JSON envelopes plus binary
+        0x01 preview JPEGs (backend/web/ingest_events.py). Same close codes and one-phone-at-a-time
+        rules as /ingest."""
+        await sock.accept()
+        rt = app.state.rt
+        if rt.cfg["web"]["pipeline"] != "remote":
+            log.warning("a phone is streaming events but web.pipeline is %r; run WEB_PIPELINE=remote so "
+                        "the server keeps no models and starts no watchdog", rt.cfg["web"]["pipeline"])
+        first = await sock.receive()
+        if first["type"] == "websocket.disconnect":
+            return
+        try:
+            hello = parse_remote_hello(first.get("text"))
+        except HelloError as err:
+            await sock.close(code=CLOSE_BAD_HELLO, reason=str(err))
+            return
+
+        async def send_downlink(msg: dict) -> None:
+            await sock.send_json(msg)
+
+        async def close_replaced() -> None:
+            try:
+                await sock.close(code=CLOSE_REPLACED, reason="Replaced by a newer phone connection")
+            except RuntimeError:
+                pass  # already closed
+
+        rem = cfg["web"].get("remote") or {}
+        session = RemoteSession(hello, rt.pipeline, rt, clock=rt.clock,
+                                max_message_bytes=web["ingest"]["max_message_bytes"],
+                                fps_window_s=web["ingest"]["fps_window_s"],
+                                offset_samples=int(rem.get("clock_samples", 5)),
+                                ping_every_s=float(rem.get("ping_every_s", 30.0)))
+        session = rt.phone_open(hello, closer=close_replaced, session=session)
+        if session is None:
+            await sock.close(code=CLOSE_BUSY, reason="Another phone is already streaming")
+            return
+        bind_pipeline(rt.pipeline, session, send_downlink)
+        code: int | None = None
+        try:
+            await sock.send_json({"type": "hello_ack", "server_time": session.server_time_at_hello})
+            while True:
+                msg = await sock.receive()
+                if msg["type"] == "websocket.disconnect":
+                    code = msg.get("code")
+                    break
+                data = msg.get("bytes")
+                if data is not None:
+                    session.handle(data)
+                elif msg.get("text") is not None and session.handle_text(msg["text"]) == "ping":
+                    await sock.send_json({"type": "pong", "server_time": rt.clock()})
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            detach = getattr(rt.pipeline, "detach", None)
+            if detach is not None:
+                detach(session)
             rt.phone_close(session, code)
 
     return app

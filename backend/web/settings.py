@@ -30,6 +30,7 @@ WEB_DEFAULTS: dict[str, Any] = {
     "notify": {"mode": "dashboard_only"},
     "demo": {"manifest": "data/fallback/manifest.json", "clips_dir": "backend/demo/clips", "telegram_first": False},
     "ingest": {"stale_s": 5.0, "status_every_s": 2.0, "fps_window_s": 3.0, "max_message_bytes": 2_000_000},
+    "remote": {"stale_s": 2.0, "clock_samples": 5, "ping_every_s": 30.0},
     "profile": {"dog_name": "Bruno", "location": "Kitchen", "zone_label": "feeding area"},
 }
 
@@ -52,6 +53,8 @@ def load_config(path: str | Path = "config.yaml", env: Mapping[str, str] | None 
     cfg = dict(raw)
     cfg["web"] = _merge(WEB_DEFAULTS, raw.get("web") or {})
     cfg["web"]["demo_mode"] = _truthy(env.get("DEMO_MODE"))
+    if env.get("WEB_PIPELINE"):
+        cfg["web"]["pipeline"] = env["WEB_PIPELINE"].strip().lower()
     if env.get("NOTIFY_MODE"):
         cfg["web"]["notify"]["mode"] = env["NOTIFY_MODE"]
     if cfg["web"]["demo_mode"]:

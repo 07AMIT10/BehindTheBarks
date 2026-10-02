@@ -22,6 +22,7 @@ from backend.fusion.llm_triggers import TriggerPolicy
 from backend.fusion.state import FusionState, StateConfig
 from backend.web.hub import Hub
 from backend.web.ingest import Hello, IngestSession
+from backend.web.ingest_events import RemoteSession
 from backend.web.settings import is_demo
 
 log = logging.getLogger("runtime")
@@ -49,8 +50,8 @@ class Runtime:
         ing = cfg["web"]["ingest"]
         self._stale_s, self._phone_every_s = float(ing["stale_s"]), float(ing["status_every_s"])
         self._fps_window_s, self._max_msg = float(ing["fps_window_s"]), int(ing["max_message_bytes"])
-        self.phone: IngestSession | None = None
-        self._phone_prev: IngestSession | None = None
+        self.phone: IngestSession | RemoteSession | None = None
+        self._phone_prev: IngestSession | RemoteSession | None = None
         self._phone_closer: Callable[[], Awaitable[None]] | None = None
         self.demo = demo_clips
         self.mode: str = "demo" if is_demo(cfg) and demo_clips and demo_clips.available else "live"
@@ -187,12 +188,16 @@ class Runtime:
         if reason:
             self._llm_task = self._spawn(self._run_llm(reason, now))
 
-    # -- phone (/ingest) ----------------------------------------------------------------------
-    def phone_open(self, hello: Hello, closer: Callable[[], Awaitable[None]] | None = None) -> IngestSession | None:
+    # -- phone (/ingest, /ingest-events) ---------------------------------------------------------
+    def phone_open(self, hello: Hello | RemoteHello, closer: Callable[[], Awaitable[None]] | None = None,
+                   session: IngestSession | RemoteSession | None = None) -> IngestSession | RemoteSession | None:
         """Register a phone that sent a valid hello. Returns None if another phone is active (busy).
 
         A phone that has sent nothing for ingest.stale_s counts as gone (half-open socket after a
-        Wi-Fi drop), so the newcomer replaces it and the old socket is closed via its closer."""
+        Wi-Fi drop), so the newcomer replaces it and the old socket is closed via its closer.
+
+        `session` is the protocol-specific session (/ingest-events builds a RemoteSession, which
+        dispatches envelopes to this Runtime); without it a plain IngestSession is made."""
         now = self.clock()
         old = self.phone
         if old is not None:
@@ -202,14 +207,14 @@ class Runtime:
             if self._phone_closer is not None:
                 self._spawn(self._phone_closer())
             log.warning("phone %r went quiet for %.1fs; replaced", old.hello.device, old.idle_s(now))
-        self.phone = IngestSession(hello, self.pipeline, clock=self.clock, fps_window_s=self._fps_window_s,
-                                   max_message_bytes=self._max_msg)
+        self.phone = session or IngestSession(hello, self.pipeline, clock=self.clock,
+                                              fps_window_s=self._fps_window_s, max_message_bytes=self._max_msg)
         self._phone_closer = closer
         log.info("phone connected: %s", hello)
         self.publish_phone()
         return self.phone
 
-    def phone_close(self, session: IngestSession, code: int | None = None) -> None:
+    def phone_close(self, session: IngestSession | RemoteSession, code: int | None = None) -> None:
         """The phone's socket ended. Ignored if this session was already replaced.
 
         Close code 1000 means the Stop button: the phone is forgotten (status "phone": null). Anything

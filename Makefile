@@ -1,7 +1,9 @@
 PY ?= .venv/bin/python
-.PHONY: dev-backend dev-frontend dev demo test-web test-frontend tunnel-backend tunnel-frontend
+.PHONY: dev-backend dev-backend-remote dev-frontend dev demo test-web test-frontend tunnel-backend tunnel-frontend
 dev-backend:
 	$(PY) -m uvicorn backend.main:app --reload --port 8000
+dev-backend-remote:
+	WEB_PIPELINE=remote $(PY) -m uvicorn backend.main:app --reload --port 8000
 dev-frontend:
 	cd frontend && npm run dev
 dev:
