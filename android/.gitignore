@@ -1,5 +1,6 @@
 # Gradle / Android build output
 .gradle/
+.kotlin/
 build/
 .cxx/
 local.properties

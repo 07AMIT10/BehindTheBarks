@@ -48,6 +48,12 @@ android {
             it.useJUnitPlatform()
         }
     }
+
+    // NewApi and MissingClass fail the build: unit tests happily compile a theme that only exists
+    // from API 29 while minSdk is 26, and only lint sees that the app would crash on launch.
+    lint {
+        abortOnError = true
+    }
 }
 
 kotlin {

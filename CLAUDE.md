@@ -173,6 +173,9 @@ speaks. The JSON contracts below do not change, so the dashboard, the LLM, the n
 are untouched; only the producer of the envelopes moves. (Plan:
    `docs/superpowers/plans/2026-10-02-android-ondevice-v2.md`. The "no native mobile app"
    non-negotiable above was amended to allow exactly this app, as an event producer and nothing else.)
+- **Runtimes stay CPU-only.** LiteRT drags in vendor NPU libraries (Google `libedgetpu_litert.so`,
+  Qualcomm `libcdsprpc.so`, MediaTek `.mtk.so`) as unused manifest declarations; they are never loaded,
+  and the app must select the accelerator explicitly (CPU/XNNPACK), per "no NNAPI, no NPU code".
 
 - **Server role:** `web.pipeline: remote` (`backend/web/remote_pipeline.py`) — a `Pipeline`
   implementation with **no models, no source and no watchdog**. Events arrive over the socket, preview

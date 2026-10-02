@@ -30,7 +30,7 @@ android-build:
 	$(ANDROID_HOME)/build-tools/$(ANDROID_BUILD_TOOLS)/zipalign -c -P 16 -v 4 $(ANDROID_APK)
 android-test:
 	@test -n "$(ANDROID_HOME)" || { echo "ANDROID_HOME is not set. Install the Android SDK (platform-tools, platforms;android-35, build-tools;$(ANDROID_BUILD_TOOLS)), accept the licences with 'sdkmanager --licenses', then export ANDROID_HOME=/path/to/Android/Sdk."; exit 1; }
-	cd android && ./gradlew :app:testDebugUnitTest
+	cd android && ./gradlew :app:testDebugUnitTest :app:lintDebug
 android-install:
 	@test -n "$(ANDROID_HOME)" || { echo "ANDROID_HOME is not set. Install the Android SDK (platform-tools, platforms;android-35, build-tools;$(ANDROID_BUILD_TOOLS)), accept the licences with 'sdkmanager --licenses', then export ANDROID_HOME=/path/to/Android/Sdk."; exit 1; }
 	cd android && ./gradlew :app:installDebug

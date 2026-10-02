@@ -12,7 +12,13 @@ serialization = "1.9.0"
 # 2.2.21, which is the Kotlin version pinned above.
 okhttp = "5.3.2"
 camerax = "1.5.3"
-litert = "2.2.0"
+litert = "2.2.0" # NOT a leaf dependency. litert -> litert-api -> com.google.android.play:ai-delivery:0.1.1-alpha01
+                 # (an alpha, unpinned here), which merges ~60 <uses-native-library> declarations for vendor NPU
+                 # blobs (libedgetpu_litert.so, Qualcomm libcdsprpc.so, MediaTek .mtk.so) plus RECEIVE_BOOT_COMPLETED,
+                 # ACCESS_NETWORK_STATE, FOREGROUND_SERVICE_DATA_SYNC, WorkManager, Room and Play asset packs into the
+                 # manifest. None of those .so are packaged (only 5 LiteRT libs per ABI are) and none is ever loaded:
+                 # Tasks 2.3/2.4/4.1 MUST select the accelerator explicitly (CPU/XNNPACK) to honour the plan's
+                 # "no NNAPI, no NPU code". Dropping ai-delivery or moving to litert-accelerator:cpu needs the owner.
 junit = "5.14.4"
 junitPlatform = "1.14.4"
 truth = "1.4.5"
