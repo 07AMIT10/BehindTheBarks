@@ -204,6 +204,173 @@ def test_notes_record_the_source_of_every_candidate(tmp_path):
         assert cand.source in report[cand.name]["notes"], cand.name
 
 
+# -- the report may not claim more than it checked ------------------------------------------------
+
+
+def test_notes_include_what_a_backend_learned_even_when_it_then_failed(tmp_path):
+    """A backend reports what it found through job.facts; that is lost unless notes are built after it."""
+    backends = _fake_backends()
+
+    def learns_then_fails(cand: E.Candidate, job: E.Job) -> Path:
+        job.facts[cand.name] = "39 SuperAnimal-Quadruped keypoints"
+        raise RuntimeError(BOOM)
+
+    backends["torch_litert"] = learns_then_fails
+    out = tmp_path / "out"
+    assert E.main(["--out", str(out), "--only", "pose_superanimal_hrnet_w32"], backends=backends) == 0
+    notes = json.loads((out / E.REPORT_NAME).read_text())["pose_superanimal_hrnet_w32"]["notes"]
+    assert "39 SuperAnimal-Quadruped keypoints" in notes
+    assert BOOM in notes
+
+
+def test_an_artifact_that_is_not_a_model_is_not_reported_as_exported(tmp_path):
+    """`export_ok` has to mean the file was read back as a model, not that a backend returned a path."""
+    backends = _fake_backends()
+
+    def writes_junk(cand: E.Candidate, job: E.Job) -> Path:
+        dest = job.out_dir / f"{cand.name}.{cand.fmt}"
+        dest.write_bytes(b"this is not a flatbuffer")
+        return dest
+
+    backends["download"] = writes_junk
+    out = tmp_path / "out"
+    assert E.main(["--out", str(out), "--only", "audio_yamnet"], backends=backends) == 0
+    entry = json.loads((out / E.REPORT_NAME).read_text())["audio_yamnet"]
+    assert entry["export_ok"] is False
+    assert entry["sha256"] is None and entry["path"] is None
+    assert "not a model" in entry["notes"] or "could not read" in entry["notes"]
+
+
+def test_running_an_artifact_is_recorded_and_a_runtime_that_refuses_it_is_a_failure(tmp_path):
+    model = _tiny_tflite(tmp_path / "m.tflite", [1, 21, 1])
+    ok, note = E.run_once(model)
+    assert ok is True and "[1, 21, 3]" in note
+    junk = tmp_path / "junk.tflite"
+    junk.write_bytes(model.read_bytes()[:64])  # still a flatbuffer header, no longer a model
+    bad, note = E.run_once(junk)
+    assert bad is False and "failed to run" in note
+
+
+def test_the_report_is_on_disk_before_the_next_candidate_runs(tmp_path):
+    """The deliverable is the report, so a run killed at candidate 6 must leave candidates 1-5 recorded."""
+    seen: dict[str, str] = {}
+
+    def peeks_at_the_report(cand: E.Candidate, job: E.Job) -> Path:
+        path = job.out_dir / E.REPORT_NAME
+        if cand.name == "det_effdet_lite0_320_int8":  # the third candidate of the run
+            seen["keys"] = ",".join(json.loads(path.read_text())) if path.exists() else "MISSING"
+        dest = job.out_dir / f"{cand.name}.{cand.fmt}"
+        return _tiny_onnx(dest, FAKE_INPUT_SHAPES[cand.name]) if cand.fmt == "onnx" else _tiny_tflite(dest, FAKE_INPUT_SHAPES[cand.name])
+
+    out = tmp_path / "out"
+    backends = {name: (lambda c, j: peeks_at_the_report(c, j)) for name in E.BACKENDS}
+    assert E.main(["--out", str(out)], backends=backends) == 0
+    assert "det_yolo26n_320_fp32" in seen["keys"] and "det_yolo26n_320_int8" in seen["keys"], seen
+    assert list(out.glob("*.tmp")) == [], "the report is not written atomically"
+
+
+def test_a_backend_that_dies_mid_write_leaves_no_artifact_at_the_artifact_path(tmp_path):
+    """A truncated .tflite at the exact path a later phase fetches would be taken for a model."""
+    backends = _fake_backends()
+    out = tmp_path / "out"
+
+    def writes_then_dies(cand: E.Candidate, job: E.Job) -> Path:
+        dest = job.out_dir / f"{cand.name}.{cand.fmt}"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"half a model")
+        raise RuntimeError(BOOM)
+
+    backends["torch_litert"] = writes_then_dies
+    assert E.main(["--out", str(out), "--only", "pose_superanimal_hrnet_w32"], backends=backends) == 0
+    assert not (out / "pose_superanimal_hrnet_w32.tflite").exists()
+    assert json.loads((out / E.REPORT_NAME).read_text())["pose_superanimal_hrnet_w32"]["export_ok"] is False
+
+
+def test_a_stale_artifact_from_an_earlier_run_is_cleared_when_its_export_fails(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    stale = out / "pose_superanimal_hrnet_w32.tflite"
+    stale.write_bytes(b"last week's model")
+    backends = _fake_backends(fail="pose_superanimal_hrnet_w32")
+    assert E.main(["--out", str(out), "--only", "pose_superanimal_hrnet_w32"], backends=backends) == 0
+    assert not stale.exists()
+
+
+def test_a_backend_that_rewrites_its_own_source_is_reported_as_drifted(tmp_path):
+    """onnx2tf saves its input graph back over the file it was given; that must not desync a hash."""
+    backends = _fake_backends()
+    pristine: dict[str, str] = {}
+
+    def rewrites_its_source(cand: E.Candidate, job: E.Job) -> Path:
+        if cand.name == "det_picodet_s_320":
+            dest = job.out_dir / f"{cand.name}.{cand.fmt}"
+            _tiny_onnx(dest, FAKE_INPUT_SHAPES[cand.name])
+            pristine["sha256"] = hashlib.sha256(dest.read_bytes()).hexdigest()
+            return dest
+        job.produced["det_picodet_s_320"].write_bytes(
+            job.produced["det_picodet_s_320"].read_bytes() + b"\x08surprise"
+        )  # what onnx2tf's onnx.save does to the file it was handed
+        dest = job.out_dir / f"{cand.name}.{cand.fmt}"
+        return _tiny_tflite(dest, FAKE_INPUT_SHAPES[cand.name])
+
+    for name in ("download", "onnx2tf"):
+        backends[name] = rewrites_its_source
+    out = tmp_path / "out"
+    assert E.main(
+        ["--out", str(out), "--only", "det_picodet_s_320", "--only", "det_picodet_s_320_tflite"], backends=backends
+    ) == 1, "a rewritten source has to fail the run, not pass quietly"
+    report = json.loads((out / E.REPORT_NAME).read_text())
+    assert report["det_picodet_s_320"]["sha256"] == pristine["sha256"], "the report recorded the rewritten bytes"
+    assert E.drifted(report) == ["det_picodet_s_320"]
+
+
+def test_the_conversion_input_is_a_copy_of_the_recorded_artifact(tmp_path):
+    """The copy is what stops onnx2tf from rewriting the artifact whose hash the report already holds."""
+    src = _tiny_onnx(tmp_path / "src.onnx", [1, 3, 32, 32])
+    stage = tmp_path / "_onnx2tf_x"
+    stage.mkdir()
+    work = E.conversion_copy(src, stage)
+    assert work != src and work.parent == stage and work.read_bytes() == src.read_bytes()
+    work.write_bytes(b"onnx2tf rewrote this")
+    assert src.read_bytes() == _tiny_onnx(tmp_path / "again.onnx", [1, 3, 32, 32]).read_bytes()
+
+
+def test_a_rejected_download_is_not_left_where_a_later_phase_looks_for_the_model(tmp_path, monkeypatch):
+    monkeypatch.setattr(E, "fetch_file", lambda url, dest: (dest.write_bytes(b"wrong width"), dest)[1])
+    monkeypatch.setattr(E, "probe", lambda path: E.Probe([1, 22050], "float32", [1, 5]))
+    cand = next(c for c in E.CANDIDATES if c.name == "audio_yamnet")
+    with pytest.raises(RuntimeError):
+        E.download(cand, E.Job(out_dir=tmp_path))
+    assert list(tmp_path.glob("*")) == []
+
+
+def test_the_onnx2tf_stage_directory_does_not_survive_a_failed_conversion(tmp_path, monkeypatch):
+    """A stage dir of onnxsim output is not an artifact; it must not sit in the output directory."""
+    cand = next(c for c in E.CANDIDATES if c.backend == "onnx2tf")
+    src = _tiny_onnx(tmp_path / "src.onnx", [1, 3, 32, 32])
+    job = E.Job(out_dir=tmp_path / "out", produced={cand.src: src})
+
+    def converter(returns: int) -> None:
+        def run(cmd, **kwargs):  # noqa: ANN001  (stands in for the real onnx2tf subprocess)
+            stage = Path(cmd[cmd.index("-o") + 1])
+            (stage / "onnxsim_debris.txt").write_text("graph surgery output")
+            return SimpleNamespace(returncode=returns, stdout="", stderr="converter gave up")
+
+        monkeypatch.setattr(E, "subprocess", SimpleNamespace(run=run))
+
+    (tmp_path / "out").mkdir()
+    converter(returns=1)
+    with pytest.raises(RuntimeError, match="exited 1"):
+        E.onnx2tf(cand, job)
+    assert list((tmp_path / "out").glob("_onnx2tf_*")) == []
+
+    converter(returns=0)  # exits clean but writes no model
+    with pytest.raises(RuntimeError, match="no .tflite"):
+        E.onnx2tf(cand, job)
+    assert list((tmp_path / "out").glob("_onnx2tf_*")) == []
+    assert src.read_bytes() == _tiny_onnx(tmp_path / "again.onnx", [1, 3, 32, 32]).read_bytes()
+
+
 # -- the two backends that are cheap enough to test for real --------------------------------------
 
 

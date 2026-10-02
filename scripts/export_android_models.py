@@ -11,10 +11,18 @@ ONNX Runtime. Every attempt lands in `<out>/export_report.json` as
 
     {name: {format, path, input_shape, dtype, sha256, export_ok, notes}}
 
-and *a failure is a result, not a blocker*: a converter that raises, or a source that cannot be
-fetched, is recorded with its real error in `notes` (export_ok false) and the run carries on, because
-Phase 0.3's job is to pick a runtime and a model from measurements, and "this one does not convert"
-is one of the measurements.
+and *a failure is a result, not a blocker*: a converter that raises, a source that cannot be
+fetched, or an artifact that turns out not to be a usable model is recorded with its real error in
+`notes` (export_ok false) and the run carries on, because Phase 0.3's job is to pick a runtime and a
+model from measurements, and "this one does not convert" is one of the measurements.
+
+**What a recorded entry means, and what it does not.** `export_ok: true` says the file was read back
+as a model (its input shape and dtype come out of the file itself, never from what the backend
+claimed) and was executed once on a zeros input; it is false if either step fails. `sha256` is the
+digest of those bytes as they were when the record was made, and the whole report is re-checked at
+the end of the run, so a converter that rewrites an artifact behind our back cannot leave a hash
+that matches nothing. It does **not** mean the model is accurate, fast or warm: that is Task 0.2
+(accuracy against the server stack) and Task 0.3 (latency, memory and thermal on real phones).
 
 Artifacts are scratch: `out/` is git-ignored and every weight here is either Apache-2.0 or
 non-commercial (see each candidate's `notes`), so none of this is committed. The Android app fetches
@@ -109,9 +117,10 @@ Backend = Callable[[Candidate, Job], Path]
 def candidates_for(superanimal: str = DEFAULT_SUPERANIMAL) -> tuple[Candidate, ...]:
     """The Phase 0 candidate set. `superanimal` names the DLC snapshot the pose baseline comes from.
 
-    The order is deliberate: the SuperAnimal LiteRT conversion is by far the most memory-hungry step
-    (torch export and MLIR over a 28 M-parameter HRNet), and on a 7 GB machine it was OOM-killed when
-    it ran first, so the cheap exports go first and it goes last.
+    The order is empirical rather than tidy: the SuperAnimal LiteRT conversion needs ~4 GB, and on a
+    7 GB machine a run that had already converted a detector before reaching it was OOM-killed part
+    way through, twice, so the cheap detector exports go first. `run()` writes the report after every
+    candidate, so a machine that still cannot fit the conversion keeps the records before it.
     """
     return (
         # -- detector, 320x320 (plan section 1.1 T1) ------------------------------------------------
@@ -285,7 +294,9 @@ def download(cand: Candidate, job: Job) -> Path:
         n_in, n_out = cand.expect
         if n_in in (got.input_shape or []) and got.output_shape and got.output_shape[-1] == n_out:
             return dest
+        # A rejected source is deleted, never left at the path a later phase fetches a model from.
         rejected.append(f"{url} -> input {got.input_shape}, output {got.output_shape}")
+        dest.unlink(missing_ok=True)
     raise RuntimeError(f"no source matched input {cand.expect[0]} samples / {cand.expect[1]} outputs: " + "; ".join(rejected))
 
 
@@ -422,6 +433,18 @@ def _superanimal_module(model_name: str) -> tuple[Any, Any, int]:
     return model, torch.zeros(1, 3, height, width), len(cfg["metadata"]["bodyparts"])
 
 
+def conversion_copy(src: Path, stage: Path) -> Path:
+    """A copy of `src` inside `stage`, for a converter to chew on.
+
+    onnx2tf saves its own re-exported graph back over the file it is given, which would rewrite an
+    artifact whose sha256 the report has already recorded. Converting a copy keeps that hash true of
+    the bytes that were downloaded.
+    """
+    work = stage / f"src.{src.suffix.lstrip('.')}"
+    shutil.copyfile(src, work)
+    return work
+
+
 def onnx2tf(cand: Candidate, job: Job) -> Path:
     """Convert a candidate's .onnx to .tflite with onnx2tf (an attempt: SimCC heads often do not convert)."""
     src = job.produced.get(cand.src or "")
@@ -429,26 +452,24 @@ def onnx2tf(cand: Candidate, job: Job) -> Path:
         raise RuntimeError(f"{cand.src} has no artifact to convert (it failed earlier in this run)")
     stage = job.out_dir / f"_onnx2tf_{cand.name}"
     stage.mkdir(parents=True, exist_ok=True)
-    done = subprocess.run(
-        [sys.executable, "-m", "onnx2tf", "-i", str(src), "-o", str(stage)],
-        capture_output=True,
-        text=True,
-        timeout=1800,
-    )
-    if done.returncode != 0:
-        tail = "\n".join((done.stderr or done.stdout or "").strip().splitlines()[-12:])
-        raise RuntimeError(f"onnx2tf exited {done.returncode} on {src.name}:\n{tail}")
-    produced = pick_converted_tflite(stage)
-    dest = job.out_dir / f"{cand.name}.tflite"
-    shutil.move(str(produced), dest)
-    shutil.rmtree(stage, ignore_errors=True)
     job.facts[cand.name] = "float32 model; onnx2tf also emits a float16 sibling, which needs a LiteRT build with XNNPACK fp16 to run"
     try:
+        done = subprocess.run(
+            [sys.executable, "-m", "onnx2tf", "-i", str(conversion_copy(src, stage)), "-o", str(stage)],
+            capture_output=True,
+            text=True,
+            timeout=1800,
+        )
+        if done.returncode != 0:
+            tail = "\n".join((done.stderr or done.stdout or "").strip().splitlines()[-12:])
+            raise RuntimeError(f"onnx2tf exited {done.returncode} on {src.name}:\n{tail}")
+        dest = job.out_dir / f"{cand.name}.tflite"
+        shutil.move(str(pick_converted_tflite(stage)), dest)
         assert_same_outputs(src, dest)
-    except RuntimeError:
-        dest.unlink(missing_ok=True)  # never leave an unusable model where the report says none
-        raise
-    return dest
+        return dest
+    finally:
+        # The stage is onnxsim's scratch space, not an artifact: it never survives this call.
+        shutil.rmtree(stage, ignore_errors=True)
 
 
 def assert_same_outputs(src: Path, dest: Path) -> None:
@@ -610,38 +631,104 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def run_once(path: Path) -> tuple[bool, str]:
+    """Execute the artifact on a zeros input: (did it run, the note the report carries).
+
+    A smoke test, not a measurement: it proves the graph is runnable and says how many outputs it
+    has, and nothing about accuracy (Task 0.2) or speed (Task 0.3). ONNX inputs with symbolic dims
+    are filled with 1 for the batch and 256 for a spatial axis, which is what the candidate is
+    exported at.
+    """
+    try:
+        if path.suffix == ".onnx":
+            import numpy as np
+            import onnxruntime as ort
+
+            session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+            spec = session.get_inputs()[0]
+            shape = [1] + [d if isinstance(d, int) and d > 0 else 256 for d in spec.shape[1:]]
+            shapes = [list(o.shape) for o in session.run(None, {spec.name: np.zeros(shape, np.float32)})]
+        else:
+            shapes = _run_tflite(path)
+    except ImportError as exc:
+        return True, f"not executed (no runtime available: {exc})"
+    except Exception as exc:  # noqa: BLE001  (a model that will not run is not a model we can ship)
+        return False, f"failed to run on a zeros input: {type(exc).__name__}: {exc}"
+    return True, f"ran on a zeros input: {shapes}"
+
+
+def write_report(out: Path, report: Mapping[str, Any]) -> Path:
+    """Write the report atomically, so an interrupted run cannot leave unparsable JSON behind."""
+    path = out / REPORT_NAME
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    tmp.replace(path)
+    return path
+
+
+def drifted(report: Mapping[str, Any]) -> list[str]:
+    """Candidates whose artifact no longer hashes to what the report recorded.
+
+    A converter that rewrites its input after the report hashed it (onnx2tf saves its re-exported
+    graph straight back over the .onnx it is handed) would otherwise leave a sha256 in the report
+    that matches nothing on disk, which is exactly what a later fetch/verify step would trust.
+    """
+    return [
+        name
+        for name, entry in sorted(report.items())
+        if entry["path"] and _sha256(Path(entry["path"])) != entry["sha256"]
+    ]
+
+
 def run(candidates: Sequence[Candidate], job: Job, backends: Mapping[str, Backend] | None = None) -> dict:
-    """Export every candidate in turn; a backend that raises is recorded, not propagated."""
+    """Export every candidate in turn; a backend that raises is recorded, not propagated.
+
+    The report is written after every candidate, not once at the end: the SuperAnimal conversion can
+    be OOM-killed on a small machine, and the deliverable of this script is the report, so whatever a
+    kill takes with it must not take the earlier records too.
+    """
     backends = BACKENDS if backends is None else backends
     report: dict[str, dict[str, Any]] = {}
     for cand in candidates:
         print(f"[{cand.name}] {cand.fmt} via {cand.backend}", flush=True)
-        notes = _notes(cand, job)
+        artifact = job.out_dir / f"{cand.name}.{cand.fmt}"
         try:
             path = backends[cand.backend](cand, job)
         except Exception as exc:  # noqa: BLE001  (a failure here is a result, per the plan)
+            # Nothing half-written may sit where a later phase fetches a model from.
+            artifact.unlink(missing_ok=True)
             message = f"{type(exc).__name__}: {exc}"[:MAX_ERROR_CHARS]
             print(f"  FAILED: {message.splitlines()[0][:200]}", flush=True)
             report[cand.name] = dict.fromkeys(REPORT_KEYS) | {
                 "format": cand.fmt,
                 "export_ok": False,
-                "notes": "; ".join(notes + [message]),
+                # Notes are built here, after the backend ran, so what it learned survives its failure.
+                "notes": "; ".join(_notes(cand, job) + [message]),
             }
+            write_report(job.out_dir, report)
             continue
         job.produced[cand.name] = path
         got = probe(path)
-        if got.input_shape is None:
-            notes.append(f"input shape unknown (could not read {path.suffix} tensors back)")
-        print(f"  wrote {path} ({path.stat().st_size / 1e6:.2f} MB)", flush=True)
+        ran, ran_note = run_once(path)
+        notes = _notes(cand, job)
+        ok = got.input_dtype is not None and ran
+        if got.input_dtype is None:
+            notes.append(f"could not read {path.suffix} tensors back, so the file is not a readable model")
+        notes.append(ran_note)
+        if ok:
+            print(f"  wrote {path} ({path.stat().st_size / 1e6:.2f} MB)", flush=True)
+        else:
+            artifact.unlink(missing_ok=True)  # unreadable or unrunnable is not something to ship
         report[cand.name] = {
             "format": cand.fmt,
-            "path": str(path),
-            "input_shape": got.input_shape,
-            "dtype": got.input_dtype,
-            "sha256": _sha256(path),
-            "export_ok": True,
+            "path": str(path) if ok else None,
+            "input_shape": got.input_shape if ok else None,
+            "dtype": got.input_dtype if ok else None,
+            "sha256": _sha256(path) if ok else None,
+            "export_ok": ok,
             "notes": "; ".join(notes),
         }
+        write_report(job.out_dir, report)
     return report
 
 
@@ -677,7 +764,7 @@ def main(argv: Sequence[str] | None = None, *, backends: Mapping[str, Backend] |
     out.mkdir(parents=True, exist_ok=True)
     job = Job(out_dir=out, superanimal=args.superanimal, fetch_missing=args.fetch_missing)
     report = run(candidates, job, backends)
-    (out / REPORT_NAME).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    write_report(out, report)
 
     ok = [n for n, e in report.items() if e["export_ok"]]
     print(f"\n{len(ok)}/{len(report)} exported to {out}")
@@ -685,6 +772,14 @@ def main(argv: Sequence[str] | None = None, *, backends: Mapping[str, Backend] |
         size = f"{Path(entry['path']).stat().st_size / 1e6:.2f} MB" if entry["path"] else "-"
         print(f"  {'ok  ' if entry['export_ok'] else 'FAIL'} {name:38s} {entry['format']:6s} {size:>10s}")
     print(f"report: {out / REPORT_NAME}")
+
+    # A hash that no longer matches the file it names is the one error a consumer of this report
+    # cannot detect, so it fails the run rather than scrolling past.
+    changed = drifted(report)
+    if changed:
+        print(f"\nERROR: {len(changed)} artifact(s) changed on disk after they were hashed: {', '.join(changed)}")
+        print("The recorded sha256 matches nothing on disk; re-run the export before using this report.")
+        return 1
     return 0
 
 
