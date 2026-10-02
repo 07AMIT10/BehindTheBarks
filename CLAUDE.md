@@ -385,6 +385,7 @@ python scripts/soak.py --minutes 20                    # leak + stall check (Ste
 make dev-frontend           # http://localhost:3000 (backend URL: ?backend=… or NEXT_PUBLIC_BACKEND_URL)
 make test-frontend          # vitest + typecheck + lint
 python scripts/gen_ts_types.py   # after changing backend/contracts.py
+python scripts/gen_kotlin_types.py   # ditto: the Android mirror (android/.../contracts/Contracts.kt) and its test fixtures
 # HTTPS for the phone camera (one quick tunnel per port)
 cloudflared tunnel --url http://localhost:3000
 cloudflared tunnel --url http://localhost:8000
