@@ -22,7 +22,7 @@ from backend.fusion.llm_triggers import TriggerPolicy
 from backend.fusion.state import FusionState, StateConfig
 from backend.web.hub import Hub
 from backend.web.ingest import Hello, IngestSession
-from backend.web.ingest_events import RemoteSession
+from backend.web.ingest_events import RemoteHello, RemoteSession
 from backend.web.settings import is_demo
 
 log = logging.getLogger("runtime")

@@ -30,7 +30,8 @@ WEB_DEFAULTS: dict[str, Any] = {
     "notify": {"mode": "dashboard_only"},
     "demo": {"manifest": "data/fallback/manifest.json", "clips_dir": "backend/demo/clips", "telegram_first": False},
     "ingest": {"stale_s": 5.0, "status_every_s": 2.0, "fps_window_s": 3.0, "max_message_bytes": 2_000_000},
-    "remote": {"stale_s": 2.0, "clock_samples": 5, "ping_every_s": 30.0},
+    "remote": {"stale_s": 2.0, "clock_samples": 5, "ping_every_s": 30.0, "max_skew_s": 60.0,
+              "downlink_timeout_s": 5.0},
     "profile": {"dog_name": "Bruno", "location": "Kitchen", "zone_label": "feeding area"},
 }
 

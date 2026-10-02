@@ -173,6 +173,11 @@ web:
     stale_s: 2.0              # no camera data for this long -> pipeline status 'stalled' (as data.source.stall_s)
     clock_samples: 5          # median of the last N phone/server clock samples used to rebase ts
     ping_every_s: 30.0        # how often the phone is expected to send {"type": "ping", "phone_time": ...}
+    max_skew_s: 60.0          # an envelope whose rebased ts is further than this from the server clock is
+                              # counted in status.phone.dropped and thrown away (raise it if the app ever
+                              # spools events across a longer outage)
+    downlink_timeout_s: 5.0   # deadline for one treat/config downlink; a half-open socket must not wedge
+                              # the queue, so a send that misses it is counted in pipeline_status.downlinks_dropped
   profile:                    # shown in the UI header and Telegram captions (ui/screens)
     dog_name: Bruno
     location: Kitchen

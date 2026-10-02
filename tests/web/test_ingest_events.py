@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import time
+import typing
 
 import cv2
 import numpy as np
@@ -17,6 +18,7 @@ from backend.pipeline import PIPELINE_METHODS
 from backend.web.ingest_events import (KIND_PREVIEW, PROTO, ClockOffset, RemoteHello, RemoteSession,
                                        bind_pipeline, parse_remote_hello)
 from backend.web.remote_pipeline import RemotePipeline
+from backend.web.runtime import Runtime
 from backend.web.settings import load_config
 
 PHONE_T = 1_700_000_000.0  # what the phone's clock says; the server's clock is far ahead of it
@@ -64,6 +66,26 @@ class SpyRuntime:
     def treat(self, now=None):
         self.treats.append(now)
         return now
+
+
+class BoomRuntime(SpyRuntime):
+    """A Runtime whose every callback raises, the way EventLog.write raises on a full disk."""
+
+    def __init__(self, exc: Exception | None = None) -> None:
+        super().__init__()
+        self.exc = exc if exc is not None else OSError("event log write failed")
+
+    def on_frame(self, ev):
+        raise self.exc
+
+    def on_audio(self, ev):
+        raise self.exc
+
+    def on_rules(self, ev):
+        raise self.exc
+
+    def treat(self, now=None):
+        raise self.exc
 
 
 # -- payloads ---------------------------------------------------------------------------------
@@ -132,10 +154,10 @@ def remote_client(tmp_path, pipeline=None, **web):
     return TestClient(app), p
 
 
-def session(clock=None, **over):
+def session(clock=None, runtime=None, **over):
     clock = clock or Clock()
     return RemoteSession(parse_remote_hello(hello_msg()), over.pop("pipeline", None) or SpyPipeline(),
-                         SpyRuntime(), clock=clock, **over), clock
+                         runtime or SpyRuntime(), clock=clock, **over), clock
 
 
 def spy_runtime(rt):
@@ -409,11 +431,12 @@ async def test_mark_treat_pushes_a_downlink_and_push_config_pushes_the_rules():
     p.mark_treat(123.0)
     p.push_config()  # queued after the treat: downlinks keep their order
     await asyncio.sleep(0.02)
-    assert sent == [{"type": "treat", "ts": 123.0},
+    # no phone session attached -> offset 0, so the ts passes through unchanged
+    assert sent == [{"type": "treat", "data": {"ts": 123.0, "offset_s": 0.0}},
                     {"type": "config", "data": {"rules": {"min_score": 0.3}}}]
     p.mark_treat(124.0)
     await asyncio.sleep(0.02)
-    assert sent[-1] == {"type": "treat", "ts": 124.0}
+    assert sent[-1] == {"type": "treat", "data": {"ts": 124.0, "offset_s": 0.0}}
     assert p.status()["downlinks_sent"] == 3
 
 
@@ -603,7 +626,7 @@ def test_the_treat_button_reaches_the_phone(tmp_path):
         assert ws.receive_json()["type"] == "hello_ack"
         c.post("/treat")
         down = ws.receive_json()
-    assert down["type"] == "treat" and abs(down["ts"] - time.time()) < 5.0
+    assert down["type"] == "treat" and abs(down["data"]["ts"] - time.time()) < 5.0
 
 
 def test_a_treat_sent_by_the_phone_comes_back_down_the_same_socket(tmp_path):
@@ -614,7 +637,8 @@ def test_a_treat_sent_by_the_phone_comes_back_down_the_same_socket(tmp_path):
         assert ws.receive_json()["type"] == "hello_ack"
         ws.send_text(envelope("treat", {"ts": now}))
         down = ws.receive_json()
-    assert down["type"] == "treat" and abs(down["ts"] - now) < 1.0
+    # the phone's clock is ~now here, so the downlink ts is the ts it sent
+    assert down["type"] == "treat" and abs(down["data"]["ts"] - now) < 1.0
     assert any(m["type"] == "treat" for m in c.get("/events").json()["events"])
 
 
@@ -648,3 +672,167 @@ def test_ingest_events_warns_when_the_server_pipeline_is_not_remote(tmp_path, ca
             ws.send_text(hello_msg(phone_time=time.time()))
             assert ws.receive_json()["type"] == "hello_ack"
     assert any("WEB_PIPELINE=remote" in r.getMessage() for r in caplog.records)
+
+
+# -- fix round 1: review findings ---------------------------------------------------------------
+def test_runtime_phone_open_annotations_resolve():
+    """Finding 1: RemoteHello is used in the annotation, so it has to be imported (get_type_hints
+    evaluates the strings that `from __future__ import annotations` leaves behind)."""
+    hints = typing.get_type_hints(Runtime.phone_open)
+    assert RemoteHello in hints["hello"].__args__
+    assert RemoteSession in hints["session"].__args__
+
+
+@pytest.mark.parametrize("kind,data", [("frame", frame_data(PHONE_T)), ("audio", audio_data(PHONE_T)),
+                                        ("rules", rules_data(PHONE_T)), ("treat", {"ts": PHONE_T})])
+def test_a_raising_runtime_costs_one_envelope_not_the_socket(kind, data):
+    """Finding 2: the dispatch is guarded, and the counters only move once it succeeded."""
+    s, clock = session(runtime=BoomRuntime())
+    assert s.handle_text(envelope(kind, data)) is None
+    assert s.dropped == 1 and s.events == 0 and s.treats == 0
+    assert s.snapshot(clock.t)["dropped"] == 1
+
+
+def test_a_raising_runtime_keeps_the_socket_open(tmp_path):
+    c, _ = remote_client(tmp_path)
+    with c:
+        rt = c.app.state.rt
+        boom = BoomRuntime().exc
+        rt.on_frame, rt.on_audio, rt.on_rules, rt.treat = (lambda *a, **k: (_ for _ in ()).throw(boom)
+                                                           for _ in range(4))
+        now = time.time()
+        with c.websocket_connect("/ingest-events") as ws:
+            ws.send_text(hello_msg(phone_time=now))
+            assert ws.receive_json()["type"] == "hello_ack"
+            for kind, data in (("frame", frame_data(now)), ("audio", audio_data(now)),
+                               ("rules", rules_data(now)), ("treat", {"ts": now})):
+                ws.send_text(envelope(kind, data))
+            ws.send_bytes(bytes([KIND_PREVIEW]) + phone_jpeg())
+            assert wait_for(lambda: c.get("/status").json()["phone"]["dropped"] == 4)
+            phone = c.get("/status").json()["phone"]
+            assert (phone["events"], phone["treats"], phone["previews"]) == (0, 0, 1)
+            assert phone["connected"] is True
+            # the socket survived, so the next envelope is served again
+            rt.on_audio = lambda ev: None
+            ws.send_text(envelope("audio", audio_data(now)))
+            assert wait_for(lambda: c.get("/status").json()["phone"]["events"] == 1)
+
+
+async def test_a_stuck_sender_times_out_and_is_counted():
+    """Finding 3: a half-open socket cannot wedge the downlink queue for ever."""
+    cfg = stub_cfg()
+    cfg["web"]["remote"] = {"downlink_timeout_s": 0.05}
+    p = RemotePipeline(cfg)
+
+    async def stuck(msg):
+        await asyncio.sleep(10)
+
+    p.attach(None, stuck)
+    p.mark_treat(1.0)
+    await asyncio.sleep(0.2)
+    st = p.status()
+    assert st["downlinks_sent"] == 0 and st["downlinks_dropped"] == 1
+    assert p._flushing is False and not p._queue
+
+    sent = []
+
+    async def ok(msg):
+        sent.append(msg)
+
+    p.attach(None, ok)
+    p.mark_treat(2.0)
+    await asyncio.sleep(0.05)
+    assert [m["type"] for m in sent] == ["treat"]
+
+
+async def test_a_stuck_flush_is_logged_and_not_repeated(caplog):
+    cfg = stub_cfg()
+    cfg["web"]["remote"] = {"downlink_timeout_s": 5.0, "ping_every_s": 0.05}
+    p = RemotePipeline(cfg)
+
+    async def stuck(msg):
+        await asyncio.sleep(10)
+
+    p.attach(None, stuck)
+    with caplog.at_level(logging.WARNING, logger="remote-pipeline"):
+        p.mark_treat(1.0)
+        await asyncio.sleep(0.15)
+        assert p._flushing is True
+        p.status()  # any status poll is what notices a flush that has been stuck too long
+        warned = [r for r in caplog.records if "stuck" in r.getMessage()]
+        p.status()
+        p.status()
+    assert len(warned) == 1
+    assert len([r for r in caplog.records if "stuck" in r.getMessage()]) == 1  # not spammed
+
+
+async def test_the_treat_downlink_is_stamped_in_the_phone_clock():
+    """Finding 4: the app compares the treat against its own clock, so the downlink must speak it."""
+    clock = Clock()
+    cfg = stub_cfg()
+    p = RemotePipeline(cfg, clock=clock)
+    s = RemoteSession(parse_remote_hello(hello_msg()), p, SpyRuntime(), clock=clock)  # 4000 s behind
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    p.attach(s, send)
+    p.mark_treat(clock.t)  # what Runtime.treat() does: a server-clock ts
+    p.mark_treat(clock.t + 30.0)
+    await asyncio.sleep(0.02)
+    assert sent == [{"type": "treat", "data": {"ts": clock.t - 4000.0, "offset_s": 4000.0}},
+                    {"type": "treat", "data": {"ts": clock.t - 3970.0, "offset_s": 4000.0}}]
+    assert s.metrics(clock.t)["clock_offset_s"] == 4000.0
+
+
+def test_the_treat_downlink_reaches_a_phone_an_hour_behind_in_its_own_clock(tmp_path):
+    c, _ = remote_client(tmp_path)
+    skew = 3600.0
+    with c, c.websocket_connect("/ingest-events") as ws:
+        phone_now = time.time() - skew
+        ws.send_text(hello_msg(phone_time=phone_now))
+        ack = ws.receive_json()
+        offset = ack["server_time"] - phone_now
+        server_t = c.post("/treat").json()["ts"]
+        down = ws.receive_json()
+    assert down["type"] == "treat"
+    assert down["data"]["offset_s"] == pytest.approx(offset, abs=0.5)
+    assert down["data"]["ts"] == pytest.approx(server_t - offset, abs=0.5)
+    assert phone_now - 5.0 < down["data"]["ts"] < time.time() - skew  # plausible on the phone's clock
+
+
+def test_a_treat_the_phone_sent_comes_back_in_the_phone_clock(tmp_path):
+    c, _ = remote_client(tmp_path)
+    phone_now = time.time() - 3600.0
+    with c, c.websocket_connect("/ingest-events") as ws:
+        ws.send_text(hello_msg(phone_time=phone_now))
+        assert ws.receive_json()["type"] == "hello_ack"
+        ws.send_text(envelope("treat", {"ts": phone_now + 2.0}))
+        echo = ws.receive_json()
+    assert echo["data"]["ts"] == pytest.approx(phone_now + 2.0, abs=0.5)
+
+
+def test_an_implausible_ts_is_dropped():
+    """Finding 5: a ts that rebases to the far future or past would freeze every server timer."""
+    s, clock = session(max_skew_s=60.0)
+    assert s.handle_text(envelope("frame", frame_data(PHONE_T + 30.0))) == "frame"
+    assert s.handle_text(envelope("frame", frame_data(4.1e9))) is None       # year 2100
+    assert s.handle_text(envelope("frame", frame_data(PHONE_T - 3600.0))) is None  # an hour stale
+    assert s.handle_text(envelope("treat", {"ts": 4.1e9})) is None
+    assert s.dropped == 3 and s.frames == 1 and s.treats == 0
+
+
+def test_an_envelope_from_the_year_2100_never_freezes_the_clock(tmp_path):
+    c, p = remote_client(tmp_path)
+    now = time.time()
+    with c, c.websocket_connect("/ingest-events") as ws:
+        ws.send_text(hello_msg(phone_time=now))
+        assert ws.receive_json()["type"] == "hello_ack"
+        ws.send_text(envelope("frame", frame_data(4.1e9)))
+        ws.send_text(envelope("frame", frame_data(now)))
+        assert wait_for(lambda: c.get("/status").json()["phone"]["events"] == 1)
+        st = c.get("/status").json()
+    assert st["phone"]["dropped"] == 1 and st["phone"]["connected"] is True
+    assert st["pipeline_status"]["last_frame_age_s"] >= 0.0
+    assert st["pipeline_status"]["state"] == "running"

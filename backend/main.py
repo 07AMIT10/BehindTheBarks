@@ -23,7 +23,7 @@ from backend.notify import build_notifier
 from backend.web.event_log import EventLog
 from backend.web.hub import Hub
 from backend.web.ingest import CLOSE_BAD_HELLO, CLOSE_BUSY, CLOSE_REPLACED, HelloError, parse_hello
-from backend.web.ingest_events import RemoteSession, bind_pipeline, parse_remote_hello
+from backend.web.ingest_events import MAX_SKEW_S, RemoteSession, bind_pipeline, parse_remote_hello
 from backend.web.runtime import Runtime
 from backend.web.settings import LLMSettings, load_config
 
@@ -241,7 +241,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                                 max_message_bytes=web["ingest"]["max_message_bytes"],
                                 fps_window_s=web["ingest"]["fps_window_s"],
                                 offset_samples=int(rem.get("clock_samples", 5)),
-                                ping_every_s=float(rem.get("ping_every_s", 30.0)))
+                                ping_every_s=float(rem.get("ping_every_s", 30.0)),
+                                max_skew_s=float(rem.get("max_skew_s", MAX_SKEW_S)))
         session = rt.phone_open(hello, closer=close_replaced, session=session)
         if session is None:
             await sock.close(code=CLOSE_BUSY, reason="Another phone is already streaming")

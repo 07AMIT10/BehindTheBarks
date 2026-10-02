@@ -42,6 +42,7 @@ KIND_PREVIEW = 0x01
 EVENT_MODELS: dict[str, type] = {"frame": FrameEvent, "audio": AudioEvent, "rules": RulesLabel}
 
 AUDIO_OK_S = 2.0  # an AudioEvent within this many seconds means "the mic is alive", as in Pipeline
+MAX_SKEW_S = 60.0  # an envelope whose rebased ts is further than this from our clock is dropped
 MIN_EPOCH = 1_000_000_000.0   # 2001-09-09: below this the phone sent something other than seconds
 MAX_EPOCH = 4_102_444_800.0   # 2100-01-01: above this, most likely milliseconds
 MAX_MODELS = 32
@@ -146,10 +147,11 @@ class RemoteSession:
 
     def __init__(self, hello: RemoteHello, pipeline: Any, runtime: Any, clock: Callable[[], float] = time.time,
                  *, max_message_bytes: int = 2_000_000, fps_window_s: float = 3.0, offset_samples: int = 5,
-                 ping_every_s: float = 30.0) -> None:
+                 ping_every_s: float = 30.0, max_skew_s: float = MAX_SKEW_S) -> None:
         self.hello, self.pipeline, self.runtime, self.clock = hello, pipeline, runtime, clock
         self.max_message_bytes = max_message_bytes
         self.ping_every_s = ping_every_s
+        self.max_skew_s = max_skew_s
         self.connected = True
         self.server_time_at_hello = clock()
         self.connected_at = self.server_time_at_hello
@@ -201,25 +203,26 @@ class RemoteSession:
             self.dropped += 1
             return None
         try:
-            ev = model.model_validate(self._rebased(data))
+            ev = model.model_validate(self._rebased(data, now))
         except ValueError:  # a pydantic ValidationError is a ValueError: bad ts, extra key, bad enum
             self.dropped += 1
             return None
-        self.last_event_ts = now
         if kind == "frame":
-            self.frames += 1
-            self.last_frame_ts = now
-            self._fps.add(now)
-            self.runtime.on_frame(ev)
+            dispatch, counter, ts_field = self.runtime.on_frame, "frames", "last_frame_ts"
         elif kind == "audio":
-            self.audio_events += 1
-            self.last_audio_ts = now
-            self._fps.add(now)
-            self.runtime.on_audio(ev)
+            dispatch, counter, ts_field = self.runtime.on_audio, "audio_events", "last_audio_ts"
         else:
-            self.rules_labels += 1
-            self._fps.add(now)
-            self.runtime.on_rules(ev)
+            dispatch, counter, ts_field = self.runtime.on_rules, "rules_labels", None
+        try:
+            dispatch(ev)
+        except Exception:  # noqa: BLE001 - a Runtime that raises costs one envelope, never the socket
+            self.dropped += 1
+            return None
+        setattr(self, counter, getattr(self, counter) + 1)
+        if ts_field is not None:
+            setattr(self, ts_field, now)
+        self.last_event_ts = now
+        self._fps.add(now)
         return kind
 
     def handle(self, data: bytes) -> str | None:
@@ -241,11 +244,19 @@ class RemoteSession:
         self._preview_fps.add(now)
         return "preview"
 
-    def _rebased(self, data: dict) -> dict:
+    def _rebased(self, data: dict, now: float) -> dict:
+        """The envelope's ts, moved onto the server clock. A ts that is not an epoch number, or that
+        lands implausibly far from our own clock once rebased (a buggy app sending milliseconds, a
+        stale spool, or an epoch-year typo), is rejected rather than trusted: everything downstream
+        (`no_dog_unknown_s`, `llm_stale_s`, cooldowns, the stall detector) compares against our clock,
+        so one bad ts would freeze the whole dashboard in a permanently "live" state."""
         ts = data.get("ts")
         if isinstance(ts, bool) or not isinstance(ts, (int, float)) or not math.isfinite(ts):
             raise ValueError("ts must be an epoch number")
-        return {**data, "ts": self.offset.rebase(float(ts))}
+        rebased = self.offset.rebase(float(ts))
+        if abs(rebased - now) > self.max_skew_s:
+            raise ValueError(f"ts is {rebased - now:+.0f}s from the server clock, over {self.max_skew_s:g}s")
+        return {**data, "ts": rebased}
 
     def _ping(self, msg: dict, now: float) -> str | None:
         ts = msg.get("phone_time")
@@ -264,12 +275,16 @@ class RemoteSession:
             self.dropped += 1
             return None
         try:
-            ts = self._rebased(data)["ts"] if "ts" in data else now
+            ts = self._rebased(data, now)["ts"] if "ts" in data else now
         except ValueError:
             self.dropped += 1
             return None
+        try:
+            self.runtime.treat(ts)
+        except Exception:  # noqa: BLE001 - as above: one envelope, not the socket
+            self.dropped += 1
+            return None
         self.treats += 1
-        self.runtime.treat(ts)
         return "treat"
 
     # -- downlink / status ------------------------------------------------------------------

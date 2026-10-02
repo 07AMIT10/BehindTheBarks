@@ -178,10 +178,12 @@ app" non-negotiable above, so it is a proposal until that line is amended.)
   1. text hello: `{"type": "hello", "proto": 1, "device", "phone_time": <epoch s>, "models": {...},
      "profile": "mobile"}` (`models`, `profile` and `proto` are optional; `phone_time` is seconds).
      The server replies `{"type": "hello_ack", "server_time": <epoch s>}`.
-  2. text envelopes, the same `{"type": "frame" | "audio" | "rules" | "treat", "data": {...}}` shape
+2. text envelopes, the same `{"type": "frame" | "audio" | "rules" | "treat", "data": {...}}` shape
      as `events/*.jsonl` and the dashboard feed. `data` is validated with the pydantic contract, so an
      unknown key, a missing `ts` or a label outside the vocabulary is **counted in `status.phone.dropped`
-     and thrown away** — one bad envelope never closes the socket.
+     and thrown away** — one bad envelope never closes the socket. A callback inside the Runtime that
+     raises (a full disk in the event log, for instance) costs that one envelope too, and the counters
+     only move for envelopes that were actually dispatched.
   3. text `{"type": "ping", "phone_time": <epoch s>}` every `web.remote.ping_every_s` (30 s) →
      `{"type": "pong", "server_time": ...}`. This keeps the clock offset fresh.
   4. binary `0x01` + JPEG preview (≤ 2 fps, ~320 px long side, quality ~0.6). Stamped at server receipt
@@ -189,12 +191,22 @@ app" non-negotiable above, so it is a proposal until that line is amended.)
 - **Clocks:** `data.ts` is the phone's clock and every other timer (`no_dog_unknown_s`, `llm_stale_s`,
   cooldowns) compares against the server's. The server rebases `ts` by
   `server_time_at_hello − phone_time`, refreshed by each ping as the **median of the last
-  `web.remote.clock_samples` (5) samples**, so one late ping cannot shift the whole stream.
-- **Downlinks** (server → phone, on the same socket): `{"type": "treat", "ts"}` whenever the treat
-  button fires, so the phone's own rules see `treat_event_recent`; and
-  `{"type": "config", "data": {"rules": {...}}}` from `POST /phone/config` (with no body it sends the
-  server's `data.rules`), so retuning rules needs no APK rebuild. A phone must **not** re-send a treat
-  it received: the phone's own `treat` envelope is echoed back down and would loop.
+  `web.remote.clock_samples` (5) samples**, so one late ping cannot shift the whole stream. An envelope
+  whose rebased `ts` is further than `web.remote.max_skew_s` (60 s) from server receipt is counted as a
+  drop, not trusted: a buggy app sending milliseconds or a typo'd year would otherwise freeze
+  `no_dog_unknown_s`, `llm_stale_s` and the stall detector and leave the dashboard "live" for ever.
+  Raise `max_skew_s` (or re-stamp `ts` on flush) if the app ever spools events across a longer outage.
+- **Downlinks** (server → phone, on the same socket): `{"type": "treat", "data": {"ts",
+  "offset_s"}}` whenever the treat button fires, so the phone's rules see `treat_event_recent`.
+  **`data.ts` is on the phone's clock**, not the server's — the app must compare it against its own
+  clock, which is the whole point of the handshake — and `data.offset_s` (`server − phone`) is sent
+  with it so the app can verify the conversion; rebase its own clock by `offset_s` if it prefers to
+  stay on one clock. The phone must **not** re-send a treat it received: the phone's own `treat`
+  envelope comes back down as the downlink and would loop. `{"type": "config", "data": {"rules":
+  {...}}}` comes from `POST /phone/config` (with no body it sends the server's `data.rules`), so
+  retuning rules needs no APK rebuild. Each send has a `web.remote.downlink_timeout_s` (5 s) deadline:
+  a half-open socket is counted in `pipeline_status.downlinks_dropped` and the queue drains, so one
+  dead connection cannot silently swallow later treats and config pushes.
 - **/ingest-events close codes:** same as `/ingest` — `4400` bad hello, `4408` replaced by a newer
   phone after `web.ingest.stale_s` of silence, `4409` another phone is already streaming. Close code
   `1000` (the app's own Stop) forgets the phone; anything else leaves a disconnected card.
@@ -426,7 +438,8 @@ class Pipeline:
 (default 10 s). `ingest_*` are non-blocking, never raise, drop the oldest data when behind, and are
 no-ops (with one warning) unless the source type is `browser`. `status()` returns
 `{"source", "state": "running" | "stalled" | "stopped", "fps", "last_frame_age_s", "audio_ok"}`
-(those five keys always; `RemotePipeline` adds the phone's own counters on top).
+(those five keys always; `RemotePipeline` adds the phone's own counters on top, and there
+`mark_treat()` pushes a downlink instead of setting a local flag — see "On-device phone").
 Web calls only these methods and never imports anything else from `vision/` or `audio/`.
 
 `scripts/run_pipeline.py --jsonl` (and the precomputed `events.jsonl` per fallback clip) writes one

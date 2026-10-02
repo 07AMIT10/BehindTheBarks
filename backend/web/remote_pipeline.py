@@ -35,6 +35,10 @@ class RemotePipeline:
         self.clock = clock
         # Same meaning as the browser source's stall_s in Pipeline: no camera data for this long.
         self.stale_s = float(remote.get("stale_s", source.get("stall_s", 2.0)))
+        # A downlink on a half-open socket never resolves, so every send gets a deadline: without one
+        # the flush task wedges and every later treat and config push piles up undelivered.
+        self.send_timeout_s = float(remote.get("downlink_timeout_s", 5.0))
+        self.flush_warn_s = float(remote.get("ping_every_s", 30.0))
         self._started_at = clock()
         self._stopped = False
         self._running = False
@@ -48,6 +52,9 @@ class RemotePipeline:
         self._treats: deque[float] = deque(maxlen=32)
         self._queue: deque[dict] = deque(maxlen=DOWNLINK_QUEUE)
         self._flushing = False
+        self._flush_since: float | None = None
+        self._flush_warned_at: float | None = None
+        self._flush_task: asyncio.Task | None = None
         self.downlinks_sent = 0
         self.downlinks_dropped = 0
 
@@ -66,6 +73,9 @@ class RemotePipeline:
         self._stopped, self._running = True, False
         if self._halt is not None:
             self._halt.set()
+        if self._flush_task is not None:
+            self._flush_task.cancel()
+            self._flush_task = None
 
     def latest_frame_jpeg(self) -> bytes | None:
         """The newest preview JPEG the phone sent, or None before the first one."""
@@ -73,9 +83,14 @@ class RemotePipeline:
 
     def mark_treat(self, ts: float) -> None:
         """A treat at `ts` (dashboard button, or the phone's own treat envelope): the phone's rules
-        engine needs it too, so it goes down the same socket."""
+        engine needs it too, so it goes down the same socket.
+
+        `ts` is on the server clock (that is what Runtime.treat() holds), but the app compares the
+        treat against its own clock, so the downlink carries the phone-clock equivalent plus the
+        offset it was converted with."""
         self._treats.append(float(ts))
-        self._post({"type": "treat", "ts": float(ts)})
+        offset = self._clock_offset()
+        self._post({"type": "treat", "data": {"ts": float(ts) - offset, "offset_s": offset}})
 
     def ingest_frame(self, jpeg: bytes, ts: float) -> None:
         if jpeg[:2] == b"\xff\xd8":  # JPEG SOI; anything else is ignored, never raised
@@ -110,6 +125,11 @@ class RemotePipeline:
             return dict(rules)
         return dict(((self.cfg.get("data") or {}).get("rules") or {}))
 
+    def _clock_offset(self) -> float:
+        """server - phone, from the live session; 0 with no phone (so treat_ts passes through)."""
+        offset = getattr(getattr(self._session, "offset", None), "offset", None)
+        return 0.0 if offset is None else float(offset)
+
     # -- downlinks ------------------------------------------------------------------------------
     def _post(self, msg: dict) -> bool:
         """Queue one downlink. Never blocks the caller and never raises: the queue drains in order on
@@ -137,31 +157,56 @@ class RemotePipeline:
             self.downlinks_dropped += len(self._queue)
             self._queue.clear()
             return
-        self._flushing = True
+        self._flushing, self._flush_since = True, self.clock()
         try:
-            loop.create_task(self._flush(), name="remote-downlink")
+            # keep a reference: a bare create_task() result can be garbage-collected mid-send
+            self._flush_task = loop.create_task(self._flush(), name="remote-downlink")
         except RuntimeError:
-            self._flushing = False
+            self._flushing, self._flush_since, self._flush_task = False, None, None
             self.downlinks_dropped += len(self._queue)
             self._queue.clear()
 
     async def _flush(self) -> None:
         try:
             while self._queue:
+                send = self._send
+                if send is None:  # the phone went away while this flush was in flight (detach clears it)
+                    self.downlinks_dropped += len(self._queue)
+                    self._queue.clear()
+                    break
                 msg = self._queue.popleft()
                 try:
-                    await self._send(msg)  # type: ignore[misc]
-                except Exception:  # noqa: BLE001 - a dead socket must not stop the queue
-                    log.warning("remote: downlink %s failed", msg.get("type"), exc_info=True)
+                    await asyncio.wait_for(send(msg), timeout=self.send_timeout_s)
+                except asyncio.TimeoutError:
+                    log.warning("remote: downlink %s timed out after %.1fs", msg.get("type"), self.send_timeout_s)
+                    self.downlinks_dropped += 1
+                except Exception as err:  # noqa: BLE001 - a dead socket must not stop the queue
+                    log.warning("remote: downlink %s failed (%s)", msg.get("type"), type(err).__name__)
                     self.downlinks_dropped += 1
                 else:
                     self.downlinks_sent += 1
         finally:
-            self._flushing = False
+            self._flushing, self._flush_since, self._flush_task = False, None, None
+
+    def check_flush(self) -> None:
+        """Warn once per flush_warn_s when the flush task has been stuck for longer than a ping
+        interval. Called from status(), which the Runtime already polls every web.ingest.status_every_s."""
+        if not self._flushing or self._flush_since is None:
+            return
+        now = self.clock()
+        if now - self._flush_since < self.flush_warn_s:
+            return
+        if self._flush_warned_at is not None and now - self._flush_warned_at < self.flush_warn_s:
+            return
+        self._flush_warned_at = now
+        log.warning("remote: the downlink flush has been stuck for %.0fs with %d message(s) queued; "
+                    "treats and config pushes are not reaching the phone",
+                    now - self._flush_since, len(self._queue))
 
     # -- status ---------------------------------------------------------------------------------
     def status(self) -> dict:
         """The pipeline.status() shape, with the phone's metrics instead of our own counters."""
+        self.check_flush()
         now = self.clock()
         m = self._metrics(now)
         age = self._frame_age_s(now)
