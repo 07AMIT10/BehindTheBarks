@@ -104,3 +104,31 @@ def test_model_without_dog_class_rejected():
     model.names = {0: "person"}
     with pytest.raises(ValueError):
         DogDetector(CFG, model=model, device="cpu")
+
+
+def test_detector_ema_reset_uses_seconds():
+    det, model = make(ema_reset_s=1.0)
+    # Dog seen at t=0.0 and t=0.1
+    model.queue += [[(100, 40, 140, 90, 0.9, 16)], [(110, 40, 150, 90, 0.9, 16)]]
+    det.detect(FRAME, ts=0.0)
+    d = det.detect(FRAME, ts=0.1)
+    assert d.bbox[0] < 110  # smoothed
+
+    # 5 misses over 0.25 s (at 20 fps) should NOT reset because 0.25 s < 1.0 s
+    for i in range(5):
+        model.queue.append([])
+        assert det.detect(FRAME, ts=0.1 + (i + 1) * 0.05) is None
+
+    # Dog seen at t=0.4: still smoothed, because only 0.3 s elapsed
+    model.queue.append([(120, 40, 160, 90, 0.9, 16)])
+    d2 = det.detect(FRAME, ts=0.4)
+    assert d2.bbox[0] < 120  # still smoothed
+
+    # 1 miss over 1.2 s (at <1 fps) DOES reset because 1.2 s >= 1.0 s
+    model.queue.append([])
+    assert det.detect(FRAME, ts=1.6) is None
+
+    model.queue.append([(120, 40, 160, 90, 0.9, 16)])
+    d3 = det.detect(FRAME, ts=1.7)
+    assert d3.bbox == (120, 40, 160, 90)  # reset!
+

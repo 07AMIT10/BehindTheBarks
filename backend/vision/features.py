@@ -93,9 +93,18 @@ class _Sample:
     bbox: BBox | None
 
 
+def _alpha_to_tau(alpha: float, fps: float = 8.0) -> float:
+    """Convert legacy per-frame alpha at given fps to continuous time constant tau in seconds."""
+    if alpha >= 1.0:
+        return 0.0
+    if alpha <= 0.0:
+        return float("inf")
+    return -(1.0 / fps) / math.log(1.0 - alpha)
+
+
 @dataclass
 class _Ema:
-    alpha: float
+    tau_s: float
     value: float | None = None
     last_ts: float | None = None
 
@@ -106,7 +115,12 @@ class _Ema:
         if self.value is None or self.last_ts is None or ts - self.last_ts > reset_gap:
             self.value = x
         else:
-            self.value = self.alpha * x + (1 - self.alpha) * self.value
+            dt = max(ts - self.last_ts, 0.0)
+            if self.tau_s > 0.0 and dt > 0.0:
+                alpha = 1.0 - math.exp(-dt / self.tau_s)
+            else:
+                alpha = 1.0
+            self.value = alpha * x + (1.0 - alpha) * self.value
         self.last_ts = ts
         return self.value
 
@@ -123,10 +137,15 @@ class FeatureExtractor:
     def __init__(self, cfg: dict, source: str = "live"):
         d = cfg["data"]
         self.p: dict[str, Any] = {**DEFAULTS, **d.get("features", {})}
-        self.p["smooth"] = {**DEFAULTS["smooth"], **d.get("features", {}).get("smooth", {})}
+        raw_smooth = {**DEFAULTS["smooth"], **d.get("features", {}).get("smooth", {})}
+        self.p["smooth"] = raw_smooth
+        if "smooth_tau_s" in d.get("features", {}):
+            self.tau_s = {k: float(v) for k, v in d["features"]["smooth_tau_s"].items()}
+        else:
+            self.tau_s = {k: _alpha_to_tau(float(a)) for k, a in raw_smooth.items()}
         self.conf_thr: float = d.get("keypoint_conf_threshold", 0.3)
         self.source = source
-        self._smooth = {k: _Ema(a) for k, a in self.p["smooth"].items()}
+        self._smooth = {k: _Ema(tau) for k, tau in self.tau_s.items()}
         self._s = _State()
 
     def reset(self) -> None:
@@ -388,22 +407,54 @@ class FeatureExtractor:
     def _motion_energy(self, scale: float | None) -> float | None:
         """Mean over the window of the median keypoint speed (body lengths / s), mapped to 0..1.
 
-        Body points only (nose, withers, hip, paws): a wagging tail or flopping ear is not body
-        motion. The median across keypoints keeps one jittery point from reading as movement.
+        Body points only (nose, withers, hip, paws): a wagging tail or flopping ear is not body motion.
+        Keypoints are resampled onto a fixed 5 Hz grid (0.2 s step) before differencing,
+        ensuring that jitter/dt does not scale artificially with camera frame rate.
         """
         p = self.p
         if scale is None:
             return None
         w = list(self._s.window)
-        speeds = []
-        for a, b in zip(w, w[1:]):
+        if len(w) < 2:
+            return None
+
+        t_start = w[0].ts
+        t_end = w[-1].ts
+        grid_dt = 0.2  # fixed 5 Hz grid
+        if t_end - t_start < grid_dt:
+            return None
+
+        grid_times = np.arange(t_start, t_end + 1e-6, grid_dt)
+        if len(grid_times) < 2:
+            return None
+
+        grid_pts = []
+        w_idx = 0
+        w_len = len(w)
+        for gt in grid_times:
+            while w_idx < w_len - 2 and w[w_idx + 1].ts < gt:
+                w_idx += 1
+            a, b = w[w_idx], w[w_idx + 1]
             dt = b.ts - a.ts
-            if not 0 < dt <= p["motion_max_dt_s"]:
+            if dt > p["motion_max_dt_s"] or dt <= 0:
+                grid_pts.append({})
                 continue
-            common = [n for n in p["motion_keypoints"] if n in a.pts and n in b.pts]
+            frac = (gt - a.ts) / dt if dt > 0 else 0.0
+            frac = min(max(frac, 0.0), 1.0)
+            pts = {}
+            for n in p["motion_keypoints"]:
+                if n in a.pts and n in b.pts:
+                    pts[n] = (1.0 - frac) * a.pts[n] + frac * b.pts[n]
+            grid_pts.append(pts)
+
+        speeds = []
+        for g0, g1 in zip(grid_pts, grid_pts[1:]):
+            if not g0 or not g1:
+                continue
+            common = [n for n in p["motion_keypoints"] if n in g0 and n in g1]
             if len(common) < 2:
                 continue
-            speeds.append(float(np.median([np.linalg.norm(b.pts[n] - a.pts[n]) for n in common])) / dt / scale)
+            speeds.append(float(np.median([np.linalg.norm(g1[n] - g0[n]) for n in common])) / grid_dt / scale)
         if len(speeds) < 2:
             return None
         lo, hi = p["motion_floor"], p["motion_full"]
