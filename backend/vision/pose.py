@@ -48,21 +48,35 @@ class PoseEstimator:
         self.conf_thr = data.get("keypoint_conf_threshold", 0.3)
         self.pad = p.get("crop_pad", 0.15)
         self.device = device or (pick_device() if p.get("device", "auto") == "auto" else p["device"])
+        self.backend = p.get("backend", "dlc")
 
         owns_model = runner is None
         if owns_model:
-            runner, bodyparts = self._load(p.get("superanimal", "superanimal_quadruped"), p.get("model", "hrnet_w32"))
-        if bodyparts is None:
-            raise ValueError("bodyparts (the model's keypoint names, in output order) is required with a custom runner")
-        self.runner = runner
-        self.bodyparts = list(bodyparts)
+            if self.backend in ("tflite", "rtmpose_onnx", "onnx"):
+                from backend.vision.mobile_runners import MobilePose
+                model_path = p.get("model")
+                self.mobile_pose = MobilePose(model_path=model_path)
+                self.runner = None
+                self.bodyparts = list(self.mobile_pose.keypoint_names)
+            else:
+                runner, bodyparts = self._load(p.get("superanimal", "superanimal_quadruped"), p.get("model", "hrnet_w32"))
+                self.runner = runner
+                self.bodyparts = list(bodyparts)
+        else:
+            if bodyparts is None:
+                raise ValueError("bodyparts (the model's keypoint names, in output order) is required with a custom runner")
+            self.runner = runner
+            self.bodyparts = list(bodyparts)
 
         self.latencies_ms: deque[float] = deque(maxlen=200)
         self.first_call_ms: float | None = None  # first call compiles on MPS; kept out of stats
         self._warmed = owns_model
         self._last_error_log = 0.0
         if owns_model:
-            self._infer(np.zeros((256, 256, 3), np.uint8))
+            if self.backend in ("tflite", "rtmpose_onnx", "onnx"):
+                self.mobile_pose.estimate(np.zeros((256, 256, 3), np.uint8), (0.0, 0.0, 256.0, 256.0))
+            else:
+                self._infer(np.zeros((256, 256, 3), np.uint8))
 
     def _load(self, superanimal: str, model_name: str) -> tuple[Any, list[str]]:
         from deeplabcut.pose_estimation_pytorch.apis.utils import get_pose_inference_runner
@@ -93,6 +107,23 @@ class PoseEstimator:
         weights, device gone) yields all-None keypoints instead of losing the frame's detection too,
         since features/rules still want dog_detected + bbox even with no pose.
         """
+        if self.backend in ("tflite", "rtmpose_onnx", "onnx"):
+            t = time.perf_counter()
+            try:
+                kps = self.mobile_pose.estimate(frame, bbox)
+            except Exception:
+                now = time.monotonic()
+                if now - self._last_error_log >= ERROR_LOG_INTERVAL_S:
+                    self._last_error_log = now
+                    log.exception("mobile pose model inference failed; no keypoints for this frame")
+                return {name: None for name in CANONICAL_NAMES}
+            ms = (time.perf_counter() - t) * 1000
+            if self.first_call_ms is None and self._warmed:
+                self.first_call_ms = ms
+            else:
+                self.latencies_ms.append(ms)
+            return kps
+
         crop, (ox, oy) = crop_padded(frame, bbox, self.pad)
         h, w = crop.shape[:2]
         if h < 2 or w < 2:

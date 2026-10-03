@@ -1,0 +1,28 @@
+# Mobile profile overlay: merges on top of config.yaml when --profile mobile is specified.
+# Configures the on-device perception pipeline for physical/emulated mobile execution.
+
+data:
+  fps: 15
+  detect_hz: 3.0
+  pose_hz: 6.0
+  face_hz: 1.0
+  detect:
+    backend: tflite
+    model: out/android_models/det_yolo26n_320_int8.tflite
+    imgsz: 320
+    conf: 0.25
+  pose:
+    backend: tflite
+    model: out/android_models/pose_rtmpose_ap10k_litert.tflite
+    crop_pad: 0.15
+  face:
+    model: out/android_models/face_dog_landmarks_384.tflite
+    crop_pad: 0.25
+  audio:
+    backend: tflite
+    model: out/android_models/audio_yamnet.tflite
+  features:
+    wag:
+      source: both
+      min_hz: 1.0
+      max_hz: 8.0

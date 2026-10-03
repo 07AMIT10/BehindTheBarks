@@ -37,6 +37,13 @@ class Detection:
     raw_bbox: BBox  # unsmoothed detector output
 
 
+@dataclass(frozen=True)
+class _BoxesAdapter:
+    xyxy: np.ndarray
+    conf: np.ndarray
+    cls: np.ndarray
+
+
 def point_in_zone(point: tuple[float, float], zone_norm: list[list[float]], frame_shape: tuple[int, ...]) -> bool:
     """Is a pixel point inside the polygon given in normalised (0..1) image coords?"""
     h, w = frame_shape[:2]
@@ -105,18 +112,30 @@ class DogDetector:
         self.zone = data["feeding_zone"]
         self.device = device or pick_device()
 
+        self.backend = d.get("backend", "ultralytics")
+
         owns_model = model is None
         if owns_model:
-            from ultralytics import YOLO
-            from ultralytics.utils.downloads import attempt_download_asset
+            if self.backend in ("tflite", "onnx"):
+                from backend.vision.mobile_runners import MobileDetector
+                model_path = d.get("model")
+                self.mobile_detector = MobileDetector(model_path=model_path)
+                self.model = None
+                self.dog_ids = [self.mobile_detector.dog_class]
+            else:
+                from ultralytics import YOLO
+                from ultralytics.utils.downloads import attempt_download_asset
 
-            path = Path(d.get("model", "models/yolo11s.pt"))
-            path.parent.mkdir(parents=True, exist_ok=True)
-            if not path.exists():
-                attempt_download_asset(path)  # one-off download; offline afterwards
-            model = YOLO(str(path))
-        self.model = model
-        self.dog_ids = [int(i) for i, n in model.names.items() if n == "dog"]
+                path = Path(d.get("model", "models/yolo11s.pt"))
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if not path.exists():
+                    attempt_download_asset(path)  # one-off download; offline afterwards
+                model = YOLO(str(path))
+                self.model = model
+                self.dog_ids = [int(i) for i, n in model.names.items() if n == "dog"]
+        else:
+            self.model = model
+            self.dog_ids = [int(i) for i, n in model.names.items() if n == "dog"]
         if not self.dog_ids:
             raise ValueError("model has no 'dog' class")
 
@@ -133,6 +152,9 @@ class DogDetector:
     # -- inference ---------------------------------------------------------------------------
 
     def _infer(self, frame: np.ndarray):
+        if self.backend in ("tflite", "onnx"):
+            boxes, scores, classes = self.mobile_detector.predict_raw(frame)
+            return _BoxesAdapter(boxes, scores, classes)
         results = self.model(
             frame, classes=self.dog_ids, conf=self.conf, imgsz=self.imgsz, device=self.device, verbose=False
         )

@@ -118,10 +118,11 @@ def problems(entry: dict) -> list[str]:
     return out
 
 
-def run_clip(clip: Path, entry: dict, events_dir: Path, config: str, debug: bool) -> Path:
+def run_clip(clip: Path, entry: dict, events_dir: Path, config: str, debug: bool, profile: str = "server") -> Path:
     events = events_dir / f"{clip.stem}.jsonl"
     cmd = [sys.executable, str(ROOT / "scripts" / "run_pipeline.py"), "--config", config,
-           "--source", "file", "--path", str(clip), "--fast", "--rebase-ts", "--jsonl", str(events)]
+           "--source", "file", "--path", str(clip), "--fast", "--rebase-ts", "--jsonl", str(events),
+           "--profile", profile]
     if debug:
         cmd += ["--debug-video", str(events_dir / f"{clip.stem}.debug.mp4")]
     for t in entry.get("treats", []):
@@ -140,6 +141,8 @@ def parse_args(argv):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--clips-dir", type=Path, default=FALLBACK / "clips")
     ap.add_argument("--events-dir", type=Path, default=FALLBACK / "events")
+    ap.add_argument("--out", type=Path, help="alias for --events-dir")
+    ap.add_argument("--profile", choices=["server", "mobile"], default="server", help="perception profile")
     ap.add_argument("--manifest", type=Path, default=FALLBACK / "manifest.json")
     ap.add_argument("--config", default=str(ROOT / "config.yaml"))
     ap.add_argument("--only", action="append", metavar="NAME", help="clip name without extension (repeatable)")
@@ -154,7 +157,8 @@ def main(argv=None) -> None:
     if not clips:
         raise SystemExit(f"no clips in {args.clips_dir} (put them there with scripts/mux_audio.py)")
     base = args.manifest.parent
-    args.events_dir.mkdir(parents=True, exist_ok=True)
+    events_dir = args.out or args.events_dir
+    events_dir.mkdir(parents=True, exist_ok=True)
     manifest = load_manifest(args.manifest)
     failed = []
 
@@ -168,7 +172,7 @@ def main(argv=None) -> None:
             print(f"{clip.stem}: {entry['duration_s']} s, treats at {entry['treats'] or 'none'} ...", flush=True)
             t0 = time.time()
             try:
-                events = run_clip(clip, entry, args.events_dir, args.config, debug=not args.no_debug)
+                events = run_clip(clip, entry, events_dir, args.config, debug=not args.no_debug, profile=args.profile)
                 rules, counts = read_events(events)
             except (RuntimeError, ValueError, OSError) as exc:
                 print(f"  FAILED: {exc}")
@@ -176,7 +180,7 @@ def main(argv=None) -> None:
                 save_manifest(args.manifest, manifest)
                 continue
             entry["events"] = rel(events, base)
-            debug_video = args.events_dir / f"{clip.stem}.debug.mp4"
+            debug_video = events_dir / f"{clip.stem}.debug.mp4"
             if not args.no_debug and debug_video.is_file():
                 entry["debug_video"] = rel(debug_video, base)
             else:
@@ -188,7 +192,8 @@ def main(argv=None) -> None:
                                            else f"  (expected {exp})")
             print(f"  {counts['frame']} frames, {counts['audio']} audio, {counts['treat']} treats in {time.time() - t0:.0f} s;"
                   f" dominant: {entry['observed']['dominant']}{note}")
-        save_manifest(args.manifest, manifest)
+        if events_dir == FALLBACK / "events" and args.profile == "server":
+            save_manifest(args.manifest, manifest)
 
     todo = [c["name"] for c in manifest["clips"] if c.get("expected_emotion") is None]
     print(f"manifest: {args.manifest}  ({len(manifest['clips'])} clips)")

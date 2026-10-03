@@ -150,6 +150,14 @@ class Pipeline:
         self._last_pose_ts: float | None = None
         self._last_kps: dict = {}
 
+        self.detect_hz: float | None = float(data["detect_hz"]) if data.get("detect_hz") is not None else None
+        self._last_detect_ts: float | None = None
+        self._last_det: Any = None
+
+        self.face_hz: float | None = float(data["face_hz"]) if data.get("face_hz") is not None else None
+        self._last_face_ts: float | None = None
+        self._last_lms: Any = None
+
         self._stop = threading.Event()
         self._started = False
         self._start_mono = time.monotonic()
@@ -395,10 +403,21 @@ class Pipeline:
             if ts < self._last_ts:  # e.g. the watchdog got ahead of a straggler; features need time order
                 return
             self._last_ts = ts
-            try:
-                det = self.detector.detect(frame, ts=ts)
-            except TypeError:
-                det = self.detector.detect(frame)
+            should_run_detect = True
+            if self.detect_hz is not None and self.detect_hz > 0:
+                interval_det = 1.0 / self.detect_hz
+                if self._last_detect_ts is not None and (ts - self._last_detect_ts) < (interval_det - 1e-4):
+                    should_run_detect = False
+
+            if should_run_detect:
+                try:
+                    det = self.detector.detect(frame, ts=ts)
+                except TypeError:
+                    det = self.detector.detect(frame)
+                self._last_detect_ts = ts
+                self._last_det = det
+            else:
+                det = self._last_det
             t1 = clock()
 
             # Decide whether to run pose on this frame
@@ -429,9 +448,22 @@ class Pipeline:
                 if gray_roi is not None:
                     roi_wag_hz = self.wag.push(gray_roi, ts)
             else:
+                self._last_det = None
                 self._last_kps = {}
+                self._last_lms = None
 
-            lms = self._safe_face(frame, kps) if kps else None
+            should_run_face = True
+            if self.face_hz is not None and self.face_hz > 0:
+                interval_face = 1.0 / self.face_hz
+                if self._last_face_ts is not None and (ts - self._last_face_ts) < (interval_face - 1e-4):
+                    should_run_face = False
+
+            if should_run_face and kps:
+                lms = self._safe_face(frame, kps)
+                self._last_face_ts = ts
+                self._last_lms = lms
+            else:
+                lms = self._last_lms if kps else None
             t3 = clock()
             ev = self.features.update(ts, det, kps, lms, roi_wag_hz=roi_wag_hz)
             t4 = clock()

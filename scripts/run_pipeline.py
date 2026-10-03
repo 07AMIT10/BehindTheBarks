@@ -106,7 +106,15 @@ def parse_args(argv):
     ap.add_argument("--show", action="store_true", help="live annotated window (T = treat, Q/Esc = quit)")
     ap.add_argument("--portrait", action="store_true", help="browser: the fake phone rotates frames 90 degrees")
     ap.add_argument("--phone-fps", type=float, default=10.0, help="browser: frames per second the fake phone sends")
+    ap.add_argument("--profile", choices=["server", "mobile"], default="server", help="perception profile: server or mobile")
     return ap.parse_args(argv)
+
+
+def deep_merge(base: dict, over: dict) -> dict:
+    out = dict(base)
+    for k, v in over.items():
+        out[k] = deep_merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else copy.deepcopy(v)
+    return out
 
 
 async def amain(args) -> dict:
@@ -115,6 +123,14 @@ async def amain(args) -> dict:
     from backend.pipeline import Pipeline
 
     cfg = yaml.safe_load(Path(args.config).read_text())
+    if args.profile == "mobile":
+        mobile_path = Path("config.mobile.yaml")
+        if not mobile_path.is_file():
+            mobile_path = Path(args.config).parent / "config.mobile.yaml"
+        if mobile_path.is_file():
+            mobile_cfg = yaml.safe_load(mobile_path.read_text())
+            if mobile_cfg:
+                cfg = deep_merge(cfg, mobile_cfg)
     cfg = copy.deepcopy(cfg)
     src = cfg["data"].setdefault("source", {})
     if args.source:
