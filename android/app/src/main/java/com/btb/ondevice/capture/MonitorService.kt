@@ -423,6 +423,8 @@ class MonitorService : Service(), LifecycleOwner {
         super.onDestroy()
     }
 
+    fun getSpooledBytes(): Long = uploader?.spool?.sizeBytes ?: 0L
+
     companion object {
         const val CHANNEL_ID = "btb_monitor_channel"
         const val NOTIFICATION_ID = 4040
