@@ -1,0 +1,222 @@
+{
+  "source": {
+    "type": "browser",
+    "path": null,
+    "device": 0,
+    "audio": null,
+    "loop": false,
+    "stall_s": 2.0
+  },
+  "fps": 15,
+  "keypoint_conf_threshold": 0.3,
+  "feeding_zone": [
+    [
+      0.2,
+      0.4
+    ],
+    [
+      0.8,
+      0.4
+    ],
+    [
+      0.8,
+      0.95
+    ],
+    [
+      0.2,
+      0.95
+    ]
+  ],
+  "detect": {
+    "model": "out/android_models/det_yolo26n_320_int8.tflite",
+    "conf": 0.25,
+    "imgsz": 320,
+    "ema_alpha": 0.5,
+    "ema_reset_misses": 8,
+    "crop_pad": 0.15,
+    "zone_anchor": "bottom_center",
+    "backend": "tflite"
+  },
+  "pose": {
+    "superanimal": "superanimal_quadruped",
+    "model": "out/android_models/pose_rtmpose_ap10k_litert.tflite",
+    "device": "auto",
+    "crop_pad": 0.15,
+    "backend": "tflite"
+  },
+  "face": {
+    "model": "out/android_models/face_dog_landmarks_384.tflite",
+    "threads": 6,
+    "crop_pad": 0.25,
+    "min_crop_px": 48,
+    "min_head_points": 3,
+    "min_inside_frac": 0.9,
+    "min_spread": 0.25
+  },
+  "features": {
+    "window_s": 3.0,
+    "gap_reset_s": 2.0,
+    "tail_height_scale": 0.4,
+    "wag": {
+      "source": "both",
+      "min_hz": 1.0,
+      "max_hz": 8.0
+    },
+    "wag_min_std": 0.03,
+    "wag_min_peak_ratio": 0.3,
+    "ear_up_min": 0.6,
+    "ear_back_cos": 0.85,
+    "mouth_closed": 0.03,
+    "mouth_full": 0.25,
+    "baseline_s": 30.0,
+    "lowering_deadband": 0.05,
+    "lowering_full": 0.4,
+    "motion_floor": 0.2,
+    "motion_full": 1.0,
+    "smooth": {
+      "tail_height": 0.4,
+      "mouth_open": 0.5,
+      "body_lowering": 0.4,
+      "motion_energy": 0.5
+    }
+  },
+  "audio": {
+    "model_dir": "models/yamnet",
+    "hop_s": 0.48,
+    "threshold": 0.3,
+    "silence_rms": 0.005,
+    "debounce_s": 1.0,
+    "max_gap_s": 0.5,
+    "label_map": {
+      "bark": [
+        "Bark",
+        "Bow-wow"
+      ],
+      "yip": [
+        "Yip"
+      ],
+      "growl": [
+        "Growling"
+      ],
+      "whimper": [
+        "Whimper (dog)"
+      ],
+      "howl": [
+        "Howl"
+      ]
+    },
+    "backend": "tflite",
+    "model": "out/android_models/audio_yamnet.tflite"
+  },
+  "rules": {
+    "window_s": 3.0,
+    "treat_window_s": 10.0,
+    "hysteresis_s": 1.5,
+    "no_dog_unknown_s": 2.0,
+    "disinterested_s": 5.0,
+    "disinterested_grace_s": 1.0,
+    "disinterested_min_score": 0.7,
+    "aggressive_max_conf_without_growl": 0.5,
+    "growl_min_score": 0.3,
+    "min_score": 0.3,
+    "min_coverage": 0.5,
+    "thresholds": {
+      "tail_high": 0.3,
+      "tail_low": -0.3,
+      "tail_tucked": -0.6,
+      "wag_fast_hz": 3.0,
+      "wag_moderate_min_hz": 1.0,
+      "motion_high": 0.8,
+      "motion_low": 0.035,
+      "body_lowering_mild": 0.2,
+      "body_lowering_high": 0.5,
+      "mouth_open": 0.4
+    },
+    "softness": {
+      "tail_height": 0.2,
+      "wag_hz": 1.0,
+      "motion": 0.15,
+      "body_lowering": 0.1,
+      "mouth_open": 0.15
+    },
+    "weights": {
+      "happy": {
+        "tail_ok": 1.0,
+        "wag_moderate": 1.5,
+        "mouth_open": 1.0,
+        "ears_neutral": 1.0,
+        "not_lowered": 0.5,
+        "motion_moderate": 0.5
+      },
+      "excited": {
+        "wag_fast": 1.5,
+        "tail_high": 1.5,
+        "motion_high": 2.0,
+        "ears_up": 0.5,
+        "mouth_open": 0.5
+      },
+      "relaxed": {
+        "motion_low": 2.0,
+        "tail_neutral": 1.5,
+        "wag_slow": 1.0,
+        "ears_neutral": 1.0,
+        "not_lowered": 1.0
+      },
+      "anxious": {
+        "tail_low": 1.5,
+        "ears_back": 1.0,
+        "lowering_some": 1.0,
+        "pacing": 1.5
+      },
+      "fearful": {
+        "tail_tucked": 2.0,
+        "ears_back": 1.5,
+        "lowering_high": 2.0,
+        "away_from_zone": 0.5
+      },
+      "aggressive": {
+        "still_tail": 1.0,
+        "motion_low": 1.0,
+        "ears_up": 1.0,
+        "tail_high": 1.0,
+        "mouth_open": 0.5
+      }
+    },
+    "event_bonus": {
+      "excited": {
+        "yip": 0.25,
+        "bark": 0.15,
+        "treat": 0.25
+      },
+      "anxious": {
+        "whimper": 0.3,
+        "howl": 0.15
+      },
+      "fearful": {
+        "whimper": 0.15
+      },
+      "aggressive": {
+        "growl": 0.4
+      },
+      "happy": {
+        "treat": 0.15
+      }
+    },
+    "event_penalty": {
+      "happy": {
+        "growl": 1.0
+      },
+      "relaxed": {
+        "growl": 1.0
+      },
+      "excited": {
+        "growl": 0.5
+      }
+    },
+    "suppress_aggressive_without_growl": false,
+    "ignore_eating_confounds": false
+  },
+  "detect_hz": 3.0,
+  "pose_hz": 6.0,
+  "face_hz": 1.0
+}

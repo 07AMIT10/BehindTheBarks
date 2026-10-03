@@ -54,6 +54,15 @@ android {
     lint {
         abortOnError = true
     }
+
+    sourceSets {
+        getByName("main") {
+            assets.srcDirs("src/main/assets")
+        }
+        getByName("test") {
+            resources.srcDirs("src/test/resources", "../../tests/android/fixtures", "src/main/assets")
+        }
+    }
 }
 
 kotlin {
