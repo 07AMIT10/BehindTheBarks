@@ -218,7 +218,21 @@ class FaceLandmarker(
     ): List<List<Double>>? {
         val box = headBox(kps) ?: return null
         val modelRunner = runner ?: return null
+        return try {
+            estimateWith(modelRunner, rgba, frameWidth, frameHeight, box)
+        } catch (e: Exception) {
+            android.util.Log.e("FaceLandmarker", "inference failed; landmarks dropped", e)
+            null
+        }
+    }
 
+    private fun estimateWith(
+        modelRunner: com.btb.ondevice.ml.ModelRunner,
+        rgba: ByteBuffer,
+        frameWidth: Int,
+        frameHeight: Int,
+        box: HeadBox,
+    ): List<List<Double>>? {
         inputBuffer.clear()
         preprocessHeadCropToNhwc(rgba, frameWidth, frameHeight, box, inputBuffer.asFloatBuffer())
 

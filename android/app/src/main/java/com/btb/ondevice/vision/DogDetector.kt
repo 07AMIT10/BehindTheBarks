@@ -195,6 +195,21 @@ class DogDetector(
         params: LetterboxParams = Letterbox.computeParams(width, height, config.inputSize),
     ): DogDetection? {
         val modelRunner = runner ?: return null
+        return try {
+            detectWith(modelRunner, rgba, width, height, params)
+        } catch (e: Exception) {
+            android.util.Log.e("DogDetector", "inference failed; frame skipped", e)
+            null
+        }
+    }
+
+    private fun detectWith(
+        modelRunner: ModelRunner,
+        rgba: ByteBuffer,
+        width: Int,
+        height: Int,
+        params: LetterboxParams,
+    ): DogDetection? {
         inputBuffer.clear()
         val floatInput = inputBuffer.asFloatBuffer()
         preprocessRgbaToNchw(rgba, width, height, params, floatInput)

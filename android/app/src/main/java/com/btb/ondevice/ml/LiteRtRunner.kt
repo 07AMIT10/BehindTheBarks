@@ -10,21 +10,27 @@ class LiteRtRunner(
     private val interpreter: InterpreterApi,
 ) : ModelRunner {
 
-    override fun run(inputs: Array<ByteBuffer>, outputs: Array<ByteBuffer>) {
-        if (inputs.size == 1 && outputs.size == 1) {
-            inputs[0].rewind()
-            outputs[0].rewind()
-            interpreter.run(inputs[0], outputs[0])
-        } else {
-            for (inp in inputs) inp.rewind()
-            for (out in outputs) out.rewind()
+    private val lock = Any()
+    @Volatile private var closed = false
 
-            val outputMap = HashMap<Int, Any>(outputs.size)
-            for (i in outputs.indices) {
-                outputMap[i] = outputs[i]
+    override fun run(inputs: Array<ByteBuffer>, outputs: Array<ByteBuffer>) {
+        synchronized(lock) {
+            check(!closed) { "ModelRunner '$name' has been closed" }
+            if (inputs.size == 1 && outputs.size == 1) {
+                inputs[0].rewind()
+                outputs[0].rewind()
+                interpreter.run(inputs[0], outputs[0])
+            } else {
+                for (inp in inputs) inp.rewind()
+                for (out in outputs) out.rewind()
+
+                val outputMap = HashMap<Int, Any>(outputs.size)
+                for (i in outputs.indices) {
+                    outputMap[i] = outputs[i]
+                }
+                val inputObjects = Array<Any>(inputs.size) { i -> inputs[i] }
+                interpreter.runForMultipleInputsOutputs(inputObjects, outputMap)
             }
-            val inputObjects = Array<Any>(inputs.size) { i -> inputs[i] }
-            interpreter.runForMultipleInputsOutputs(inputObjects, outputMap)
         }
     }
 
@@ -50,7 +56,12 @@ class LiteRtRunner(
     }
 
     override fun close() {
-        interpreter.close()
+        synchronized(lock) {
+            if (!closed) {
+                closed = true
+                interpreter.close()
+            }
+        }
     }
 
     companion object {

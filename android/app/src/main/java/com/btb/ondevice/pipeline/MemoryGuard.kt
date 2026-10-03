@@ -27,7 +27,7 @@ class AndroidMemoryProvider(private val context: Context) : MemoryProvider {
 class MemoryGuard(
     private val memoryProvider: MemoryProvider,
     private val modelRegistry: ModelRegistry,
-    val maxPssKb: Long = 250 * 1024L, // 250 MB budget
+    val maxPssKb: Long = 400 * 1024L, // 400 MB whole-app budget (getPss measures the app, not just models)
     val pollIntervalS: Double = 30.0,
     private val clock: () -> Double = { System.currentTimeMillis() / 1000.0 },
 ) {

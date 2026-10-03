@@ -8,15 +8,20 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.util.Log
 import androidx.camera.core.Preview
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
+import com.btb.ondevice.audio.AudioPipeline
+import com.btb.ondevice.audio.YamnetClassifier
 import com.btb.ondevice.config.DataConfig
 import com.btb.ondevice.contracts.AudioEvent
 import com.btb.ondevice.contracts.FrameEvent
@@ -24,6 +29,7 @@ import com.btb.ondevice.contracts.RulesLabel
 import com.btb.ondevice.ml.LiteRtRunner
 import com.btb.ondevice.ml.ModelLoader
 import com.btb.ondevice.ml.ModelRegistry
+import com.btb.ondevice.ml.ModelRunner
 import com.btb.ondevice.net.ConnectionState
 import com.btb.ondevice.net.EventSpool
 import com.btb.ondevice.net.EventUploader
@@ -35,11 +41,17 @@ import com.btb.ondevice.pipeline.MemoryGuard
 import com.btb.ondevice.pipeline.OnDevicePipeline
 import com.btb.ondevice.pipeline.ThermalGovernor
 import com.btb.ondevice.ui.OverlayState
+import com.btb.ondevice.vision.DogDetector
+import com.btb.ondevice.vision.FaceLandmarker
+import com.btb.ondevice.vision.PoseEstimator
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.FileChannel
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.roundToInt
 
 interface MonitorServiceListener {
     fun onStateUpdate(overlayState: OverlayState) {}
@@ -67,6 +79,7 @@ class MonitorService : Service(), LifecycleOwner {
     private var memoryGuard: MemoryGuard? = null
 
     private val isRunning = AtomicBoolean(false)
+    private val lastPreviewSendMs = AtomicLong(0)
     private var listener: MonitorServiceListener? = null
 
     fun setListener(l: MonitorServiceListener?) {
@@ -132,6 +145,20 @@ class MonitorService : Service(), LifecycleOwner {
         val registry = initModelRegistry()
         modelRegistry = registry
 
+        // Wire the bundled models into the perception stages. Every stage degrades
+        // gracefully without its runner (detector/pose/face stay off, YAMNet falls back
+        // to the energy gate), so one unloadable model must never abort service start.
+        val pipe = OnDevicePipeline(
+            config = config,
+            dogDetector = DogDetector(runner = loadRunnerQuietly(registry, "detector")),
+            poseEstimator = PoseEstimator(runner = loadRunnerQuietly(registry, "pose")),
+            faceLandmarker = FaceLandmarker(runner = loadRunnerQuietly(registry, "face")),
+            audioPipeline = AudioPipeline(
+                classifier = YamnetClassifier(runner = loadRunnerQuietly(registry, "audio")),
+            ),
+        )
+        pipeline = pipe
+
         // 4. Initialize Thermal Governor & Memory Guard
         val thermal = ThermalGovernor(AndroidThermalProvider(this))
         thermalGovernor = thermal
@@ -141,8 +168,6 @@ class MonitorService : Service(), LifecycleOwner {
         // 5. Initialize EventUploader
         val spoolDir = File(filesDir, "spool")
         val spool = EventSpool(spoolDir)
-        val pipe = OnDevicePipeline(config = config)
-        pipeline = pipe
 
         val up = EventUploader(
             serverUrl = serverUrl,
@@ -185,6 +210,19 @@ class MonitorService : Service(), LifecycleOwner {
                         up.sendRules(rulesLabel)
                     }
                     updateUiOverlay(frameEvent, rulesLabel)
+                    // Dashboard video, best-effort at ~2 Hz. JPEG encode stays on this
+                    // background thread; sendPreview applies its own rate limit and
+                    // backpressure drop, so this never blocks inference.
+                    val nowMs = System.currentTimeMillis()
+                    if (nowMs - lastPreviewSendMs.get() >= 500) {
+                        lastPreviewSendMs.set(nowMs)
+                        try {
+                            encodePreviewJpeg(rgba, width, height, rotation)?.let { jpeg ->
+                                up.sendPreview(jpeg)
+                            }
+                        } catch (_: Exception) {
+                        }
+                    }
                 }
             }
         )
@@ -238,6 +276,48 @@ class MonitorService : Service(), LifecycleOwner {
             degradeLevel = pipeline?.scheduler?.getLevel()?.name
         )
         l.onStateUpdate(overlayState)
+    }
+
+    /**
+     * Load one model runner without letting a single unloadable model abort service
+     * start. Returns null (stage stays off) and logs, instead of throwing.
+     */
+    private fun loadRunnerQuietly(registry: ModelRegistry, name: String): ModelRunner? {
+        return try {
+            registry.getRunner(name)
+        } catch (e: Exception) {
+            Log.e("MonitorService", "model '$name' failed to load; stage disabled", e)
+            null
+        }
+    }
+
+    /**
+     * Downscale an RGBA frame to 320 px wide and encode a dashboard preview JPEG.
+     * Returns null when the buffer does not hold a full frame. Caller throttles.
+     */
+    private fun encodePreviewJpeg(
+        rgba: ByteArray,
+        width: Int,
+        height: Int,
+        rotationDegrees: Int,
+    ): ByteArray? {
+        if (width < 2 || height < 2 || rgba.size < width * height * 4) return null
+        val full = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        full.copyPixelsFromBuffer(ByteBuffer.wrap(rgba))
+        val targetH = (320f * height / width).roundToInt().coerceAtLeast(2)
+        val scaled = Bitmap.createScaledBitmap(full, 320, targetH, true)
+        full.recycle()
+        val upright = if (rotationDegrees != 0) {
+            val m = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+            Bitmap.createBitmap(scaled, 0, 0, scaled.width, scaled.height, m, true)
+                .also { scaled.recycle() }
+        } else {
+            scaled
+        }
+        val out = ByteArrayOutputStream(32 * 1024)
+        upright.compress(Bitmap.CompressFormat.JPEG, 60, out)
+        upright.recycle()
+        return out.toByteArray().takeIf { it.isNotEmpty() }
     }
 
     private fun initModelRegistry(): ModelRegistry {

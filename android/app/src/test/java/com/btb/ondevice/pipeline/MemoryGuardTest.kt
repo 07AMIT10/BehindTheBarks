@@ -76,7 +76,8 @@ class MemoryGuardTest {
         assertThat(registry.hasRunner("detector")).isTrue()
         assertThat(registry.hasRunner("pose")).isTrue()
         assertThat(registry.hasRunner("face")).isFalse()
-        assertThat(registry.hasRunner("audio")).isFalse()
+        // Audio survives trims: ~12 MB, live on the mic thread (2026-10-04 FATAL).
+        assertThat(registry.hasRunner("audio")).isTrue()
         assertThat(runners["face"]!!.isClosed).isTrue()
     }
 
@@ -92,7 +93,7 @@ class MemoryGuardTest {
         assertThat(trimmed).isTrue()
         assertThat(guard.lastTrimReason).contains("pss_budget_exceeded")
         assertThat(registry.hasRunner("face")).isFalse()
-        assertThat(registry.hasRunner("audio")).isFalse()
+        assertThat(registry.hasRunner("audio")).isTrue()
     }
 
     @Test

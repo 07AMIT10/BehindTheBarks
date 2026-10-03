@@ -85,7 +85,15 @@ open class YamnetClassifier(
      */
     open fun classify(window: FloatArray): Pair<AudioLabel, Double> {
         val modelRunner = runner ?: return AudioLabel.other to 0.0
+        return try {
+            classifyWith(modelRunner, window)
+        } catch (e: Exception) {
+            android.util.Log.e("YamnetClassifier", "inference failed; window scored other", e)
+            AudioLabel.other to 0.0
+        }
+    }
 
+    private fun classifyWith(modelRunner: com.btb.ondevice.ml.ModelRunner, window: FloatArray): Pair<AudioLabel, Double> {
         inputBuffer.clear()
         val floatIn = inputBuffer.asFloatBuffer()
         val count = min(window.size, config.windowSamples)

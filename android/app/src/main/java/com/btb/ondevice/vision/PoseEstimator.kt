@@ -80,6 +80,21 @@ class PoseEstimator(
         }
 
         val modelRunner = runner ?: return KeypointMap.CANONICAL_NAMES.associateWith { null }
+        return try {
+            estimateWith(modelRunner, rgba, frameWidth, frameHeight, crop)
+        } catch (e: Exception) {
+            android.util.Log.e("PoseEstimator", "inference failed; keypoints dropped", e)
+            KeypointMap.CANONICAL_NAMES.associateWith { null }
+        }
+    }
+
+    private fun estimateWith(
+        modelRunner: ModelRunner,
+        rgba: ByteBuffer,
+        frameWidth: Int,
+        frameHeight: Int,
+        crop: CropRegion,
+    ): Map<String, KeypointMap.Point?> {
         inputBuffer.clear()
         preprocessCropToNchw(rgba, frameWidth, frameHeight, crop, inputBuffer.asFloatBuffer())
 

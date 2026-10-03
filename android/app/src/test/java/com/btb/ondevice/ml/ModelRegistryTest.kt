@@ -42,6 +42,15 @@ class ModelRegistryTest {
         assertThat(det.file).isEqualTo("models/det_yolo26n_320_int8.tflite")
         assertThat(det.backendEnum).isEqualTo(Backend.CPU_XNNPACK)
         assertThat(det.threads).isEqualTo(2)
+
+        // Delegate choices the app can actually honor today (LiteRtRunner is
+        // Interpreter-based, CPU-only): detector and audio run XNNPACK, face runs
+        // XNNPACK but is never scheduled without a pose head box. Pose is
+        // XNNPACK-incompatible (op #32), so its warmup fails and the stage stays off
+        // until the GPU runner lands. See docs/android/BENCH_RESULTS.md.
+        assertThat(manifest.models["pose"]!!.backendEnum).isEqualTo(Backend.CPU_XNNPACK)
+        assertThat(manifest.models["face"]!!.backendEnum).isEqualTo(Backend.CPU_XNNPACK)
+        assertThat(manifest.models["audio"]!!.backendEnum).isEqualTo(Backend.CPU_XNNPACK)
     }
 
     @Test
@@ -91,7 +100,7 @@ class ModelRegistryTest {
     }
 
     @Test
-    fun `trimMemory unloads face and audio on explicit memory guard`() {
+    fun `trimMemory unloads face only on explicit memory guard`() {
         val manifest = ModelManifest(
             models = mapOf(
                 "detector" to ModelSpec("det.tflite", "CPU_XNNPACK", 2),
@@ -123,14 +132,14 @@ class ModelRegistryTest {
         assertThat(registry.hasRunner("face")).isTrue()
         assertThat(instances["face"]!!.isClosed).isFalse()
 
-        // Explicit memory guard unloads face and audio
+        // Explicit memory guard unloads face only; audio stays live on the mic thread.
         registry.trimMemory(explicitMemoryGuard = true)
         assertThat(registry.hasRunner("detector")).isTrue()
         assertThat(registry.hasRunner("pose")).isTrue()
         assertThat(registry.hasRunner("face")).isFalse()
-        assertThat(registry.hasRunner("audio")).isFalse()
+        assertThat(registry.hasRunner("audio")).isTrue()
         assertThat(instances["face"]!!.isClosed).isTrue()
-        assertThat(instances["audio"]!!.isClosed).isTrue()
+        assertThat(instances["audio"]!!.isClosed).isFalse()
 
         // Lazily reload face
         val reloadedFace = registry.getRunner("face")

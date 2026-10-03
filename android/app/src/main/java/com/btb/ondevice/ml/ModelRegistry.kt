@@ -67,12 +67,15 @@ class ModelRegistry(
      * Memory trim handling:
      * - Under normal conditions (or non-critical trim), keep all models loaded.
      * - Under explicit MemoryGuard request or critical trim level (level >= 15),
-     *   unload non-essential models ("face" and "audio"), preserving "detector" and "pose".
+     *   unload "face" only, preserving "detector", "pose" and "audio". Audio is
+     *   deliberately kept: it is ~12 MB, live on the mic thread, and yanking it
+     *   mid-inference killed the service (2026-10-04 FATAL); close/run are now
+     *   synchronized, but dropping live audio buys almost nothing.
      */
     fun trimMemory(explicitMemoryGuard: Boolean = false, trimLevel: Int = 0) {
         val shouldUnload = explicitMemoryGuard || trimLevel >= 15
         if (shouldUnload) {
-            listOf("face", "audio").forEach { name ->
+            listOf("face").forEach { name ->
                 runners.remove(name)?.close()
             }
         }
