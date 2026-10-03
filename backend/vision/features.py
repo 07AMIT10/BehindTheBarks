@@ -38,11 +38,15 @@ from backend.contracts import FrameEvent, Features
 from backend.vision import face as F
 from backend.vision.detect import BBox, Detection
 from backend.vision.keypoint_map import Keypoint
+from backend.vision.wag import estimate_wag_hz
 
 DEFAULTS: dict[str, Any] = {
     "window_s": 3.0,
     "gap_reset_s": 2.0,  # no dog for this long empties the window (the standing baseline survives)
     "bbox_scale_factor": 0.8,  # body length as a fraction of the bbox's longer side, when withers/hip are missing
+    # wag_source: pose | roi | both
+    "wag_source": "pose",
+    "wag": {"source": "pose"},
     # tail_height: tail-tip offset perpendicular to the back line, in body lengths
     "tail_height_scale": 0.4,  # offset (body lengths) that maps to +-1
     "tail_min_upright": 0.3,  # |vertical component| of the back line's perpendicular; below = None
@@ -146,6 +150,9 @@ class FeatureExtractor:
         self.conf_thr: float = d.get("keypoint_conf_threshold", 0.3)
         self.source = source
         self._smooth = {k: _Ema(tau) for k, tau in self.tau_s.items()}
+        wag_cfg = d.get("features", {}).get("wag", {})
+        self.wag_source = wag_cfg.get("source", d.get("features", {}).get("wag_source", self.p.get("wag_source", "pose")))
+        self.last_wag: dict[str, float | None] = {"pose": None, "roi": None}
         self._s = _State()
 
     def reset(self) -> None:
@@ -162,6 +169,7 @@ class FeatureExtractor:
         det: Detection | None,
         kps: dict[str, Keypoint | None] | None,
         lms: Sequence[Sequence[float]] | None,
+        roi_wag_hz: float | None = None,
     ) -> FrameEvent:
         """Add one frame and return its FrameEvent. Frames must arrive in time order."""
         s = self._s
@@ -183,9 +191,20 @@ class FeatureExtractor:
         scale = self._body_scale()
 
         raw_height = self._tail_height(pts, scale)
+        pose_wag = self._tail_wag_hz(scale)
+        if self.wag_source == "pose":
+            wag_hz = pose_wag
+        elif self.wag_source == "roi":
+            wag_hz = roi_wag_hz
+        elif self.wag_source == "both":
+            wag_hz = roi_wag_hz if roi_wag_hz is not None else pose_wag
+        else:
+            wag_hz = pose_wag
+        self.last_wag = {"pose": pose_wag, "roi": roi_wag_hz}
+
         features = Features(
             tail_height=self._smoothed("tail_height", raw_height, ts, -1.0, 1.0),
-            tail_wag_hz=self._tail_wag_hz(scale),
+            tail_wag_hz=wag_hz,
             ear_position=self._ear_position(ts, pts, lms, scale),
             mouth_open=self._smoothed("mouth_open", self._mouth_open(lms), ts, 0.0, 1.0),
             body_lowering=self._smoothed("body_lowering", self._body_lowering(ts, pts, det.bbox, scale), ts, 0.0, 1.0),
@@ -278,36 +297,17 @@ class FeatureExtractor:
         centred = xy - xy.mean(axis=0)
         axis = np.linalg.svd(centred, full_matrices=False)[2][0]
         sig = centred @ axis
-        if sig.std() < p["wag_min_std"]:
-            return 0.0
-
-        dt = float(np.median(np.diff(t)))
-        if dt <= 0:
-            return None
-        grid = np.arange(t[0], t[-1] + 1e-9, dt)
-        y = np.interp(grid, t, sig)
-        y = y - np.polyval(np.polyfit(grid - grid[0], y, 1), grid - grid[0])
-        n = len(y)
-        nfft = 1 << max(9, int(math.ceil(math.log2(n * 8))))
-        power = np.abs(np.fft.rfft(y * np.hanning(n), nfft)) ** 2
-        freqs = np.fft.rfftfreq(nfft, dt)
-        hi = min(p["wag_max_hz"], 0.95 * 0.5 / dt)
-        band = np.where((freqs >= p["wag_min_hz"]) & (freqs <= hi))[0]
-        if len(band) < 3:
-            return None
-        k = int(band[np.argmax(power[band])])
-        # share of all (non-DC) power within +-0.25 Hz of the peak
-        near = np.abs(freqs - freqs[k]) <= 0.25
-        total = power[freqs >= 0.2].sum()
-        if total <= 0 or power[near].sum() / total < p["wag_min_peak_ratio"]:
-            return 0.0
-        f = float(freqs[k])
-        if 0 < k < len(power) - 1:
-            a, b, c = np.log(power[k - 1] + 1e-12), np.log(power[k] + 1e-12), np.log(power[k + 1] + 1e-12)
-            denom = a - 2 * b + c
-            if denom < 0:
-                f += 0.5 * (a - c) / denom * (freqs[1] - freqs[0])
-        return f if f >= p["wag_min_hz"] else 0.0  # a peak at the edge of the band is slow drift, not a wag
+        return estimate_wag_hz(
+            t,
+            sig,
+            min_hz=p["wag_min_hz"],
+            max_hz=p["wag_max_hz"],
+            min_std=p["wag_min_std"],
+            min_peak_ratio=p["wag_min_peak_ratio"],
+            min_samples=p["wag_min_samples"],
+            min_span_s=p["wag_min_span_s"],
+            max_gap_s=p["wag_max_gap_s"],
+        )
 
     # -- ears --------------------------------------------------------------------------------
 

@@ -481,3 +481,37 @@ def test_debug_overlay_draws_on_portrait_frames():
     frame = np.zeros((640, 360, 3), np.uint8)
     out = draw_overlay(frame, ev, label, [AudioEvent(ts=0.5, label="yip", score=0.7)], CFG["data"]["feeding_zone"], True)
     assert out.shape == frame.shape and out.any() and not frame.any()  # drawn on a copy
+
+
+def test_pipeline_pose_cadence_and_roi_wag():
+    """Pipeline respects pose_every_n cadence while pushing ROI wag on every frame."""
+    class CountingPose:
+        def __init__(self):
+            self.calls = 0
+        def estimate(self, frame, bbox):
+            self.calls += 1
+            return {"withers": (50.0, 50.0, 0.9), "tail_base": (40.0, 50.0, 0.9)}
+
+    class CountingWag:
+        def __init__(self):
+            self.pushes = 0
+        def push(self, roi, ts, box_dx=0.0):
+            self.pushes += 1
+            return 2.5
+        def estimate(self):
+            return 2.5
+
+    counting_pose = CountingPose()
+    counting_wag = CountingWag()
+
+    pipe_cfg = cfg()
+    pipe_cfg["data"]["pose_every_n"] = 2
+    pipe = Pipeline(pipe_cfg, components=parts(pose=counting_pose, wag=counting_wag))
+
+    frame = np.full((120, 160, 3), 100, dtype=np.uint8)
+    for i in range(4):
+        pipe._process(float(i) * 0.1, frame)
+
+    assert counting_pose.calls == 2  # called on frame 0 and frame 2
+    assert counting_wag.pushes == 4  # called on every frame 0, 1, 2, 3
+

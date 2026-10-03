@@ -46,6 +46,10 @@ data:
     window_s: 3.0             # rolling keypoint window
     gap_reset_s: 2.0          # no dog for this long empties the window
     tail_height_scale: 0.4    # tail-tip offset from the back line, in body lengths, that maps to +-1
+    wag:
+      source: pose            # pose | roi | both (default: pose; mobile uses roi or both)
+      min_hz: 1.0
+      max_hz: 8.0
     wag_min_std: 0.03         # tail oscillation (body lengths, std) below which the tail counts as still
     wag_min_peak_ratio: 0.3   # share of spectral power at the peak below which the wag is "not periodic"
     ear_up_min: 0.6           # ear vector upward cosine for "up"

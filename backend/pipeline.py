@@ -133,6 +133,23 @@ class Pipeline:
 
             self.audio = AudioEventDetector(config)
 
+        from backend.vision.wag import RoiWagEstimator, extract_tail_roi
+        self._extract_tail_roi = extract_tail_roi
+        if "wag" in c:
+            self.wag = c["wag"]
+        else:
+            w_cfg = data.get("features", {}).get("wag", {})
+            self.wag = RoiWagEstimator(
+                min_hz=float(w_cfg.get("min_hz", 1.0)),
+                max_hz=float(w_cfg.get("max_hz", 8.0)),
+                wag_min_peak_ratio=float(w_cfg.get("wag_min_peak_ratio", 0.3)),
+            )
+        self.pose_every_n: int = int(data.get("pose_every_n", 1))
+        self.pose_hz: float | None = float(data["pose_hz"]) if data.get("pose_hz") is not None else None
+        self._pose_count: int = 0
+        self._last_pose_ts: float | None = None
+        self._last_kps: dict = {}
+
         self._stop = threading.Event()
         self._started = False
         self._start_mono = time.monotonic()
@@ -378,13 +395,45 @@ class Pipeline:
             if ts < self._last_ts:  # e.g. the watchdog got ahead of a straggler; features need time order
                 return
             self._last_ts = ts
-            det = self.detector.detect(frame)
+            try:
+                det = self.detector.detect(frame, ts=ts)
+            except TypeError:
+                det = self.detector.detect(frame)
             t1 = clock()
-            kps = self._safe_pose(frame, det.bbox) if det is not None else {}
+
+            # Decide whether to run pose on this frame
+            should_run_pose = False
+            if det is not None:
+                if self.pose_hz is not None and self.pose_hz > 0:
+                    interval = 1.0 / self.pose_hz
+                    if self._last_pose_ts is None or (ts - self._last_pose_ts) >= (interval - 1e-4):
+                        should_run_pose = True
+                elif self.pose_every_n <= 1 or (self._pose_count % self.pose_every_n) == 0:
+                    should_run_pose = True
+
+            if should_run_pose and det is not None:
+                kps = self._safe_pose(frame, det.bbox)
+                self._last_pose_ts = ts
+                self._last_kps = kps
+            else:
+                kps = self._last_kps if det is not None else {}
+            self._pose_count += 1
             t2 = clock()
+
+            # ROI motion wag pushed every frame (even when pose is skipped)
+            roi_wag_hz = None
+            if det is not None:
+                gray_roi = self._extract_tail_roi(
+                    frame, det.bbox, self._last_kps, last_pose_ts=self._last_pose_ts, ts=ts
+                )
+                if gray_roi is not None:
+                    roi_wag_hz = self.wag.push(gray_roi, ts)
+            else:
+                self._last_kps = {}
+
             lms = self._safe_face(frame, kps) if kps else None
             t3 = clock()
-            ev = self.features.update(ts, det, kps, lms)
+            ev = self.features.update(ts, det, kps, lms, roi_wag_hz=roi_wag_hz)
             t4 = clock()
             audio = self._recent_audio(ts)
             label = self.rules.update(ev, audio, self._treat_recent(ts))
