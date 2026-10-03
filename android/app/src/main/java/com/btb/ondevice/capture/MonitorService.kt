@@ -209,7 +209,7 @@ class MonitorService : Service(), LifecycleOwner {
                     if (rulesLabel != null) {
                         up.sendRules(rulesLabel)
                     }
-                    updateUiOverlay(frameEvent, rulesLabel)
+                    updateUiOverlay(frameEvent, rulesLabel, width, height)
                     // Dashboard video, best-effort at ~2 Hz. JPEG encode stays on this
                     // background thread; sendPreview applies its own rate limit and
                     // backpressure drop, so this never blocks inference.
@@ -251,17 +251,22 @@ class MonitorService : Service(), LifecycleOwner {
         cameraSource?.detachPreview()
     }
 
-    private fun updateUiOverlay(frame: FrameEvent, rules: RulesLabel?) {
+    private fun updateUiOverlay(frame: FrameEvent, rules: RulesLabel?, width: Int = 0, height: Int = 0) {
         val l = listener ?: return
         val det = frame.bbox
-        val bbox = if (det != null && det.size >= 4) {
-            floatArrayOf(det[0].toFloat(), det[1].toFloat(), det[2].toFloat(), det[3].toFloat())
+        val bbox = if (det != null && det.size >= 4 && width > 0 && height > 0) {
+            floatArrayOf(
+                (det[0] / width).toFloat(),
+                (det[1] / height).toFloat(),
+                (det[2] / width).toFloat(),
+                (det[3] / height).toFloat()
+            )
         } else null
 
         val kpts = frame.bodyKeypoints?.mapValues { entry ->
             val v = entry.value
-            if (v != null && v.size >= 3) {
-                floatArrayOf(v[0].toFloat(), v[1].toFloat(), v[2].toFloat())
+            if (v != null && v.size >= 3 && width > 0 && height > 0) {
+                floatArrayOf((v[0] / width).toFloat(), (v[1] / height).toFloat(), v[2].toFloat())
             } else {
                 floatArrayOf(0f, 0f, 0f)
             }
@@ -292,20 +297,28 @@ class MonitorService : Service(), LifecycleOwner {
     }
 
     /**
-     * Downscale an RGBA frame to 320 px wide and encode a dashboard preview JPEG.
+     * Downscale an RGBA frame to 320 px (long edge) and encode a dashboard preview JPEG.
      * Returns null when the buffer does not hold a full frame. Caller throttles.
      */
     private fun encodePreviewJpeg(
         rgba: ByteArray,
         width: Int,
         height: Int,
-        rotationDegrees: Int,
+        rotationDegrees: Int = 0,
     ): ByteArray? {
         if (width < 2 || height < 2 || rgba.size < width * height * 4) return null
         val full = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         full.copyPixelsFromBuffer(ByteBuffer.wrap(rgba))
-        val targetH = (320f * height / width).roundToInt().coerceAtLeast(2)
-        val scaled = Bitmap.createScaledBitmap(full, 320, targetH, true)
+        val targetW: Int
+        val targetH: Int
+        if (width >= height) {
+            targetW = 320
+            targetH = (320f * height / width).roundToInt().coerceAtLeast(2)
+        } else {
+            targetW = (320f * width / height).roundToInt().coerceAtLeast(2)
+            targetH = 320
+        }
+        val scaled = Bitmap.createScaledBitmap(full, targetW, targetH, true)
         full.recycle()
         val upright = if (rotationDegrees != 0) {
             val m = Matrix().apply { postRotate(rotationDegrees.toFloat()) }

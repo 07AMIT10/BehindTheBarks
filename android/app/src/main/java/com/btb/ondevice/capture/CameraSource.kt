@@ -13,6 +13,7 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -135,24 +136,19 @@ class CameraSource(
 
         val epochS = CaptureConfig.timestampNsToEpochS(timestampNs, bootToEpochOffsetS)
 
-        // Extract contiguous RGBA byte array
-        val rgbaBytes: ByteArray
-        if (pixelStride == 4 && rowStride == width * 4) {
-            rgbaBytes = ByteArray(buffer.remaining())
-            buffer.get(rgbaBytes)
-        } else {
-            // Unpack row strides
-            rgbaBytes = ByteArray(width * height * 4)
-            var dstOffset = 0
-            val rowBytes = width * 4
-            for (row in 0 until height) {
-                buffer.position(row * rowStride)
-                buffer.get(rgbaBytes, dstOffset, rowBytes)
-                dstOffset += rowBytes
-            }
-        }
+        val rgbaBytes = ByteArray(width * height * 4)
+        val (uprightWidth, uprightHeight) = extractUprightRgba(
+            buffer = buffer,
+            width = width,
+            height = height,
+            rowStride = rowStride,
+            pixelStride = pixelStride,
+            rotationDegrees = rotationDegrees,
+            outBytes = rgbaBytes,
+        )
 
-        frameCallback(rgbaBytes, width, height, rotationDegrees, epochS)
+        // The buffer is now upright: downstream receives rotationDegrees = 0
+        frameCallback(rgbaBytes, uprightWidth, uprightHeight, 0, epochS)
     }
 
     fun stop() {
@@ -161,5 +157,82 @@ class CameraSource(
         imageAnalysis = null
         previewUseCase = null
         executor.shutdown()
+    }
+
+    companion object {
+        /**
+         * Extracts and rotates RGBA_8888 buffer to upright orientation into outBytes.
+         * Returns Pair(uprightWidth, uprightHeight).
+         */
+        fun extractUprightRgba(
+            buffer: ByteBuffer,
+            width: Int,
+            height: Int,
+            rowStride: Int,
+            pixelStride: Int,
+            rotationDegrees: Int,
+            outBytes: ByteArray,
+        ): Pair<Int, Int> {
+            val srcInts = buffer.duplicate().order(ByteOrder.nativeOrder()).asIntBuffer()
+            val dstInts = ByteBuffer.wrap(outBytes).order(ByteOrder.nativeOrder()).asIntBuffer()
+            val strideInts = rowStride / 4
+
+            when (rotationDegrees) {
+                90 -> {
+                    val outW = height
+                    val outH = width
+                    for (yOut in 0 until outH) {
+                        val origX = yOut
+                        val rowOffset = yOut * outW
+                        for (xOut in 0 until outW) {
+                            val origY = height - 1 - xOut
+                            dstInts.put(rowOffset + xOut, srcInts.get(origY * strideInts + origX))
+                        }
+                    }
+                    return outW to outH
+                }
+                180 -> {
+                    for (yOut in 0 until height) {
+                        val origY = height - 1 - yOut
+                        val rowOffset = yOut * width
+                        for (xOut in 0 until width) {
+                            val origX = width - 1 - xOut
+                            dstInts.put(rowOffset + xOut, srcInts.get(origY * strideInts + origX))
+                        }
+                    }
+                    return width to height
+                }
+                270 -> {
+                    val outW = height
+                    val outH = width
+                    for (yOut in 0 until outH) {
+                        val origX = width - 1 - yOut
+                        val rowOffset = yOut * outW
+                        for (xOut in 0 until outW) {
+                            val origY = xOut
+                            dstInts.put(rowOffset + xOut, srcInts.get(origY * strideInts + origX))
+                        }
+                    }
+                    return outW to outH
+                }
+                else -> {
+                    if (pixelStride == 4 && rowStride == width * 4) {
+                        val dup = buffer.duplicate()
+                        dup.position(0)
+                        dup.get(outBytes, 0, width * height * 4)
+                    } else {
+                        val dup = buffer.duplicate()
+                        var dstOffset = 0
+                        val rowBytes = width * 4
+                        for (row in 0 until height) {
+                            dup.position(row * rowStride)
+                            dup.get(outBytes, dstOffset, rowBytes)
+                            dstOffset += rowBytes
+                        }
+                    }
+                    return width to height
+                }
+            }
+        }
     }
 }
