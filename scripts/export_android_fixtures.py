@@ -47,47 +47,53 @@ def export_logic_fixtures(out_dir: Path, clips: Sequence[str] | None = None, lim
             continue
 
         records = []
+        treats: list[float] = []
+        audio_events: list[dict] = []
         with events_path.open() as f:
-            for line in f:
-                rec = json.loads(line)
-                if rec["type"] == "frame":
-                    d = rec["data"]
-                    bbox = d.get("bbox")
-                    track = bbox  # single-dog tracking
-                    pose_in = bbox  # crop box
-                    face_in = [bbox[0], bbox[1], (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2] if bbox else None
-                    
-                    row = {
-                        "frame_idx": len(records),
-                        "ts": d["ts"],
-                        "det": bbox + [d.get("bbox_conf", 0.5)] if bbox else None,
-                        "track": track,
-                        "pose_in": pose_in,
-                        "keypoints": d.get("body_keypoints", {}),
-                        "face_in": face_in,
-                        "face": d.get("face_landmarks"),
-                        "wag_roi": d.get("features", {}).get("tail_wag_hz"),
-                        "audio_pcm_ref": None,
-                        "audio": [],
-                        "treat": False,
-                        "features": d.get("features", {}),
-                        "rules": {
-                            "ts": d["ts"],
-                            "emotion": "unknown",
-                            "confidence": 0.0,
-                            "scores": {e: 0.0 for e in ("happy", "excited", "relaxed", "anxious", "fearful", "aggressive", "disinterested", "unknown")}
-                        },
-                    }
-                    records.append(row)
-                elif rec["type"] == "rules" and records:
-                    records[-1]["rules"] = rec["data"]
-                elif rec["type"] == "audio" and records:
-                    records[-1]["audio"].append(rec["data"])
-                elif rec["type"] == "treat" and records:
-                    records[-1]["treat"] = True
+            all_lines = [json.loads(line) for line in f]
 
+        for rec in all_lines:
+            if rec["type"] == "treat":
+                treats.append(float(rec["data"]["ts"]))
+            elif rec["type"] == "audio":
+                audio_events.append(rec["data"])
+
+        for rec in all_lines:
+            if rec["type"] == "frame":
                 if len(records) >= limit_frames:
                     break
+                d = rec["data"]
+                bbox = d.get("bbox")
+                track = bbox  # single-dog tracking
+                pose_in = bbox  # crop box
+                face_in = [bbox[0], bbox[1], (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2] if bbox else None
+                ts = d["ts"]
+                treat_recent = any(t <= ts <= t + 10.0 for t in treats)
+                recent_audio = [a for a in audio_events if ts - 5.0 <= a["ts"] <= ts + 0.25]
+                row = {
+                    "frame_idx": len(records),
+                    "ts": ts,
+                    "det": bbox + [d.get("bbox_conf", 0.5)] if bbox else None,
+                    "track": track,
+                    "pose_in": pose_in,
+                    "keypoints": d.get("body_keypoints", {}),
+                    "face_in": face_in,
+                    "face": d.get("face_landmarks"),
+                    "wag_roi": d.get("features", {}).get("tail_wag_hz"),
+                    "audio_pcm_ref": None,
+                    "audio": recent_audio,
+                    "treat": treat_recent,
+                    "features": d.get("features", {}),
+                    "rules": {
+                        "ts": ts,
+                        "emotion": "unknown",
+                        "confidence": 0.0,
+                        "scores": {e: 0.0 for e in ("happy", "excited", "relaxed", "anxious", "fearful", "aggressive", "disinterested", "unknown")}
+                    },
+                }
+                records.append(row)
+            elif rec["type"] == "rules" and records:
+                records[-1]["rules"] = rec["data"]
 
         out_path = out_dir / f"{stem}.jsonl"
         with out_path.open("w") as f:
