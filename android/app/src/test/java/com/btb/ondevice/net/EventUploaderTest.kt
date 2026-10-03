@@ -38,7 +38,7 @@ class EventUploaderTest {
     fun tearDown() {
         try {
             server.shutdown()
-        } catch (_: Exception) {}
+        } catch (_: Throwable) {}
         tempDir.deleteRecursively()
     }
 
