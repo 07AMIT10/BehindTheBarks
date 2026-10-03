@@ -102,8 +102,16 @@ class MonitorService : Service(), LifecycleOwner {
             return START_NOT_STICKY
         }
 
-        val serverUrl = intent?.getStringExtra(EXTRA_SERVER_URL) ?: "ws://10.0.2.2:8000/ingest-events"
-        val deviceName = intent?.getStringExtra(EXTRA_DEVICE_NAME) ?: Build.MODEL
+        val prefs = getSharedPreferences("btb_station_prefs", Context.MODE_PRIVATE)
+        val defaultUrl = prefs.getString("server_url", DEFAULT_CLOUD_URL) ?: DEFAULT_CLOUD_URL
+        val defaultDevice = prefs.getString("device_name", Build.MODEL) ?: Build.MODEL
+
+        val serverUrl = intent?.getStringExtra(EXTRA_SERVER_URL)
+            ?: intent?.getStringExtra("server_url")
+            ?: defaultUrl
+        val deviceName = intent?.getStringExtra(EXTRA_DEVICE_NAME)
+            ?: intent?.getStringExtra("device_name")
+            ?: defaultDevice
 
         startMonitoring(serverUrl, deviceName)
         return START_STICKY
@@ -179,6 +187,13 @@ class MonitorService : Service(), LifecycleOwner {
                 }
                 override fun onTreatDownlink(ts: Double) {
                     pipe.pushTreat(ts)
+                    playTreatChime()
+                }
+                override fun onTorchDownlink(enabled: Boolean) {
+                    cameraSource?.setTorch(enabled)
+                }
+                override fun onFlipDownlink() {
+                    cameraSource?.flipCamera()
                 }
             }
         )
@@ -249,6 +264,27 @@ class MonitorService : Service(), LifecycleOwner {
 
     fun detachCameraPreview() {
         cameraSource?.detachPreview()
+    }
+
+    fun setTorch(enabled: Boolean): Boolean = cameraSource?.setTorch(enabled) ?: false
+    fun toggleTorch(): Boolean = cameraSource?.toggleTorch() ?: false
+    fun isTorchOn(): Boolean = cameraSource?.isTorchOn() ?: false
+    fun hasFlashUnit(): Boolean = cameraSource?.hasFlashUnit() ?: false
+    fun flipCamera(): Boolean = cameraSource?.flipCamera() ?: false
+    fun isBackCamera(): Boolean = cameraSource?.isBack() ?: true
+
+    private fun playTreatChime() {
+        try {
+            val toneGen = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 100)
+            toneGen.startTone(android.media.ToneGenerator.TONE_PROP_BEEP2, 350)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                try {
+                    toneGen.release()
+                } catch (_: Exception) {}
+            }, 600)
+        } catch (e: Exception) {
+            Log.w("MonitorService", "Failed to play treat chime: ${e.message}")
+        }
     }
 
     private fun updateUiOverlay(frame: FrameEvent, rules: RulesLabel?, width: Int = 0, height: Int = 0) {
@@ -432,5 +468,6 @@ class MonitorService : Service(), LifecycleOwner {
         const val ACTION_STOP = "com.btb.ondevice.action.STOP"
         const val EXTRA_SERVER_URL = "extra_server_url"
         const val EXTRA_DEVICE_NAME = "extra_device_name"
+        const val DEFAULT_CLOUD_URL = "wss://annually-moment-most-racial.trycloudflare.com/ingest-events"
     }
 }

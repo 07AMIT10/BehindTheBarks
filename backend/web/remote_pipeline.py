@@ -57,6 +57,7 @@ class RemotePipeline:
         self._flush_task: asyncio.Task | None = None
         self.downlinks_sent = 0
         self.downlinks_dropped = 0
+        self._torch_enabled = False
 
     # -- Pipeline interface -------------------------------------------------------------------
     async def run(self, on_frame_event=None, on_audio_event=None, on_rules_label=None) -> None:
@@ -105,6 +106,22 @@ class RemotePipeline:
         `rules`, the server's own data.rules section is sent. False when no phone is attached."""
         sent = self._post({"type": "config", "data": {"rules": self._rules_config(rules)}})
         log.info("remote: pushed config to the phone (%s)", "sent" if sent else "no phone")
+        return sent
+
+    def set_torch(self, enabled: bool) -> bool:
+        """Control the phone's camera flashlight / torch remotely."""
+        self._torch_enabled = bool(enabled)
+        sent = self._post({"type": "torch", "data": {"enabled": self._torch_enabled}})
+        log.info("remote: sent torch=%s to phone (%s)", self._torch_enabled, "sent" if sent else "no phone")
+        return sent
+
+    def get_torch(self) -> bool:
+        return self._torch_enabled
+
+    def flip_camera(self) -> bool:
+        """Flip the phone's camera between back and front lens remotely."""
+        sent = self._post({"type": "flip", "data": {}})
+        log.info("remote: sent camera flip to phone (%s)", "sent" if sent else "no phone")
         return sent
 
     # -- phone session --------------------------------------------------------------------------
@@ -228,6 +245,7 @@ class RemotePipeline:
             "downlinks_sent": self.downlinks_sent,
             "downlinks_dropped": self.downlinks_dropped,
             "treats": len(self._treats),
+            "torch": self._torch_enabled,
         }
 
     def _metrics(self, now: float) -> dict:

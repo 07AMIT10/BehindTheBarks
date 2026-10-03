@@ -41,7 +41,7 @@
              capturing while the screen is off. -->
         <service
             android:name=".capture.MonitorService"
-            android:exported="false"
+            android:exported="true"
             android:foregroundServiceType="camera|microphone" />
 
     </application>

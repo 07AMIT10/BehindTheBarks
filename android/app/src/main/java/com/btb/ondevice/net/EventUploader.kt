@@ -37,6 +37,8 @@ interface EventUploaderListener {
     fun onStateChanged(state: ConnectionState) {}
     fun onTreatDownlink(ts: Double) {}
     fun onConfigDownlink(configJson: String) {}
+    fun onTorchDownlink(enabled: Boolean) {}
+    fun onFlipDownlink() {}
 }
 
 /**
@@ -201,6 +203,13 @@ class EventUploader(
                 "config" -> {
                     val data = root["data"]?.toString() ?: ""
                     listener?.onConfigDownlink(data)
+                }
+                "torch" -> {
+                    val enabled = root["data"]?.jsonObject?.get("enabled")?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true
+                    listener?.onTorchDownlink(enabled)
+                }
+                "flip" -> {
+                    listener?.onFlipDownlink()
                 }
             }
         } catch (_: Exception) {

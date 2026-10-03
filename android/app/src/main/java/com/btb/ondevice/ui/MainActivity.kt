@@ -44,6 +44,8 @@ class MainActivity : Activity() {
     private lateinit var statusTextView: TextView
     private lateinit var toggleButton: Button
     private lateinit var dimButton: Button
+    private lateinit var torchButton: Button
+    private lateinit var flipButton: Button
     private lateinit var collapseButton: Button
 
     private lateinit var prefs: SharedPreferences
@@ -271,6 +273,38 @@ class MainActivity : Activity() {
         actionsRow.addView(dimButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.4f))
         controlsPanel.addView(actionsRow)
 
+        val toolsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 8, 0, 0)
+        }
+
+        torchButton = Button(this).apply {
+            text = "🔦 Light"
+            textSize = 12f
+            setBackgroundColor(Color.parseColor("#37474F"))
+            setTextColor(Color.WHITE)
+            isEnabled = false
+            setOnClickListener {
+                val on = monitorService?.toggleTorch() ?: false
+                updateTorchButton(on)
+            }
+        }
+        toolsRow.addView(torchButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = 8 })
+
+        flipButton = Button(this).apply {
+            text = "🔄 Flip Lens"
+            textSize = 12f
+            setBackgroundColor(Color.parseColor("#37474F"))
+            setTextColor(Color.WHITE)
+            isEnabled = false
+            setOnClickListener {
+                val isBack = monitorService?.flipCamera() ?: true
+                text = if (isBack) "🔄 Flip (Back)" else "🔄 Flip (Front)"
+            }
+        }
+        toolsRow.addView(flipButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        controlsPanel.addView(toolsRow)
+
         root.addView(controlsPanel)
 
         // 5. Ambient / Station Mode Fullscreen Overlay (pitch black to save power & prevent OLED burn-in)
@@ -464,6 +498,8 @@ class MainActivity : Activity() {
         toggleButton.text = "Stop Monitoring"
         toggleButton.setBackgroundColor(Color.parseColor("#FF1744"))
         dimButton.isEnabled = true
+        torchButton.isEnabled = true
+        flipButton.isEnabled = true
         statusTextView.text = "○ Connecting to $url..."
     }
 
@@ -491,8 +527,24 @@ class MainActivity : Activity() {
         toggleButton.text = "Start Monitoring"
         toggleButton.setBackgroundColor(Color.parseColor("#00E676"))
         dimButton.isEnabled = false
+        torchButton.isEnabled = false
+        flipButton.isEnabled = false
+        updateTorchButton(false)
+        flipButton.text = "🔄 Flip Lens"
         statusTextView.text = "● Idle · Ready"
         overlayView.updateState(OverlayState())
+    }
+
+    private fun updateTorchButton(on: Boolean) {
+        if (on) {
+            torchButton.text = "💡 Light ON"
+            torchButton.setBackgroundColor(Color.parseColor("#FBC02D"))
+            torchButton.setTextColor(Color.BLACK)
+        } else {
+            torchButton.text = "🔦 Light"
+            torchButton.setBackgroundColor(Color.parseColor("#37474F"))
+            torchButton.setTextColor(Color.WHITE)
+        }
     }
 
     override fun onDestroy() {

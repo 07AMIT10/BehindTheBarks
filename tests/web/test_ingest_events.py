@@ -836,3 +836,47 @@ def test_an_envelope_from_the_year_2100_never_freezes_the_clock(tmp_path):
     assert st["phone"]["dropped"] == 1 and st["phone"]["connected"] is True
     assert st["pipeline_status"]["last_frame_age_s"] >= 0.0
     assert st["pipeline_status"]["state"] == "running"
+
+
+def test_torch_downlink_and_status(tmp_path):
+    c, p = remote_client(tmp_path)
+    now = time.time()
+    with c, c.websocket_connect("/ingest-events") as ws:
+        ws.send_text(hello_msg(phone_time=now))
+        assert ws.receive_json()["type"] == "hello_ack"
+
+        # Initially torch is False
+        assert c.get("/torch").json()["enabled"] is False
+
+        # Toggle torch on
+        res = c.post("/torch", json={"enabled": True}).json()
+        assert res["ok"] is True and res["enabled"] is True and res["sent"] is True
+
+        down = ws.receive_json()
+        assert down["type"] == "torch"
+        assert down["data"]["enabled"] is True
+        assert c.get("/torch").json()["enabled"] is True
+        assert p.status()["torch"] is True
+
+        # Toggle torch off
+        res = c.post("/torch", json={"enabled": False}).json()
+        assert res["ok"] is True and res["enabled"] is False and res["sent"] is True
+
+        down = ws.receive_json()
+        assert down["type"] == "torch"
+        assert down["data"]["enabled"] is False
+        assert c.get("/torch").json()["enabled"] is False
+
+
+def test_camera_flip_downlink(tmp_path):
+    c, _ = remote_client(tmp_path)
+    now = time.time()
+    with c, c.websocket_connect("/ingest-events") as ws:
+        ws.send_text(hello_msg(phone_time=now))
+        assert ws.receive_json()["type"] == "hello_ack"
+
+        res = c.post("/camera/flip").json()
+        assert res["ok"] is True and res["sent"] is True
+
+        down = ws.receive_json()
+        assert down["type"] == "flip"

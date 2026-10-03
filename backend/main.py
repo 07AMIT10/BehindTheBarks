@@ -87,6 +87,32 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     async def treat() -> dict:
         return {"ts": app.state.rt.treat()}
 
+    @app.post("/torch")
+    async def set_torch(body: dict | None = None) -> dict:
+        fn = getattr(app.state.rt.pipeline, "set_torch", None)
+        if fn is None:
+            raise HTTPException(400, "web.pipeline must be 'remote' to control torch")
+        if body is not None and "enabled" in body:
+            enabled = bool(body["enabled"])
+        else:
+            get_fn = getattr(app.state.rt.pipeline, "get_torch", None)
+            enabled = not (get_fn() if get_fn is not None else False)
+        sent = bool(fn(enabled))
+        return {"ok": True, "enabled": enabled, "sent": sent}
+
+    @app.get("/torch")
+    async def get_torch() -> dict:
+        get_fn = getattr(app.state.rt.pipeline, "get_torch", None)
+        enabled = False if get_fn is None else bool(get_fn())
+        return {"enabled": enabled}
+
+    @app.post("/camera/flip")
+    async def camera_flip() -> dict:
+        fn = getattr(app.state.rt.pipeline, "flip_camera", None)
+        if fn is None:
+            raise HTTPException(400, "web.pipeline must be 'remote' to flip camera")
+        return {"ok": True, "sent": bool(fn())}
+
     @app.get("/demo/clips")
     async def demo_clips() -> list[dict]:
         from dataclasses import asdict

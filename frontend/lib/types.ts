@@ -17,6 +17,7 @@ export type PipelineStatus = {
   fps: number;
   last_frame_age_s: number | null;
   audio_ok: boolean;
+  torch?: boolean;
 };
 
 export type PhoneStatus = {
