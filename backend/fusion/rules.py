@@ -64,6 +64,8 @@ DEFAULTS: dict[str, Any] = {
     "disinterested_min_score": 0.7,
     "aggressive_max_conf_without_growl": 0.5,
     "growl_min_score": 0.3,
+    "suppress_aggressive_without_growl": False,
+    "ignore_eating_confounds": False,
     "min_score": 0.3,
     "min_coverage": 0.5,
     "thresholds": {
@@ -191,7 +193,11 @@ class RulesEngine:
         sounds = self._recent_sounds(ts, audio_events)
         if treat_event_recent:
             sounds["treat"] = 1.0
-        view = _View(frame.features, sounds, idle_s)
+        feat = frame.features
+        if self.p.get("ignore_eating_confounds") and feat.in_feeding_zone:
+            if feat.body_lowering is not None and feat.body_lowering > 0.05:
+                feat = feat.model_copy(update={"mouth_open": None, "body_lowering": None})
+        view = _View(feat, sounds, idle_s)
 
         scores = {e: _clamp01(fn(view)) for e, fn in self._scorers.items()}
         scores["unknown"] = self.p["min_score"]  # the evidence bar: an emotion has to beat it
@@ -352,6 +358,8 @@ class RulesEngine:
             "mouth_open": _above(f.mouth_open, t["mouth_open"], s["mouth_open"]),
         })
         score = self._adjust("aggressive", base, v)
+        if self.p.get("suppress_aggressive_without_growl") and v.sounds.get("growl", 0.0) < self.p["growl_min_score"]:
+            return 0.0
         if v.sounds.get("growl", 0.0) < self.p["growl_min_score"]:
             score = min(score, self.p["aggressive_max_conf_without_growl"])
         return score

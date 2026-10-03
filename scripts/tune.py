@@ -173,7 +173,7 @@ def compute_clip_roi_wag(clip_path: Path, frames: list[dict]) -> list[float | No
 def parse_args(argv):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--manifest", type=Path, default=FALLBACK / "manifest.json")
-    ap.add_argument("--events-dir", type=Path, default=FALLBACK / "events")
+    ap.add_argument("--events-dir", "--events", type=Path, default=FALLBACK / "events")
     ap.add_argument("--out-dir", type=Path, default=FALLBACK / "tuning")
     ap.add_argument("--only", action="append", metavar="NAME", help="clip name (repeatable)")
     ap.add_argument("--wag-source", choices=["pose", "roi", "both"], default="pose",

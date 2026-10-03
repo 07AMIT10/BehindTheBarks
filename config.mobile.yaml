@@ -26,3 +26,24 @@ data:
       source: both
       min_hz: 1.0
       max_hz: 8.0
+  rules:
+    disinterested_s: 5.0
+    thresholds:
+      motion_low: 0.035
+      motion_high: 0.8
+    event_bonus:
+      happy:
+        treat: 0.15
+      excited:
+        yip: 0.25
+        bark: 0.15
+        treat: 0.25
+    weights:
+      excited:
+        wag_fast: 1.5
+        tail_high: 1.5
+        motion_high: 2.0
+        ears_up: 0.5
+        mouth_open: 0.5
+    suppress_aggressive_without_growl: false
+    ignore_eating_confounds: false
