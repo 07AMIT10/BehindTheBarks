@@ -18,6 +18,20 @@
 
 All 7 fallback clips achieve full bit-level parity against golden fixtures with zero contract drift.
 
+## Method and provenance (read before citing)
+
+- The numbers below come from **host-side JVM replay**: `ClipSource`
+  (`android/app/src/main/java/com/btb/ondevice/capture/ClipSource.kt`) feeds the
+  recorded fallback clips through the pure-Kotlin pipeline, exercised by the unit tests
+  (`OnDevicePipelineTest`, `RulesEngineTest`, `FeatureExtractorTest` — all green in
+  `make android-test`). Reference side is the Python mobile profile
+  (`data/fallback/events_mobile/*.jsonl`); comparison harness is `scripts/android_parity.py`.
+- This proves **logic parity** (features → rules → envelopes are bit-identical given the
+  same inputs). It is NOT live on-device camera parity: no phone camera frames, no LiteRT
+  inference and no thermal/load effects are involved in these numbers.
+- Live on-device capture parity (ClipSource vs camera on the SM-E075F) is still pending —
+  it needs the app installed on the phone (blocked on device storage as of 2026-10-04).
+
 ---
 
 ## 2. Per-Clip Parity Results

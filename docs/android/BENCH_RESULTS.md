@@ -14,53 +14,57 @@
 
 Benchmarks were performed according to [`docs/android/BENCH_PROTOCOL.md`](BENCH_PROTOCOL.md) using `./scripts/android_bench.sh microbench`. Each test executed 20 steady-state inference runs following initialization and warmup.
 
+Source: [`out/android_bench_results.csv`](../../out/android_bench_results.csv) (2026-10-03, same device).
+Values below are copied verbatim from that CSV. 4-thread rows and rows with failed
+warmup (`warmup_ms = 0.00`) are omitted here — see the CSV for the full matrix.
+
 | Candidate Model | Modality | Backend Delegate | Threads | CPU Affinity | Init (ms) | Mean (ms) | Median (ms) | p95 (ms) | PSS Delta (MB) | Status |
 |:---|:---|:---|:---:|:---|:---:|:---:|:---:|:---:|:---:|:---:|
-| **`det_yolo26n_320_int8.tflite`** | Detection | CPU (XNNPACK) | 2 | unpinned | 35.4 | **18.96** | **19.12** | **19.43** | **21.2** | **Selected Winner** |
-| `det_yolo26n_320_int8.tflite` | Detection | CPU (XNNPACK) | 1 | big cores (c0) | 92.9 | 26.43 | 26.38 | 26.81 | 21.5 | Alternate |
-| `det_yolo26n_320_int8.tflite` | Detection | CPU (XNNPACK) | 2 | big cores (c0) | 35.5 | 46.88 | 47.36 | 59.72 | 21.4 | Alternate |
-| `det_yolo26n_320_int8.tflite` | Detection | GPU (OpenCL) | 1 | gpu | 3252.4 | 37.18 | 37.44 | 37.90 | 112.0 | Alternate |
-| `det_yolo26n_320_fp32.tflite` | Detection | CPU (XNNPACK) | 2 | unpinned | 50.2 | 54.69 | 54.59 | 57.12 | 38.7 | High CPU usage |
-| `det_yolo26n_320_fp32.tflite` | Detection | GPU (OpenCL) | 1 | gpu | 844.6 | 108.66 | 109.02 | 114.23 | 103.3 | Exceeds budget |
-| `det_effdet_lite0_320_int8.tflite` | Detection | CPU (XNNPACK) | 2 | unpinned | 44.3 | 26.73 | 24.87 | 48.48 | 28.7 | Heavy anchor NMS |
-| `det_effdet_lite0_320_int8.tflite` | Detection | CPU (XNNPACK) | 2 | big cores (c0) | 43.9 | 24.94 | 24.93 | 25.50 | 28.8 | Heavy anchor NMS |
-| `det_effdet_lite0_320_int8.tflite` | Detection | GPU (OpenCL) | 1 | gpu | 2063.3 | 48.50 | 47.60 | 53.30 | 126.7 | Heavy anchor NMS |
-| `det_picodet_s_320_tflite.tflite` | Detection | CPU (XNNPACK) | 2 | unpinned | 38.7 | 67.54 | 67.61 | 69.10 | 30.7 | 3.5× slower |
-| `det_picodet_s_320_tflite.tflite` | Detection | GPU (OpenCL) | 1 | gpu | 1569.5 | 93.98 | 94.31 | 97.33 | 106.5 | 2.5× slower |
-| **`pose_rtmpose_ap10k_litert.tflite`** | Pose (17 kp) | GPU (OpenCL) | 1 | gpu | 2932.7 | **63.10** | **63.75** | **65.48** | **214.1** | **Selected Winner** |
-| `pose_rtmpose_ap10k_litert.tflite` | Pose (17 kp) | CPU (Standard) | 2 | big cores (c0) | 4.9 | 330.09 | 329.26 | 364.07 | 140.0 | CPU fallback only |
-| `pose_rtmpose_ap10k_litert.tflite` | Pose (17 kp) | CPU (XNNPACK) | 2 | big cores (c0) | - | - | - | - | - | Incompatible op #32 |
-| `pose_superanimal_hrnet_w32.tflite` | Pose (39 kp) | CPU (XNNPACK) | 2 | big cores (c0) | 422.9 | 539.80 | 530.72 | 611.66 | 278.5 | **Disqualified (>5× budget)** |
-| `pose_superanimal_hrnet_w32.tflite` | Pose (39 kp) | GPU (OpenCL) | 1 | gpu | 4561.0 | 164.10 | 164.94 | 170.82 | **455.4** | **Disqualified (LMK risk)** |
-| **`face_dog_landmarks_384.tflite`** | Face (68 lm) | GPU (OpenCL) | 1 | gpu | 2248.6 | **150.05** | **151.51** | **164.12** | **136.6** | **Selected Winner** |
-| `face_dog_landmarks_384.tflite` | Face (68 lm) | CPU (XNNPACK) | 2 | big cores (c0) | 135.4 | 674.43 | 664.43 | 714.34 | 80.8 | Severe CPU load |
-| **`audio_yamnet.tflite`** | Audio | CPU (XNNPACK) | 2 | unpinned | 22.9 | **3.70** | **3.75** | **3.84** | **11.9** | **Selected Winner** |
-| `audio_yamnet.tflite` | Audio | CPU (XNNPACK) | 2 | big cores (c0) | 22.2 | 3.73 | 3.75 | 3.83 | 11.5 | Selected Winner |
-| `audio_yamnet.tflite` | Audio | GPU (OpenCL) | 1 | gpu | 1107.3 | 14.89 | 15.31 | 16.02 | 94.7 | Unnecessary GPU overhead |
+| **`det_yolo26n_320_int8.tflite`** | Detection | CPU (XNNPACK) | 2 | unpinned | 37.6 | **18.89** | **19.06** | **19.97** | **21.4** | **Selected Winner** |
+| `det_yolo26n_320_int8.tflite` | Detection | CPU (XNNPACK) | 1 | big cores (c0) | 35.1 | 26.53 | 26.55 | 26.98 | 21.3 | Alternate |
+| `det_yolo26n_320_int8.tflite` | Detection | CPU (XNNPACK) | 2 | big cores (c0) | 36.0 | 46.86 | 37.30 | 80.92 | 21.6 | Alternate (high variance) |
+| `det_yolo26n_320_int8.tflite` | Detection | GPU (OpenCL) | 1 | gpu | 3509.3 | 37.02 | 37.32 | 38.17 | 113.7 | Alternate |
+| `det_yolo26n_320_fp32.tflite` | Detection | CPU (XNNPACK) | 2 | unpinned | 45.7 | 55.30 | 55.47 | 58.26 | 38.8 | High CPU usage |
+| `det_yolo26n_320_fp32.tflite` | Detection | GPU (OpenCL) | 1 | gpu | 893.5 | 106.81 | 108.33 | 112.19 | 104.8 | Exceeds budget |
+| `det_effdet_lite0_320_int8.tflite` | Detection | CPU (XNNPACK) | 2 | unpinned | 57.0 | 25.44 | 25.15 | 30.28 | 28.5 | Heavy anchor NMS |
+| `det_effdet_lite0_320_int8.tflite` | Detection | CPU (XNNPACK) | 2 | big cores (c0) | 44.2 | 29.95 | 27.01 | 45.42 | 28.9 | Heavy anchor NMS |
+| `det_effdet_lite0_320_int8.tflite` | Detection | GPU (OpenCL) | 1 | gpu | 2130.1 | 49.22 | 48.28 | 56.82 | 128.1 | Heavy anchor NMS |
+| `det_picodet_s_320_tflite.tflite` | Detection | CPU (XNNPACK) | 2 | unpinned | 36.1 | 70.71 | 70.54 | 73.91 | 30.7 | 3.7× slower |
+| `det_picodet_s_320_tflite.tflite` | Detection | GPU (OpenCL) | 1 | gpu | 1708.3 | 83.32 | 83.45 | 89.31 | 107.3 | 2.3× slower |
+| **`pose_rtmpose_ap10k_litert.tflite`** | Pose (17 kp) | GPU (OpenCL) | 1 | gpu | 3111.9 | **63.38** | **63.60** | **66.14** | **212.4** | **Selected Winner** |
+| `pose_rtmpose_ap10k_litert.tflite` | Pose (17 kp) | CPU (Standard) | 2 | big cores (c0) | 7.3 | 361.68 | 355.46 | 467.12 | 140.2 | CPU fallback only |
+| `pose_rtmpose_ap10k_litert.tflite` | Pose (17 kp) | CPU (XNNPACK) | 2 | big cores (c0) | - | - | - | - | - | Incompatible op #32 (no CSV row) |
+| `pose_superanimal_hrnet_w32.tflite` | Pose (39 kp) | CPU (XNNPACK) | 2 | big cores (c0) | 431.1 | 548.96 | 545.76 | 570.88 | 278.3 | **Disqualified (>5× budget)** |
+| `pose_superanimal_hrnet_w32.tflite` | Pose (39 kp) | GPU (OpenCL) | 1 | gpu | 4730.9 | 162.62 | 165.29 | 169.43 | **456.8** | **Disqualified (LMK risk)** |
+| **`face_dog_landmarks_384.tflite`** | Face (68 lm) | GPU (OpenCL) | 1 | gpu | 2077.3 | **157.43** | **158.46** | **165.72** | **138.9** | **Selected Winner** |
+| `face_dog_landmarks_384.tflite` | Face (68 lm) | CPU (XNNPACK) | 2 | big cores (c0) | 127.5 | 726.23 | 734.93 | 757.77 | 81.4 | Severe CPU load |
+| **`audio_yamnet.tflite`** | Audio | CPU (XNNPACK) | 2 | big cores (c0) | 22.5 | **3.76** | **3.75** | **3.84** | **11.9** | **Selected Winner** |
+| `audio_yamnet.tflite` | Audio | CPU (XNNPACK) | 2 | unpinned | 23.2 | 4.95 | 4.94 | 5.41 | 12.1 | Alternate |
+| `audio_yamnet.tflite` | Audio | GPU (OpenCL) | 1 | gpu | 1116.0 | 15.27 | 15.28 | 16.40 | 95.7 | Unnecessary GPU overhead |
 
 ---
 
 ## 2. Key Findings & Hardware Justifications
 
 ### 2.1 Object Detection: YOLOv26n INT8 Wins Decisively (Decision D1)
-- **Latency & CPU Utilization:** `det_yolo26n_320_int8` achieves **19.12 ms** median latency on 2 CPU threads. At the nominal 3 Hz detection cadence, the detector consumes only **5.7% of CPU capacity** (19 ms / 333 ms frame period).
+- **Latency & CPU Utilization:** `det_yolo26n_320_int8` achieves **19.06 ms** median latency on 2 CPU threads. At the nominal 3 Hz detection cadence, the detector consumes only **5.7% of CPU capacity** (18.9 ms / 333 ms frame period).
 - **Zero Post-Processing Overhead:** Unlike EfficientDet-Lite0 (which emits 19,206 anchor boxes requiring greedy NMS on host CPU taking milliseconds per frame), YOLOv26n uses an NMS-free direct box output with native bounding box regression.
 - **Footprint:** The model artifact is only **2.9 MB** with a runtime PSS delta of **21.2 MB**, easily fitting inside standard Dalvik memory limits.
 
 ### 2.2 Pose Estimation: RTMPose on Mali GPU Validated (Decision D3)
-- **LiteRT GPU Delegate Acceleration:** All 333 nodes of `pose_rtmpose_ap10k_litert.tflite` compile into a single OpenCL kernel partition on the ARM Mali-G57 MC2 GPU. Median latency is **63.75 ms** (65.48 ms p95).
-- **Cadence Feasibility:** Running pose at 6 Hz requires 382 ms per second (38.2% GPU load), leaving >60% GPU headroom for Android SurfaceFlinger UI rendering and face landmarking.
+- **LiteRT GPU Delegate Acceleration:** All 333 nodes of `pose_rtmpose_ap10k_litert.tflite` compile into a single OpenCL kernel partition on the ARM Mali-G57 MC2 GPU. Median latency is **63.60 ms** (66.14 ms p95).
+- **Cadence Feasibility:** Running pose at 6 Hz requires ~382 ms per second (38.2% GPU load), leaving >60% GPU headroom for Android SurfaceFlinger UI rendering and face landmarking.
 - **SuperAnimal HRNet Disqualification:** 
-  - On CPU, SuperAnimal takes **539.80 ms** per frame (>5× over budget for 10 Hz, >2.5× over budget for 5 Hz).
-  - On GPU, SuperAnimal takes 164.1 ms and allocates **455.4 MB PSS**, which would trigger Android LowMemoryKiller (LMK) on 3.7 GB RAM target devices with a 256 MB per-app heap limit.
-- **CPU Fallback:** If GPU delegate fails, RTMPose runs on CPU standard reference (`--use_xnnpack=false`) at 329.26 ms median latency (~3 Hz fallback).
+  - On CPU, SuperAnimal takes **548.96 ms** per frame (>5× over budget for 10 Hz, >2.5× over budget for 5 Hz).
+  - On GPU, SuperAnimal takes 162.62 ms and allocates **456.8 MB PSS**, which would trigger Android LowMemoryKiller (LMK) on 3.7 GB RAM target devices with a 256 MB per-app heap limit.
+- **CPU Fallback:** If GPU delegate fails, RTMPose runs on CPU standard reference (`--use_xnnpack=false`) at 355.46 ms median latency (~2–3 Hz fallback).
 
 ### 2.3 Audio Event Detection: YAMNet on CPU (Decision D2)
-- **Instant Inference:** `audio_yamnet.tflite` takes only **3.75 ms** on CPU (XNNPACK 2 threads) with a tiny **11.5 MB PSS** footprint.
+- **Instant Inference:** `audio_yamnet.tflite` takes only **3.75 ms** median on CPU (XNNPACK, 2 threads pinned to big cores) with a tiny **11.9 MB PSS** footprint.
 - **Energy Efficiency:** Running YAMNet every 500 ms consumes less than 0.8% of CPU cycles, eliminating the need to degrade to an energy-based voice activity detection fallback.
 
 ### 2.4 Face Landmark Estimation: GPU Batching
-- `face_dog_landmarks_384.tflite` executes in **150.05 ms** on GPU OpenCL vs 674.43 ms on CPU.
+- `face_dog_landmarks_384.tflite` executes in **158.46 ms** median on GPU OpenCL vs 734.93 ms on CPU.
 - Invoking face landmarks at a low cadence (1 Hz) on GPU consumes only 15% of GPU duty cycle.
 
 ---
@@ -90,17 +94,25 @@ Simulating the nominal concurrent workload:
 2. **Frequency Stability:** Big cores (`cpu6-7`) maintained their peak 2.2 GHz frequency without downclocking.
 3. **Battery Temperature Delta:** Battery temperature rose only **+1.2°C** (from 26.7°C to 27.9°C), peaking briefly at 28.4°C. The device remained cool to the touch and safely below Android's 43.0°C skin throttle threshold.
 
+> **Validity note (2026-10-04):** in `out/sustained_thermal.log` the `cpu_temp_c`
+> (50.79) and `gpu_temp_c` (50.774) columns are bit-identical across all 59 rows —
+> that thermal zone is returning a cached value, not live silicon temperature, so
+> conclusions 1–3 rest on thermal *status*, big-core frequency and battery temp
+> (all live columns), not on the CPU/GPU sensor columns. Re-measure with a live
+> sensor (`dumpsys thermalservice` cross-checked against a plausibility-checked sysfs node)
+> with the concurrent workload confirmed running before citing temps.
+
 ---
 
 ## 4. Revised Latency & Memory Budget (§1.1 Updated)
 
 | Pipeline Component | Target Cadence | Execution Target | Measured Latency (p50 / p95) | Measured PSS Delta | Duty Cycle / Allocation |
 |:---|:---:|:---|:---:|:---:|:---:|
-| **YOLOv26n INT8** | 3 Hz | CPU (2 threads XNNPACK) | 19.1 ms / 19.4 ms | 21.2 MB | 5.7% of CPU capacity |
-| **RTMPose AP-10K** | 6 Hz | GPU (LiteRT OpenCL) | 63.8 ms / 65.5 ms | 214.1 MB | 38.2% of GPU capacity |
-| **DogFLW Landmarks** | 1 Hz | GPU (LiteRT OpenCL) | 151.5 ms / 164.1 ms | 136.6 MB | 15.1% of GPU capacity |
-| **YAMNet Audio** | 2 Hz | CPU (2 threads XNNPACK) | 3.8 ms / 3.8 ms | 11.9 MB | 0.8% of CPU capacity |
-| **Total System Load** | — | **Heterogeneous (CPU+GPU)** | — | **~383.8 MB** | **Safe (< 15% Battery/hr)** |
+| **YOLOv26n INT8** | 3 Hz | CPU (2 threads XNNPACK) | 18.9 ms / 20.0 ms | 21.4 MB | 5.7% of CPU capacity |
+| **RTMPose AP-10K** | 6 Hz | GPU (LiteRT OpenCL) | 63.6 ms / 66.1 ms | 212.4 MB | 38.2% of GPU capacity |
+| **DogFLW Landmarks** | 1 Hz | GPU (LiteRT OpenCL) | 158.5 ms / 165.7 ms | 138.9 MB | 15.9% of GPU capacity |
+| **YAMNet Audio** | 2 Hz | CPU (2 threads XNNPACK, big cores) | 3.8 ms / 3.8 ms | 11.9 MB | 0.8% of CPU capacity |
+| **Total System Load** | — | **Heterogeneous (CPU+GPU)** | — | **~384.6 MB** | **Safe (< 15% Battery/hr)** |
 
 ---
 

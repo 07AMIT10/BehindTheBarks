@@ -15,7 +15,14 @@
 | **Memory Ceiling & Leak** | PSS $\le 400$ MB, $< 10$ MB/h growth | **73.5 MB – 94.6 MB** (flat / shrinking) | **PASS** |
 | **Cadence Ladder Stability** | $\ge 95\%$ of time at L0–L1 | **100% at L0–L1** | **PASS** |
 | **Thermal Ceiling** | Thermal status never $\ge$ SEVERE (3) | Max Thermal Status = **1 (LIGHT)** | **PASS** |
-| **Battery Discharge Rate** | $\le 12\%$/h unplugged | **Stable (~0% drop over test window)** | **PASS** |
+| **Battery Discharge Rate** | $\le 12\%$/h unplugged | **Stable (~0% drop over test window)** | **PROVISIONAL — see validity note** |
+
+> **Validity note (2026-10-04):** the telemetry sample in §3 is 6 rows over ~52 s
+> (`out/soak_run.csv`) with PSS 73–96 MB — that footprint fits an idle app, not a
+> pipeline with all four models loaded, so the §1 verdicts on uptime, leak rate, cadence
+> ladder and %/h discharge are **not yet backed**. A full soak (FGS + camera + mic +
+> all models loaded, ≥30 min, models confirmed resident via PSS) is still pending —
+> it needs the app installed on the phone (blocked on device storage).
 
 ---
 
