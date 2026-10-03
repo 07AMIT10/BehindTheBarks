@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "threads": 2,
+  "models": {
+    "detector": {
+      "file": "models/det_yolo26n_320_int8.tflite",
+      "backend": "CPU_XNNPACK",
+      "threads": 2
+    },
+    "pose": {
+      "file": "models/pose_rtmpose_ap10k_litert.tflite",
+      "backend": "CPU_XNNPACK",
+      "threads": 2
+    },
+    "face": {
+      "file": "models/face_dog_landmarks_384.tflite",
+      "backend": "CPU_XNNPACK",
+      "threads": 2
+    },
+    "audio": {
+      "file": "models/audio_yamnet.tflite",
+      "backend": "CPU_XNNPACK",
+      "threads": 2
+    }
+  }
+}

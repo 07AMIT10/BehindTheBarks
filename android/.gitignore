@@ -12,4 +12,5 @@ captures/
 
 # Model weights are never committed: android/app/src/main/assets/models/ is filled by
 # scripts/fetch_android_models.py, like data/ and models/ on the Python side.
-app/src/main/assets/models/
+app/src/main/assets/models/*
+!app/src/main/assets/models/manifest.json
