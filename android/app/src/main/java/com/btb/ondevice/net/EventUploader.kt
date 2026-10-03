@@ -226,6 +226,9 @@ class EventUploader(
     }
 
     private fun handleFailure(t: Throwable) {
+        try {
+            android.util.Log.e("EventUploader", "WebSocket failed ($serverUrl): ${t.message}", t)
+        } catch (_: Throwable) {}
         pingJob?.cancel()
         synchronized(lock) {
             webSocket = null

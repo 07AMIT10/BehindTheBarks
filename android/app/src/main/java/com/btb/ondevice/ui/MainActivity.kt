@@ -18,6 +18,7 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.btb.ondevice.capture.MonitorService
@@ -26,11 +27,12 @@ import com.btb.ondevice.net.ConnectionState
 
 class MainActivity : Activity() {
 
+    private lateinit var previewView: PreviewView
+    private lateinit var overlayView: DebugOverlayView
     private lateinit var urlEditText: EditText
     private lateinit var deviceEditText: EditText
     private lateinit var statusTextView: TextView
     private lateinit var toggleButton: Button
-    private lateinit var overlayView: DebugOverlayView
 
     private var monitorService: MonitorService? = null
     private var isBound = false
@@ -41,6 +43,9 @@ class MainActivity : Activity() {
             val binder = service as? MonitorService.LocalBinder
             monitorService = binder?.service
             isBound = true
+
+            // Attach Camera viewfinder to PreviewView
+            monitorService?.attachCameraPreview(previewView.surfaceProvider)
 
             monitorService?.setListener(object : MonitorServiceListener {
                 override fun onStateUpdate(overlayState: OverlayState) {
@@ -55,7 +60,7 @@ class MainActivity : Activity() {
                         when (state) {
                             ConnectionState.CONNECTED -> statusTextView.setTextColor(Color.GREEN)
                             ConnectionState.CONNECTING -> statusTextView.setTextColor(Color.YELLOW)
-                            else -> statusTextView.setTextColor(Color.LTGRAY)
+                            else -> statusTextView.setTextColor(Color.parseColor("#FF5252"))
                         }
                     }
                 }
@@ -71,23 +76,30 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Root container: FrameLayout with Camera Preview / Overlay on bottom, controls on top
+        // Root container: FrameLayout with Camera Preview on bottom, Overlay in middle, controls on top
         val root = FrameLayout(this).apply {
             layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             setBackgroundColor(Color.BLACK)
         }
 
-        // 1. Overlay View (fills screen)
+        // 1. Camera Viewfinder (fills screen)
+        previewView = PreviewView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+            scaleType = PreviewView.ScaleType.FIT_CENTER
+        }
+        root.addView(previewView)
+
+        // 2. Overlay View (fills screen, transparent background)
         overlayView = DebugOverlayView(this).apply {
             layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
         }
         root.addView(overlayView)
 
-        // 2. Controls layout (vertical panel at top)
+        // 3. Controls layout (vertical panel at top)
         val controls = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(32, 48, 32, 32)
-            setBackgroundColor(Color.argb(160, 20, 20, 20))
+            setPadding(32, 48, 32, 24)
+            setBackgroundColor(Color.argb(170, 20, 20, 20))
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -98,36 +110,65 @@ class MainActivity : Activity() {
         val title = TextView(this).apply {
             text = "Behind The Barks - On-Device Perception"
             setTextColor(Color.WHITE)
-            textSize = 18f
-            setPadding(0, 0, 0, 16)
+            textSize = 17f
+            setPadding(0, 0, 0, 12)
         }
         controls.addView(title)
 
         urlEditText = EditText(this).apply {
             hint = "Server WebSocket URL"
-            setText("ws://10.0.2.2:8000/ingest-events")
+            setText("ws://127.0.0.1:8000/ingest-events")
             setTextColor(Color.WHITE)
             setHintTextColor(Color.GRAY)
-            setBackgroundColor(Color.argb(100, 50, 50, 50))
-            setPadding(16, 16, 16, 16)
+            setBackgroundColor(Color.argb(120, 60, 60, 60))
+            setPadding(16, 12, 16, 12)
         }
         controls.addView(urlEditText)
 
+        // Preset buttons row for quick 1-tap configuration
+        val presetsLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 8, 0, 8)
+        }
+
+        val usbPreset = Button(this).apply {
+            text = "USB (127.0.0.1)"
+            textSize = 11f
+            setBackgroundColor(Color.parseColor("#37474F"))
+            setTextColor(Color.WHITE)
+            setOnClickListener {
+                urlEditText.setText("ws://127.0.0.1:8000/ingest-events")
+            }
+        }
+        presetsLayout.addView(usbPreset, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = 8 })
+
+        val wifiPreset = Button(this).apply {
+            text = "Wi-Fi (192.168.1.74)"
+            textSize = 11f
+            setBackgroundColor(Color.parseColor("#37474F"))
+            setTextColor(Color.WHITE)
+            setOnClickListener {
+                urlEditText.setText("ws://192.168.1.74:8000/ingest-events")
+            }
+        }
+        presetsLayout.addView(wifiPreset, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        controls.addView(presetsLayout)
+
         deviceEditText = EditText(this).apply {
             hint = "Device Name"
-            setText(Build.MODEL)
+            setText("Galaxy-A07")
             setTextColor(Color.WHITE)
             setHintTextColor(Color.GRAY)
-            setBackgroundColor(Color.argb(100, 50, 50, 50))
-            setPadding(16, 16, 16, 16)
+            setBackgroundColor(Color.argb(120, 60, 60, 60))
+            setPadding(16, 12, 16, 12)
         }
         controls.addView(deviceEditText)
 
         statusTextView = TextView(this).apply {
             text = "Status: Idle"
             setTextColor(Color.LTGRAY)
-            textSize = 14f
-            setPadding(0, 16, 0, 16)
+            textSize = 13f
+            setPadding(0, 8, 0, 8)
         }
         controls.addView(statusTextView)
 
@@ -201,11 +242,12 @@ class MainActivity : Activity() {
         isMonitoring = true
         toggleButton.text = "Stop Monitoring"
         toggleButton.setBackgroundColor(Color.parseColor("#FF1744"))
-        statusTextView.text = "Status: Starting service..."
+        statusTextView.text = "Status: Connecting to $url..."
     }
 
     private fun stopMonitoringService() {
         if (isBound) {
+            monitorService?.detachCameraPreview()
             monitorService?.setListener(null)
             unbindService(serviceConnection)
             isBound = false
@@ -225,6 +267,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         if (isBound) {
+            monitorService?.detachCameraPreview()
             unbindService(serviceConnection)
             isBound = false
         }
