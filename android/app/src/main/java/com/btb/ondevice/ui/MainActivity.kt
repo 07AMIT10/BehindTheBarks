@@ -151,7 +151,18 @@ class MainActivity : Activity() {
                 urlEditText.setText("ws://192.168.1.74:8000/ingest-events")
             }
         }
-        presetsLayout.addView(wifiPreset, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        presetsLayout.addView(wifiPreset, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = 8 })
+
+        val cloudPreset = Button(this).apply {
+            text = "Cloud WSS"
+            textSize = 11f
+            setBackgroundColor(Color.parseColor("#1565C0"))
+            setTextColor(Color.WHITE)
+            setOnClickListener {
+                urlEditText.setText("wss://annually-moment-most-racial.trycloudflare.com/ingest-events")
+            }
+        }
+        presetsLayout.addView(cloudPreset, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         controls.addView(presetsLayout)
 
         deviceEditText = EditText(this).apply {
