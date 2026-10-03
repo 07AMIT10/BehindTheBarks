@@ -353,17 +353,66 @@ cmd_baseline() {
     log_ok "Baseline measurement complete! Log written to ${log_file}"
 }
 
+cmd_soak() {
+    check_adb
+    local duration_min="${1:-60}"
+    local duration_s=$((duration_min * 60))
+
+    log_info "Starting soak test for ${duration_min} minutes on com.btb.ondevice..."
+    local log_file="${OUT_DIR}/soak_run.csv"
+    echo "elapsed_s,pid,pss_kb,battery_pct,batt_temp_c,thermal_status" > "${log_file}"
+
+    local start_time
+    start_time=$(date +%s)
+    local end_time=$((start_time + duration_s))
+    local initial_batt
+    initial_batt=$(adb shell dumpsys battery | grep "^\s*level:" | head -n 1 | awk '{print $2}' | tr -d '\r')
+
+    while [ "$(date +%s)" -lt "${end_time}" ]; do
+        local elapsed=$(( $(date +%s) - start_time ))
+        local pid
+        pid=$(adb shell pidof com.btb.ondevice 2>/dev/null | tr -d '\r' || echo "")
+        
+        if [ -z "${pid}" ]; then
+            log_err "Process com.btb.ondevice is NOT running! Restarting or exiting..."
+        fi
+
+        local pss_kb
+        pss_kb=$(adb shell dumpsys meminfo com.btb.ondevice 2>/dev/null | grep "TOTAL PSS:" | awk '{print $3}' | tr -d '\r' || echo "0")
+        pss_kb=$(echo "${pss_kb}" | grep -E "^[0-9]+$" || echo "0")
+        local pss_mb
+        pss_mb=$(awk "BEGIN {printf \"%.1f\", ${pss_kb:-0}/1024}")
+
+        local batt_level
+        batt_level=$(adb shell dumpsys battery | grep "^\s*level:" | head -n 1 | awk '{print $2}' | tr -d '\r')
+        local batt_temp_raw
+        batt_temp_raw=$(adb shell dumpsys battery | grep "^\s*temperature:" | head -n 1 | awk '{print $2}' | tr -d '\r')
+        local batt_temp
+        batt_temp=$(awk "BEGIN {printf \"%.1f\", ${batt_temp_raw:-0}/10}")
+        local th_status
+        th_status=$(adb shell dumpsys thermalservice 2>/dev/null | grep "Thermal Status:" | awk '{print $3}' | tr -d '\r' || echo "0")
+
+        echo "${elapsed},${pid:-0},${pss_kb:-0},${batt_level:-0},${batt_temp},${th_status}" >> "${log_file}"
+        printf "t=%4ds | PID=%-6s | PSS=%6.1f MB | Battery=%3s%% | Temp=%5.1f°C | ThermalStatus=%s\n" \
+            "${elapsed}" "${pid:-DEAD}" "${pss_mb}" "${batt_level}" "${batt_temp}" "${th_status}"
+        sleep 10
+    done
+
+    log_ok "Soak measurement complete! Results written to ${log_file}"
+}
+
 case "${1:-help}" in
     push) cmd_push ;;
     microbench) cmd_microbench ;;
     sustained) cmd_sustained "${2:-10}" ;;
     baseline) cmd_baseline "${2:-20}" ;;
+    soak) cmd_soak "${2:-60}" ;;
     all)
         cmd_push
         cmd_microbench
         ;;
     *)
-        echo "Usage: $0 {push|microbench|sustained [min]|baseline [min]|all}"
+        echo "Usage: $0 {push|microbench|sustained [min]|baseline [min]|soak [min]|all}"
         exit 1
         ;;
 esac
