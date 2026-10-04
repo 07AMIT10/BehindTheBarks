@@ -20,3 +20,5 @@ frontend/next-env.d.ts
 data/fallback/events/*.debug.mp4
 data/fallback/overlays/
 data/fallback/tuning/
+*.jks
+*.keystore

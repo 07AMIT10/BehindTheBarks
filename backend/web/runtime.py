@@ -165,7 +165,9 @@ class Runtime:
         if clip_id in self.demo_notified:
             return {"status": "dashboard_only", "duplicate": True}
         self.demo_notified.add(clip_id)
-        if self.cfg["web"]["demo"].get("telegram_first") and type(self.notifier).__name__ == "TelegramNotifier":
+        if self.cfg["web"]["demo"].get("telegram_first") and getattr(
+            self.notifier, "is_external", type(self.notifier).__name__ == "TelegramNotifier"
+        ):
             jpeg = self._latest_jpeg()
             res = await self.notifier.send(
                 EmotionState(ts=t, emotion="unknown", confidence=0.0, source="rules",

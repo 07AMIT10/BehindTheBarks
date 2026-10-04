@@ -163,7 +163,15 @@ web:
     openrouter_referer: http://localhost:3000
     openrouter_title: Behind The Barks
   notify:
-    mode: dashboard_only      # telegram | dashboard_only
+    mode: dashboard_only      # telegram | whatsapp | multi | dashboard_only
+    telegram:
+      token: ""               # or env TELEGRAM_BOT_TOKEN
+      chat_id: ""             # or env TELEGRAM_CHAT_ID
+    whatsapp:
+      token: ""               # or env WHATSAPP_TOKEN
+      phone_number_id: ""     # or env WHATSAPP_PHONE_NUMBER_ID
+      recipient: ""           # or env WHATSAPP_RECIPIENT_PHONE
+      api_version: "v18.0"
   demo:
     manifest: data/fallback/manifest.json   # Person A's file; falls back to backend/demo/clips/manifest.json
     clips_dir: backend/demo/clips           # web-owned placeholder clips

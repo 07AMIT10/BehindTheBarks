@@ -26,10 +26,36 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            val keystorePath = System.getenv("BTB_KEYSTORE_PATH")
+                ?: project.findProperty("btbKeystorePath") as? String
+                ?: "release.jks"
+            val keystoreFile = file(keystorePath).let { if (it.isAbsolute) it else rootProject.file(keystorePath) }
+            if (keystoreFile.exists()) {
+                storeFile = keystoreFile
+                storePassword = System.getenv("BTB_KEYSTORE_PASSWORD")
+                    ?: project.findProperty("btbKeystorePassword") as? String
+                    ?: "behindthebarks"
+                keyAlias = System.getenv("BTB_KEY_ALIAS")
+                    ?: project.findProperty("btbKeyAlias") as? String
+                    ?: "btb_release"
+                keyPassword = System.getenv("BTB_KEY_PASSWORD")
+                    ?: project.findProperty("btbKeyPassword") as? String
+                    ?: "behindthebarks"
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            val releaseSigning = signingConfigs.findByName("release")
+            signingConfig = if (releaseSigning?.storeFile?.exists() == true) {
+                releaseSigning
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
         debug {
             isMinifyEnabled = false

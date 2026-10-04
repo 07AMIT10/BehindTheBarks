@@ -13,6 +13,8 @@ log = logging.getLogger("notify")
 
 
 class TelegramNotifier:
+    is_external: bool = True
+
     def __init__(self, token: str, chat_id: str, client: httpx.AsyncClient | None = None, timeout_s: float = 10.0,
                  profile: dict | None = None):
         self._profile = profile

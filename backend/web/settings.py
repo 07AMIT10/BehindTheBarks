@@ -27,7 +27,11 @@ WEB_DEFAULTS: dict[str, Any] = {
         "temperature": 0.2, "max_tokens": 200, "openrouter_referer": "http://localhost:3000",
         "openrouter_title": "Behind The Barks",
     },
-    "notify": {"mode": "dashboard_only"},
+    "notify": {
+        "mode": "dashboard_only",
+        "telegram": {"token": "", "chat_id": ""},
+        "whatsapp": {"token": "", "phone_number_id": "", "recipient": "", "api_version": "v18.0"},
+    },
     "demo": {"manifest": "data/fallback/manifest.json", "clips_dir": "backend/demo/clips", "telegram_first": False},
     "ingest": {"stale_s": 5.0, "status_every_s": 2.0, "fps_window_s": 3.0, "max_message_bytes": 2_000_000},
     "remote": {"stale_s": 2.0, "clock_samples": 5, "ping_every_s": 30.0, "max_skew_s": 60.0,
@@ -62,10 +66,23 @@ def load_config(path: str | Path = "config.yaml", env: Mapping[str, str] | None 
     cfg["web"]["demo_mode"] = _truthy(env.get("DEMO_MODE"))
     if env.get("WEB_PIPELINE"):
         cfg["web"]["pipeline"] = env["WEB_PIPELINE"].strip().lower()
+    notify = cfg["web"].setdefault("notify", {})
     if env.get("NOTIFY_MODE"):
-        cfg["web"]["notify"]["mode"] = env["NOTIFY_MODE"]
+        notify["mode"] = env["NOTIFY_MODE"]
     if cfg["web"]["demo_mode"]:
-        cfg["web"]["notify"]["mode"] = "dashboard_only"
+        notify["mode"] = "dashboard_only"
+    if env.get("TELEGRAM_BOT_TOKEN"):
+        notify.setdefault("telegram", {})["token"] = env["TELEGRAM_BOT_TOKEN"].strip()
+    if env.get("TELEGRAM_CHAT_ID"):
+        notify.setdefault("telegram", {})["chat_id"] = env["TELEGRAM_CHAT_ID"].strip()
+    if env.get("WHATSAPP_TOKEN") or env.get("WHATSAPP_API_TOKEN"):
+        notify.setdefault("whatsapp", {})["token"] = (env.get("WHATSAPP_TOKEN") or env.get("WHATSAPP_API_TOKEN", "")).strip()
+    if env.get("WHATSAPP_PHONE_NUMBER_ID") or env.get("WHATSAPP_PHONE_ID"):
+        notify.setdefault("whatsapp", {})["phone_number_id"] = (env.get("WHATSAPP_PHONE_NUMBER_ID") or env.get("WHATSAPP_PHONE_ID", "")).strip()
+    if env.get("WHATSAPP_RECIPIENT_PHONE") or env.get("WHATSAPP_RECIPIENT"):
+        notify.setdefault("whatsapp", {})["recipient"] = (env.get("WHATSAPP_RECIPIENT_PHONE") or env.get("WHATSAPP_RECIPIENT", "")).strip()
+    if env.get("WHATSAPP_API_VERSION"):
+        notify.setdefault("whatsapp", {})["api_version"] = env["WHATSAPP_API_VERSION"].strip()
     auth = cfg["web"].setdefault("auth", {})
     if env.get("BTB_AUTH_ENABLED") is not None:
         auth["enabled"] = _truthy(env.get("BTB_AUTH_ENABLED"))

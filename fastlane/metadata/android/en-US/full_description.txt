@@ -1,0 +1,34 @@
+WagWatch (Behind The Barks) turns any Android phone into an intelligent, contactless canine perception and well-being monitoring station.
+
+Using state-of-the-art edge AI, WagWatch reads your dog's emotional state in real time—without wearable collars, intrusive monitors, or privacy-invasive cloud video streaming.
+
+🐾 ZERO WEARABLES OR COLLARS
+Keep your dog completely comfortable. WagWatch operates entirely through ambient computer vision and acoustic perception, tracking emotional well-being from across the room.
+
+🧠 100% ON-DEVICE EDGE AI
+All neural models run locally on your phone using Google LiteRT (TFLite):
+• Dog Detection: High-speed YOLO26 bounding box tracking
+• Skeletal Pose: RTMPose AP-10K 17-point posture analysis (tail height, wag cadence, body lowering)
+• Facial Landmarks: DogFLW 46-point landmark tracking (mouth open ratio, ear neutral/back/alert positions)
+• Vocalization Analysis: Google YAMNet classifying barks, whimpers, yips, howls, and growls
+
+🌙 STATION DIM MODE
+Android smartphones forcefully terminate camera sessions when the hardware power button is pressed. WagWatch solves this with Station Dim Mode: an energy-saving black display at 0.01 brightness that keeps Camera HAL active while preventing AMOLED burn-in and keeping thermals cool for 24/7 monitoring.
+
+⚡ 1-SECOND QR PAIRING
+Point the phone's camera at your web dashboard's pairing QR code. The built-in pure Java ZXing decoder scans and establishes secure WebSocket telemetry instantly—zero manual IP entry needed.
+
+📊 REAL-TIME WEB DASHBOARD & DOWNLINKS
+Pair your phone with the WagWatch dashboard to unlock:
+• Live MJPEG video stream with real-time skeletal pose & bounding box overlays
+• Temporal emotion timeline (Happy, Excited, Relaxed, Anxious, Fearful, Aggressive)
+• Remote downlinks: trigger the flashlight/torch, flip between rear & selfie cameras, enable instant privacy mute slates, or play a treat-dispensing chime
+• Offline resilience: circular event spooling preserves telemetry across temporary network interruptions
+
+📲 INSTANT TELEGRAM & WHATSAPP ALERTS
+Receive instant push alerts with high-resolution photo snapshots directly on your Telegram or WhatsApp whenever your dog shows signs of distress, anxiety, or prolonged whimpering.
+
+🔒 PRIVACY-FIRST & OPEN SOURCE
+• Zero cloud video storage: Live video frames are processed in volatile RAM and immediately discarded.
+• Zero advertising or tracking SDKs: No Google Analytics, Firebase, or third-party telemetry.
+• Open source: All Kotlin, Python, and TypeScript code is fully auditable.
