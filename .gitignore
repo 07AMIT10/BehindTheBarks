@@ -22,3 +22,6 @@ data/fallback/overlays/
 data/fallback/tuning/
 *.jks
 *.keystore
+.agents/
+.cursorrules
+.mcp.json
