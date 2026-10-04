@@ -11,7 +11,7 @@
   <a href="https://github.com/07AMIT10/BehindTheBarks/releases/tag/v1.0.0-android"><img src="https://img.shields.io/badge/Release-v1.0.0--android-blue" alt="Release v1.0.0-android"></a>
   <img src="https://img.shields.io/badge/tests-467_passing-22c55e" alt="467 tests passing">
 
-  <p><a href="#why">Why</a> · <a href="#see-it-work">Demo</a> · <a href="#photos">Photos</a> · <a href="./docs/USER_ONBOARDING_GUIDE.md"><b>User Onboarding Guide</b></a> · <a href="https://github.com/07AMIT10/BehindTheBarks/releases/tag/v1.0.0-android"><b>Download APK</b></a> · <a href="#how-it-works">Architecture</a> · <a href="#run-it">Run it</a> · <a href="#team">Team</a></p>
+  <p><a href="#why">Why</a> · <a href="#see-it-work">Demo</a> · <a href="#photos">Photos</a> · <a href="./docs/USER_ONBOARDING_GUIDE.md"><b>User Onboarding Guide</b></a> · <a href="https://github.com/07AMIT10/BehindTheBarks/releases/tag/v1.0.0-android"><b>Download APK</b></a> · <a href="#how-it-works">Architecture</a> · <a href="#run-it">Run it</a></p>
 
 </div>
 
@@ -251,22 +251,13 @@ All 467 tests are automatically executed and verified on every push and PR via G
 <details>
 <summary>Credits and licence</summary>
 
+Originally built at **Claude Community Bangalore · Opus Build Day**, Creature Commons, 26–27 September 2026.
+
 Pretrained work: Ultralytics YOLO, DeepLabCut SuperAnimal-Quadruped, [`hugocornellier/dog-face-landmarks`](https://huggingface.co/hugocornellier/dog-face-landmarks) (DogFLW, **CC BY-NC 4.0, non-commercial**), and Google YAMNet / AudioSet. Fallback clips come from Pexels, Pixabay, ESC-50 and AudioSet, with the source and licence of each file in [`data/fallback/SOURCES.md`](./data/fallback/SOURCES.md).
 
 No licence has been chosen for this repo yet, so all rights are reserved.
 
 </details>
-
-## Team
-
-Built at **Claude Community Bangalore · Opus Build Day**, Creature Commons, 26–27 September 2026.
-
-<table>
-  <tr>
-    <td align="center" width="200"><a href="https://github.com/ComputerTech99"><img src="https://github.com/ComputerTech99.png" width="64" alt="Ojash Gupta's GitHub avatar"><br><b>Ojash Gupta</b></a><br><sub>Data: vision, audio, rules, fallback clips</sub></td>
-    <td align="center" width="200"><a href="https://github.com/07AMIT10"><img src="https://github.com/07AMIT10.png" width="64" alt="Amit's GitHub avatar"><br><b>Amit</b></a><br><sub>Full-Stack: Android edge station, Web, downlinks, push alerts</sub></td>
-  </tr>
-</table>
 
 ## Rubric map
 
