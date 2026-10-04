@@ -385,3 +385,66 @@ def test_config_overrides_defaults():
     fx = FeatureExtractor({"data": {"features": {"tail_height_scale": 0.2, "smooth": {"tail_height": 1.0}}}})
     ev = run(fx, [(body(tail_tip=(-30, 40)), None)] * 4)[-1]  # 40 px up = 0.2 body lengths = +1 at scale 0.2
     assert ev.features.tail_height == pytest.approx(1.0, abs=0.01)
+
+
+def test_features_fps_invariance_across_frame_rates():
+    # The same synthetic sinusoidal keypoint stream, sampled at 4, 6, 8 and 15 Hz,
+    # gives tail_height / mouth_open / body_lowering within 5 % of each other after 3 s.
+    fps_list = [4, 6, 8, 15]
+    results = {}
+    duration = 3.0  # 3 seconds as specified in plan
+
+    for fps in fps_list:
+        fx = make()
+        stand_n = int(6.0 * fps)
+        for i in range(stand_n):
+            t = i / fps
+            fx.update(t, det(bbox=(100, 100, 420, 400)), body(oy=0.0), None)
+
+        eval_n = int(duration * fps) + 1
+        last_ev = None
+        for i in range(eval_n):
+            t = 6.0 + i / fps
+            tip_y = 40.0 * np.sin(2 * np.pi * 0.2 * (t - 6.0))
+            k = body(tail_tip=(-30, tip_y), oy=60.0)
+            gap = 0.10 + 0.05 * np.sin(2 * np.pi * 0.2 * (t - 6.0))
+            lms = face_lms(gap=gap)
+            last_ev = fx.update(t, det(bbox=(100, 100, 420, 400)), k, lms)
+
+        results[fps] = {
+            "tail_height": last_ev.features.tail_height,
+            "mouth_open": last_ev.features.mouth_open,
+            "body_lowering": last_ev.features.body_lowering,
+        }
+
+    for feat in ("tail_height", "mouth_open", "body_lowering"):
+        vals = [results[fps][feat] for fps in fps_list]
+        assert all(v is not None for v in vals), f"{feat} has None: {vals}"
+        assert max(vals) - min(vals) <= 0.05, f"{feat} varies across fps: {results}"
+
+
+def test_motion_energy_fps_invariance_with_jitter():
+    # motion_energy is within 10 % at 5 Hz vs 10 Hz for identical true motion plus fixed-σ jitter.
+    duration = 3.0
+    speed = 0.5  # bl / s
+    sigma = 2.0  # px jitter
+
+    results = {}
+    for fps in (5, 10):
+        fx = make()
+        rng = np.random.default_rng(42)
+        n = int(duration * fps)
+        last_ev = None
+        for i in range(n):
+            t = i / fps
+            dx = speed * BODY * t
+            k = body(ox=dx, nose=(300, 130), left_front_paw=(250, 300), left_back_paw=(80, 300))
+            for name in ("nose", "withers", "hip", "left_front_paw", "left_back_paw"):
+                x, y, c = k[name]
+                k[name] = (x + rng.normal(0, sigma), y + rng.normal(0, sigma), c)
+            last_ev = fx.update(t, det(), k, None)
+        results[fps] = last_ev.features.motion_energy
+
+    assert results[5] is not None and results[10] is not None
+    assert abs(results[5] - results[10]) <= 0.10, f"motion_energy diverges at 5Hz vs 10Hz: {results}"
+

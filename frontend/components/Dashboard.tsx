@@ -7,6 +7,7 @@ import { serverNow } from "@/lib/store";
 import { spanAt } from "@/lib/timeline";
 import { useBackend } from "@/lib/useBackend";
 import { useNow } from "@/lib/useNow";
+import AuthModal from "./AuthModal";
 import ClipList from "./ClipList";
 import DemoBanner from "./DemoBanner";
 import DemoPlayer from "./DemoPlayer";
@@ -21,10 +22,22 @@ import Timeline from "./Timeline";
 import ToastStack from "./ToastStack";
 import TreatButton from "./TreatButton";
 import VideoPanel from "./VideoPanel";
+import PairingModal from "./PairingModal";
 
 export default function Dashboard() {
   const backend = useBackend(); // backend.readAll / backend.http are used by Tasks 6 and 8
-  const { state, treat, setMode } = backend;
+  const {
+    state,
+    treat,
+    setMode,
+    token,
+    authRequired,
+    authenticated,
+    verifyPin,
+    logout,
+    privacyMode,
+    setPrivacy,
+  } = backend;
   const nowMs = useNow(1000);
   const nowSec = serverNow(state, nowMs);
   const projector = useMemo(() => new URLSearchParams(window.location.search).get("size") === "projector", []);
@@ -38,6 +51,7 @@ export default function Dashboard() {
   const [treatFlash, setTreatFlash] = useState(false);
   const [selectedSpan, setSelectedSpan] = useState<number | null>(null);
   const [demoClip, setDemoClip] = useState<ClipMeta | null>(null);
+  const [isPairingOpen, setIsPairingOpen] = useState(false);
   const mode = state.status?.mode ?? "live";
   const demo = mode === "demo";
   const viewMoment = useCallback((ts: number) => {
@@ -70,6 +84,30 @@ export default function Dashboard() {
     <div className={projector ? "projector" : undefined}>
       <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-4 px-4 pb-28 pt-3 lg:gap-5 lg:p-8">
         <Header dogName={profile.dog_name} location={profile.location}>
+          <button
+            type="button"
+            onClick={() => setIsPairingOpen(true)}
+            title="Pair Phone Station"
+            className="flex h-9 items-center gap-1.5 px-3 rounded-lg border border-accent/40 bg-accent/10 text-accent hover:bg-accent/20 text-xs font-semibold transition-colors"
+          >
+            <span>📱</span>
+            <span className="hidden sm:inline">
+              {state.status?.phone?.connected ? "Station Paired" : "Pair Phone"}
+            </span>
+          </button>
+          {token && (
+            <button
+              type="button"
+              onClick={logout}
+              title="Lock Dashboard / Sign out"
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+            </button>
+          )}
           <ThemeToggle />
           <NotificationsBell notifications={state.notifications} dogName={profile.dog_name} onOpen={backend.readAll} />
         </Header>
@@ -91,8 +129,17 @@ export default function Dashboard() {
           <>
           <div className="grid gap-4 [grid-template-areas:'card'_'video'_'signals'] lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:grid-rows-[auto_auto_1fr] lg:gap-6 lg:[grid-template-areas:'video_card'_'video_treat'_'video_signals']">
             <div className="min-h-[216px] [grid-area:video] lg:min-h-[480px]">
-              <VideoPanel http={backend.http} frame={state.frame} nowSec={nowSec} location={profile.location}
-                paused={paused} lastDogTs={state.lastDogTs} />
+              <VideoPanel
+                http={backend.http}
+                frame={state.frame}
+                nowSec={nowSec}
+                location={profile.location}
+                paused={paused}
+                lastDogTs={state.lastDogTs}
+                privacyMode={privacyMode}
+                onTogglePrivacy={() => void setPrivacy()}
+                token={token}
+              />
             </div>
             <div className="[grid-area:card]">
               <EmotionCard current={state.current} currentSince={state.currentSince} lastEmotionAt={state.lastEmotionAt}
@@ -113,6 +160,14 @@ export default function Dashboard() {
           </>
         )}
       </div>
+      <AuthModal isOpen={authRequired && !authenticated} onVerify={verifyPin} />
+      <PairingModal
+        isOpen={isPairingOpen}
+        onClose={() => setIsPairingOpen(false)}
+        token={token}
+        phoneConnected={state.status?.phone?.connected}
+        deviceName={state.status?.phone?.device}
+      />
       {!demo && (
         <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-bg/90 p-3 backdrop-blur lg:hidden"
           style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}>

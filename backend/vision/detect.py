@@ -13,6 +13,8 @@ in where the dog actually is.
 from __future__ import annotations
 
 import argparse
+import logging
+import math
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -21,6 +23,8 @@ from typing import Any
 
 import cv2
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 BBox = tuple[float, float, float, float]
 
@@ -31,6 +35,13 @@ class Detection:
     conf: float
     in_feeding_zone: bool
     raw_bbox: BBox  # unsmoothed detector output
+
+
+@dataclass(frozen=True)
+class _BoxesAdapter:
+    xyxy: np.ndarray
+    conf: np.ndarray
+    cls: np.ndarray
 
 
 def point_in_zone(point: tuple[float, float], zone_norm: list[list[float]], frame_shape: tuple[int, ...]) -> bool:
@@ -78,8 +89,22 @@ class DogDetector:
         d = data.get("detect", {})
         self.conf = d.get("conf", 0.25)
         self.imgsz = d.get("imgsz", 640)
-        self.alpha = d.get("ema_alpha", 0.5)  # weight of the newest box
-        self.reset_after = d.get("ema_reset_misses", 8)  # frames without a dog before smoothing restarts
+        self.alpha = float(d.get("ema_alpha", 0.5))  # weight of newest box at 8 fps
+        if "ema_reset_s" in d:
+            self.reset_after_s = float(d["ema_reset_s"])
+        elif "ema_reset_misses" in d:
+            self.reset_after_s = float(d["ema_reset_misses"]) / 8.0
+            logger.info("Converted legacy detect.ema_reset_misses (%s) to detect.ema_reset_s (%.3f)",
+                        d["ema_reset_misses"], self.reset_after_s)
+        else:
+            self.reset_after_s = 1.0  # default 8/8 fps = 1.0 s
+        self.reset_after = d.get("ema_reset_misses", int(round(self.reset_after_s * 8.0)))
+
+        if "ema_tau_s" in d:
+            self.tau_s = float(d["ema_tau_s"])
+        else:
+            self.tau_s = -0.125 / math.log(1.0 - self.alpha) if 0.0 < self.alpha < 1.0 else 0.0
+
         self.pad = d.get("crop_pad", 0.15)
         self.anchor = d.get("zone_anchor", "bottom_center")
         if self.anchor not in ("bottom_center", "center"):
@@ -87,23 +112,37 @@ class DogDetector:
         self.zone = data["feeding_zone"]
         self.device = device or pick_device()
 
+        self.backend = d.get("backend", "ultralytics")
+
         owns_model = model is None
         if owns_model:
-            from ultralytics import YOLO
-            from ultralytics.utils.downloads import attempt_download_asset
+            if self.backend in ("tflite", "onnx"):
+                from backend.vision.mobile_runners import MobileDetector
+                model_path = d.get("model")
+                self.mobile_detector = MobileDetector(model_path=model_path)
+                self.model = None
+                self.dog_ids = [self.mobile_detector.dog_class]
+            else:
+                from ultralytics import YOLO
+                from ultralytics.utils.downloads import attempt_download_asset
 
-            path = Path(d.get("model", "models/yolo11s.pt"))
-            path.parent.mkdir(parents=True, exist_ok=True)
-            if not path.exists():
-                attempt_download_asset(path)  # one-off download; offline afterwards
-            model = YOLO(str(path))
-        self.model = model
-        self.dog_ids = [int(i) for i, n in model.names.items() if n == "dog"]
+                path = Path(d.get("model", "models/yolo11s.pt"))
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if not path.exists():
+                    attempt_download_asset(path)  # one-off download; offline afterwards
+                model = YOLO(str(path))
+                self.model = model
+                self.dog_ids = [int(i) for i, n in model.names.items() if n == "dog"]
+        else:
+            self.model = model
+            self.dog_ids = [int(i) for i, n in model.names.items() if n == "dog"]
         if not self.dog_ids:
             raise ValueError("model has no 'dog' class")
 
         self._smoothed: BBox | None = None
         self._misses = 0
+        self._last_ts: float | None = None
+        self._last_dog_ts: float | None = None
         self.latencies_ms: deque[float] = deque(maxlen=200)
         self.first_call_ms: float | None = None  # new input shapes make MPS recompile; kept out of stats
         self._warmed = owns_model
@@ -113,12 +152,15 @@ class DogDetector:
     # -- inference ---------------------------------------------------------------------------
 
     def _infer(self, frame: np.ndarray):
+        if self.backend in ("tflite", "onnx"):
+            boxes, scores, classes = self.mobile_detector.predict_raw(frame)
+            return _BoxesAdapter(boxes, scores, classes)
         results = self.model(
             frame, classes=self.dog_ids, conf=self.conf, imgsz=self.imgsz, device=self.device, verbose=False
         )
         return results[0].boxes
 
-    def detect(self, frame: np.ndarray) -> Detection | None:
+    def detect(self, frame: np.ndarray, ts: float | None = None) -> Detection | None:
         """Best dog in the frame (highest confidence, ties broken by larger area), or None."""
         t = time.perf_counter()
         boxes = self._infer(frame)
@@ -128,28 +170,43 @@ class DogDetector:
         else:
             self.latencies_ms.append(ms)
 
+        explicit_ts = ts is not None
+        if ts is None:
+            ts = 0.0 if self._last_ts is None else self._last_ts + 0.125
+        dt = max(ts - self._last_ts, 0.0) if self._last_ts is not None else 0.125
+
         xyxy, conf, cls = _to_np(boxes.xyxy), _to_np(boxes.conf), _to_np(boxes.cls)
         keep = [i for i in range(len(conf)) if int(cls[i]) in self.dog_ids]
         if not keep:
             self._misses += 1
-            if self._misses >= self.reset_after:
+            if self._last_dog_ts is not None and (ts - self._last_dog_ts) >= self.reset_after_s:
                 self._smoothed = None
+            elif self._last_dog_ts is None and not explicit_ts and self._misses >= self.reset_after:
+                self._smoothed = None
+            self._last_ts = ts
             return None
         # Confidences within 0.005 count as equal, so two near-identical boxes resolve to the bigger one.
         best = max(keep, key=lambda i: (round(float(conf[i]), 2), (xyxy[i][2] - xyxy[i][0]) * (xyxy[i][3] - xyxy[i][1])))
         raw = tuple(float(v) for v in xyxy[best])
+        if self._last_dog_ts is not None and (ts - self._last_dog_ts) >= self.reset_after_s:
+            self._smoothed = None
         self._misses = 0
-        bbox = self._smooth(raw)
+        self._last_dog_ts = ts
+        bbox = self._smooth(raw, dt)
+        self._last_ts = ts
         x1, y1, x2, y2 = bbox
         anchor = ((x1 + x2) / 2, y2 if self.anchor == "bottom_center" else (y1 + y2) / 2)
         return Detection(bbox, float(conf[best]), point_in_zone(anchor, self.zone, frame.shape), raw)
 
-    def _smooth(self, raw: BBox) -> BBox:
+    def _smooth(self, raw: BBox, dt: float = 0.125) -> BBox:
         prev = self._smoothed
         if prev is None or _iou(prev, raw) < 0.1:  # first box, or a different dog/jump: don't drag
             self._smoothed = raw
         else:
-            a = self.alpha
+            if self.tau_s > 0.0 and dt > 0.0:
+                a = 1.0 - math.exp(-dt / self.tau_s)
+            else:
+                a = self.alpha
             self._smoothed = tuple(a * n + (1 - a) * o for n, o in zip(raw, prev))  # type: ignore[assignment]
         return self._smoothed
 

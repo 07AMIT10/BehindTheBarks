@@ -18,7 +18,11 @@ Build window: 2 days. Demo: live camera, with a pre-recorded fallback that must 
 - **Components talk only through the JSON contracts below.** Change a contract only after agreeing on it
   with whoever consumes it, and update this file in the same commit.
 - **Emotion labels come from the fixed vocabulary below.** Nothing else reaches the dashboard.
-- **No native mobile app.** Notifications go through a Telegram bot (web push only if time allows).
+- **The only native mobile app allowed is the on-device event producer** (`android/`: a Kotlin Android app that
+  runs the whole perception stack on the phone and streams the JSON contracts below to `/ingest-events`).
+  It may not change a contract, and while it exists the browser `/camera` page (`/ingest`, server inference)
+  and the server pipeline stay in place as the fallback path — neither may be deleted in the same phase.
+  Notifications still go through a Telegram bot (web push only if time allows).
 - Feature freeze: early afternoon of day 2. After that, only bug fixes and rehearsal.
 
 ## Architecture
@@ -77,10 +81,15 @@ Build window: 2 days. Demo: live camera, with a pre-recorded fallback that must 
     dashboard.py       dashboard-only notifier ("would send to owner")
     telegram.py
   /web                 Web runtime (Person B): settings.py, hub.py (WS fan-out), event_log.py, runtime.py (wiring)
+    ingest.py          /ingest browser-phone protocol (hello, binary dispatch, fps meter)
+    ingest_events.py   /ingest-events on-device phone protocol (JSON envelopes, clock rebasing)
+    remote_pipeline.py RemotePipeline: the Pipeline interface for web.pipeline: remote
   /demo
     mock_pipeline.py   scripted MockPipeline (same interface as Pipeline)
     cache/             pre-computed LLM responses for fallback clips
 /frontend              Next.js dashboard + /camera page (phone as camera)
+/android               Kotlin Android app: perception on-device, streams events to /ingest-events
+  app/src/main/assets/models/   git-ignored; filled by scripts/fetch_android_models.py (weights, never committed)
 /data
   fallback/            stock clips + audio used for the offline demo
 /config.yaml           source, thresholds, cooldowns, demo_mode flag
@@ -153,6 +162,71 @@ Backup live source: a phone IP-camera app feeding the `stream` source (no extra 
 - **/ingest close codes:** `4400` bad hello, `4408` replaced by a newer phone after going quiet, `4409` another phone is already streaming.
 - **Disconnects:** no frame for > 2 s → the source reports `stalled`, the rules go to `unknown`, and
   everything recovers automatically when frames resume. No restart needed.
+- **On-device variant:** when the perception runs on the phone instead of the backend, see
+  **On-device phone (event sink)** below.
+
+## On-device phone (event sink)
+
+The on-device path inverts the division of labour: an Android app runs detection → tracking → pose →
+face → audio → features → rules on the phone and the backend only receives the events it already
+speaks. The JSON contracts below do not change, so the dashboard, the LLM, the notifier and demo mode
+are untouched; only the producer of the envelopes moves. (Plan:
+   `docs/superpowers/plans/2026-10-02-android-ondevice-v2.md`. The "no native mobile app"
+   non-negotiable above was amended to allow exactly this app, as an event producer and nothing else.)
+- **Runtimes stay CPU-only.** LiteRT drags in vendor NPU libraries (Google `libedgetpu_litert.so`,
+  Qualcomm `libcdsprpc.so`, MediaTek `.mtk.so`) as unused manifest declarations; they are never loaded,
+  and the app must select the accelerator explicitly (CPU/XNNPACK), per "no NNAPI, no NPU code".
+
+- **Server role:** `web.pipeline: remote` (`backend/web/remote_pipeline.py`) — a `Pipeline`
+  implementation with **no models, no source and no watchdog**. Events arrive over the socket, preview
+  JPEGs feed `/video` and notification snapshots, and `status()` mirrors the phone's own metrics.
+  `WEB_PIPELINE=remote` or `make dev-backend-remote` selects it; `mock` and `real` are unchanged.
+- **Transport:** WebSocket `/ingest-events` on the backend (`backend/web/ingest_events.py`). One phone
+  at a time, shared with `/ingest` (a browser `/camera` phone and an on-device phone cannot run
+  together), and the same close codes as `/ingest`.
+  1. text hello: `{"type": "hello", "proto": 1, "device", "phone_time": <epoch s>, "models": {...},
+     "profile": "mobile"}` (`models`, `profile` and `proto` are optional; `phone_time` is seconds).
+     The server replies `{"type": "hello_ack", "server_time": <epoch s>}`.
+  2. text envelopes, the same `{"type": "frame" | "audio" | "rules" | "treat", "data": {...}}` shape
+     as `events/*.jsonl` and the dashboard feed. `data` is validated with the pydantic contract, so an
+     unknown key, a missing `ts` or a label outside the vocabulary is **counted in `status.phone.dropped`
+     and thrown away** — one bad envelope never closes the socket. A callback inside the Runtime that
+     raises (a full disk in the event log, for instance) costs that one envelope too, and the counters
+     only move for envelopes that were actually dispatched.
+  3. text `{"type": "ping", "phone_time": <epoch s>}` every `web.remote.ping_every_s` (30 s) →
+     `{"type": "pong", "server_time": ...}`. This keeps the clock offset fresh.
+  4. binary `0x01` + JPEG preview (≤ 2 fps, ~320 px long side, quality ~0.6). Stamped at server receipt
+     like `/ingest`; it feeds `pipeline.latest_frame_jpeg()`, not the rules.
+- **Clocks:** `data.ts` is the phone's clock and every other timer (`no_dog_unknown_s`, `llm_stale_s`,
+  cooldowns) compares against the server's. The server rebases `ts` by
+  `server_time_at_hello − phone_time`, refreshed by each ping as the **median of the last
+  `web.remote.clock_samples` (5) samples**, so one late ping cannot shift the whole stream. An envelope
+  whose rebased `ts` is further than `web.remote.max_skew_s` (60 s) from server receipt is counted as a
+  drop, not trusted: a buggy app sending milliseconds or a typo'd year would otherwise freeze
+  `no_dog_unknown_s`, `llm_stale_s` and the stall detector and leave the dashboard "live" for ever.
+  Raise `max_skew_s` (or re-stamp `ts` on flush) if the app ever spools events across a longer outage.
+- **Downlinks** (server → phone, on the same socket): `{"type": "treat", "data": {"ts",
+  "offset_s"}}` whenever the treat button fires, so the phone's rules see `treat_event_recent`.
+  **`data.ts` is on the phone's clock**, not the server's — the app must compare it against its own
+  clock, which is the whole point of the handshake — and `data.offset_s` (`server − phone`) is sent
+  with it so the app can verify the conversion; rebase its own clock by `offset_s` if it prefers to
+  stay on one clock. The phone must **not** re-send a treat it received: the phone's own `treat`
+  envelope comes back down as the downlink and would loop. `{"type": "config", "data": {"rules":
+  {...}}}` comes from `POST /phone/config` (with no body it sends the server's `data.rules`), so
+  retuning rules needs no APK rebuild. Each send has a `web.remote.downlink_timeout_s` (5 s) deadline:
+  a half-open socket is counted in `pipeline_status.downlinks_dropped` and the queue drains, so one
+  dead connection cannot silently swallow later treats and config pushes.
+- **/ingest-events close codes:** same as `/ingest` — `4400` bad hello, `4408` replaced by a newer
+  phone after `web.ingest.stale_s` of silence, `4409` another phone is already streaming. Close code
+  `1000` (the app's own Stop) forgets the phone; anything else leaves a disconnected card.
+- **Stalling:** no FrameEvent or preview for `web.remote.stale_s` (2 s) → `pipeline.status().state`
+  is `stalled`. There is no watchdog to inject "no dog" frames, so the Runtime's own no-dog path takes
+  the label to `unknown` after `web.state.no_dog_unknown_s` and recovers by itself when events resume.
+- **Status card:** `status.phone` gains `transport: "ingest-events"`, `profile`, `proto`, `models`,
+  `events`/`previews`/`treats`/`pings`/`dropped`, `preview_fps`, `clock_offset_s`, `clock_samples` and
+  `ping_due_s` (negative = the phone is overdue or half-open).
+- **Fallbacks, in order:** Android app → `/ingest-events`; browser `/camera` page → `/ingest`
+  (unchanged, server inference); `DEMO_MODE=1` offline clips (unchanged).
 
 ## Emotion vocabulary (fixed)
 
@@ -299,6 +373,7 @@ Web side (Person B):
 ```
 # web backend (venv: uv pip install --python .venv/bin/python -r requirements-web.txt)
 make dev-backend            # uvicorn backend.main:app --reload --port 8000 (web.pipeline: mock | real)
+make dev-backend-remote     # same, but WEB_PIPELINE=remote: the phone produces the events (/ingest-events)
 make test-web               # pytest tests/web
 python scripts/llm_smoke_test.py [frame.jpg]   # one real LLM call (reads .env)
 python scripts/telegram_test.py                # one test photo to Telegram
@@ -310,6 +385,7 @@ python scripts/soak.py --minutes 20                    # leak + stall check (Ste
 make dev-frontend           # http://localhost:3000 (backend URL: ?backend=… or NEXT_PUBLIC_BACKEND_URL)
 make test-frontend          # vitest + typecheck + lint
 python scripts/gen_ts_types.py   # after changing backend/contracts.py
+python scripts/gen_kotlin_types.py   # ditto: the Android mirror (android/.../contracts/Contracts.kt) and its test fixtures
 # HTTPS for the phone camera (one quick tunnel per port)
 cloudflared tunnel --url http://localhost:3000
 cloudflared tunnel --url http://localhost:8000
@@ -317,9 +393,19 @@ cloudflared tunnel --url http://localhost:8000
 DEMO_MODE=1 uvicorn backend.main:app
 ```
 
+On-device phone (`android/`, needs `ANDROID_HOME` = the Android SDK root):
+```
+# one-time setup: install platform-tools, platforms;android-35, build-tools;35.0.0 and accept licences
+sdkmanager --sdk_root="$ANDROID_HOME" --licenses
+make android-build      # ./gradlew :app:assembleDebug, then zipalign -c -P 16 -v 4 (16 KB page size)
+make android-test       # ./gradlew :app:testDebugUnitTest
+make android-install    # ./gradlew :app:installDebug (phone over USB with USB debugging on)
+```
+
 ## Environment variables
 `LLM_PROVIDER` (`groq` | `openrouter`), `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`,
-`LLM_VISION` (`1` | `0`), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `DEMO_MODE`
+`LLM_VISION` (`1` | `0`), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `DEMO_MODE`,
+`WEB_PIPELINE` (`mock` | `real` | `remote`, overrides `web.pipeline`)
 
 ## Team and ownership (2 people)
 
@@ -370,7 +456,9 @@ class Pipeline:
 `mark_treat()` sets the rules engine's `treat_event_recent` flag for `data.rules.treat_window_s`
 (default 10 s). `ingest_*` are non-blocking, never raise, drop the oldest data when behind, and are
 no-ops (with one warning) unless the source type is `browser`. `status()` returns
-`{"source", "state": "running" | "stalled" | "stopped", "fps", "last_frame_age_s", "audio_ok"}`.
+`{"source", "state": "running" | "stalled" | "stopped", "fps", "last_frame_age_s", "audio_ok"}`
+(those five keys always; `RemotePipeline` adds the phone's own counters on top, and there
+`mark_treat()` pushes a downlink instead of setting a local flag — see "On-device phone").
 Web calls only these methods and never imports anything else from `vision/` or `audio/`.
 
 `scripts/run_pipeline.py --jsonl` (and the precomputed `events.jsonl` per fallback clip) writes one

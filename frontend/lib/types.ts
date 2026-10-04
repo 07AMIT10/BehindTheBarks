@@ -17,6 +17,8 @@ export type PipelineStatus = {
   fps: number;
   last_frame_age_s: number | null;
   audio_ok: boolean;
+  torch?: boolean;
+  privacy_mode?: boolean;
 };
 
 export type PhoneStatus = {
@@ -50,6 +52,7 @@ export type Status = {
   phone?: PhoneStatus | null; // Plan 3: null until a phone has connected this session
   modes?: string[]; // Plan 4: ["live", "demo"] when demo clips exist
   mode?: "live" | "demo"; // Plan 4
+  privacy_mode?: boolean;
 };
 
 export type Span = {

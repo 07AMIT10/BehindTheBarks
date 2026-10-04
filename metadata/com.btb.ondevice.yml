@@ -1,0 +1,38 @@
+Categories:
+  - Science & Education
+  - System
+License: Apache-2.0
+AuthorName: Behind The Barks
+SourceCode: https://github.com/BehindTheBarks/Behind_The_Barks
+IssueTracker: https://github.com/BehindTheBarks/Behind_The_Barks/issues
+Changelog: https://github.com/BehindTheBarks/Behind_The_Barks/releases
+
+AutoName: WagWatch
+Summary: Real-time on-device dog emotional perception & well-being monitor
+
+Description: |-
+  WagWatch (Behind The Barks) turns any Android phone into an intelligent, contactless canine perception and well-being monitoring station.
+
+  Operating with zero wearables or intrusive collars, WagWatch tracks your dog's emotional state using 100% on-device edge AI.
+
+  Key Features:
+  * Dog Detection: YOLO26 bounding box tracking
+  * Skeletal Pose: RTMPose AP-10K 17-point posture analysis (tail height, wag cadence, body lowering)
+  * Facial Landmarks: DogFLW 46-point landmark tracking (mouth open ratio, ear neutral/back/alert)
+  * Vocalization Analysis: Google YAMNet classifying barks, whimpers, yips, howls, and growls
+  * Station Dim Mode: Prevents Camera HAL sleep with 0.01 brightness black screen for cool 24/7 monitoring
+  * 1-Second QR Pairing: Built-in ZXing QR scanner connects phone to dashboard in one second
+  * Real-Time Dashboard: Live pose overlays, emotion timeline, treat chime, torch toggle
+  * Push Alerts: Telegram & WhatsApp integration for alerts with snapshot photos
+  * 100% Private & Open Source: No cloud video streaming, no trackers, no ad networks
+
+RepoType: git
+Repo: https://github.com/BehindTheBarks/Behind_The_Barks.git
+
+Builds:
+  - versionName: 0.1.0-scaffold
+    versionCode: 1
+    commit: android-ondevice
+    subdir: android
+    gradle:
+      - yes

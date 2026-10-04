@@ -20,9 +20,39 @@ Start-up order, env checklist, how to switch sources, and what to say if somethi
 
 Test each live dependency before the demo: `python scripts/llm_smoke_test.py` and `python scripts/telegram_test.py`.
 
-## Phone camera
+## Native Android On-Device Perception App (`com.btb.ondevice`)
 
-Browsers only allow camera/mic on HTTPS (or localhost). For the demo, expose both servers with
+The native Android app executes the entire perception stack on-device (YOLO26 dog detection, RTMPose AP-10K keypoints, FaceLandmarker, YAMNet audio, and the deterministic rules engine) using LiteRT CPU/XNNPACK, uploading pre-fused `FrameEvent`, `AudioEvent`, and `RulesLabel` envelopes to `/ingest-events`:
+
+1. **Start Remote Backend & Tunnels**:
+   ```bash
+   make dev-backend-remote  # WEB_PIPELINE=remote
+   make tunnel-backend      # cloudflared tunnel --url http://localhost:8000 -> https://<X>.trycloudflare.com
+   make tunnel-frontend     # cloudflared tunnel --url http://localhost:3000 -> https://<Y>.trycloudflare.com
+   ```
+2. **Build and Install App**:
+   ```bash
+   make android-build android-install
+   ```
+3. **Run on Phone**:
+   - Open the **Behind The Barks** app.
+   - Tap **Cloud WSS** (populates `wss://<X>.trycloudflare.com/ingest-events`).
+   - Tap **Start Monitoring**.
+   - Point the camera at Bruno. The on-screen debug HUD displays the real-time bounding box, body skeleton, and rules emotion badge.
+4. **View Live Dashboard**:
+   - Open `https://<Y>.trycloudflare.com/?backend=https://<X>.trycloudflare.com` on any laptop/tablet.
+   - Status bar shows `Galaxy-A07 · Remote · Live`.
+   - Live MJPEG preview streams at ~2 FPS.
+   - Bounding boxes, emotion timeline spans, and audio classifications update live.
+   - Tap **Give Treat** on the dashboard to test the downlink WebSocket command to the phone.
+
+Troubleshooting:
+- If the screen turns off, the camera capture session closes. Keep the phone plugged in (`adb shell svc power stayon true`).
+- If you see "No dog visible for more than 2 s", ensure Bruno or a dog photo/video is well-lit and within frame (portrait orientation is automatically rotated upright in memory).
+
+## Browser Phone Camera (Web Fallback)
+
+Browsers only allow camera/mic on HTTPS (or localhost). For the web demo, expose both servers with
 quick tunnels, then open the camera page with the backend URL as a parameter:
 
 ```bash

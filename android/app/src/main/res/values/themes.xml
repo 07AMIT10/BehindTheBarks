@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- android:Theme.DeviceDefault.DayNight only exists from API 29. Naming it here would make
+         MainActivity throw Resources$NotFoundException on the API 26-28 devices minSdk 26 targets,
+         so the day/night variant lives in values-v29 and this is the API 14 fallback. -->
+    <style name="Theme.BehindTheBarks" parent="android:Theme.DeviceDefault" />
+</resources>

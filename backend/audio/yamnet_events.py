@@ -95,7 +95,15 @@ class AudioEventDetector:
         self.debounce_s = float(c["debounce_s"])
         self.max_gap_s = float(c["max_gap_s"])
         self.hop = max(1, int(round(float(c["hop_s"]) * SR)))
-        self._model, names = load_yamnet(str(c["model_dir"]))
+        self.backend = c.get("backend", "savedmodel")
+        if self.backend == "tflite":
+            from backend.vision.mobile_runners import MobileAudio
+            model_path = c.get("model")
+            self._mobile_audio = MobileAudio(model_path=model_path)
+            self._model = lambda w: [self._mobile_audio(w)]
+            names = self._mobile_audio.class_names
+        else:
+            self._model, names = load_yamnet(str(c["model_dir"]))
 
         index = {n: i for i, n in enumerate(names)}
         self._label_idx: dict[str, list[int]] = {}

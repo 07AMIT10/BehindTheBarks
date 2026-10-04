@@ -58,7 +58,7 @@ def label_breakdown(seconds: dict[str, float], duration: float) -> str:
     return ", ".join(f"{e} {100 * s / duration:.0f}%" for e, s in parts if s > 0)
 
 
-def plot_clip(name: str, entry: dict, events: dict[str, list[dict]], out_path: Path) -> dict:
+def plot_clip(name: str, entry: dict, events: dict[str, list[dict]], out_path: Path, roi_wags: list[float | None] | None = None) -> dict:
     frames, audio, rules, treats = events["frame"], events["audio"], events["rules"], events["treat"]
     duration = entry.get("duration_s") or (frames[-1]["ts"] if frames else 0.0)
     obs = observed_emotions(rules, duration)
@@ -76,12 +76,15 @@ def plot_clip(name: str, entry: dict, events: dict[str, list[dict]], out_path: P
         vals = [f["features"][key] for f in frames]
         ax.plot(f_ts, vals, label=key, color=color, marker=".", markersize=2, linewidth=1)
     ax2 = ax.twinx()
-    ax2.plot(f_ts, [f["features"]["tail_wag_hz"] for f in frames], label="tail_wag_hz",
+    ax2.plot(f_ts, [f["features"]["tail_wag_hz"] for f in frames], label="tail_wag_hz" if roi_wags is None else "tail_wag (pose)",
              color="black", linestyle="--", linewidth=1, alpha=0.6)
+    if roi_wags is not None:
+        ax2.plot(f_ts, roi_wags, label="tail_wag (roi)",
+                 color="tab:cyan", linestyle="-.", linewidth=1.2, alpha=0.85)
     ax.set_ylim(-1.05, 1.05), ax2.set_ylim(0, 6)
     ax.set_ylabel("feature"), ax2.set_ylabel("wag (Hz)")
     h1, l1 = ax.get_legend_handles_labels(); h2, l2 = ax2.get_legend_handles_labels()
-    ax.legend(h1 + h2, l1 + l2, loc="upper left", fontsize=8, ncol=5)
+    ax.legend(h1 + h2, l1 + l2, loc="upper left", fontsize=8, ncol=6 if roi_wags is not None else 5)
 
     # 2. ear position (categorical) + feeding-zone band
     ax = axes[1]
@@ -126,12 +129,55 @@ def plot_clip(name: str, entry: dict, events: dict[str, list[dict]], out_path: P
     return obs
 
 
+def compute_clip_roi_wag(clip_path: Path, frames: list[dict]) -> list[float | None]:
+    """Compute ROI wag frequency per frame from clip video using extract_tail_roi + RoiWagEstimator."""
+    import cv2
+    from backend.vision.wag import RoiWagEstimator, extract_tail_roi
+
+    if not clip_path.is_file() or not frames:
+        return [None] * len(frames)
+
+    estimator = RoiWagEstimator()
+    cap = cv2.VideoCapture(str(clip_path))
+    if not cap.isOpened():
+        return [None] * len(frames)
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    out: list[float | None] = []
+    cur_frame_num = -1
+    success = True
+    img = None
+
+    for f in frames:
+        target_time = f["ts"]
+        target_frame_num = int(round(target_time * fps))
+        while success and cur_frame_num < target_frame_num:
+            success, img = cap.read()
+            cur_frame_num += 1
+
+        if not success or img is None or f.get("bbox") is None:
+            out.append(None)
+            continue
+
+        roi = extract_tail_roi(img, f["bbox"], f.get("body_keypoints"), ts=f["ts"])
+        if roi is not None:
+            est = estimator.push(roi, f["ts"])
+            out.append(est)
+        else:
+            out.append(None)
+
+    cap.release()
+    return out
+
+
 def parse_args(argv):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--manifest", type=Path, default=FALLBACK / "manifest.json")
-    ap.add_argument("--events-dir", type=Path, default=FALLBACK / "events")
+    ap.add_argument("--events-dir", "--events", type=Path, default=FALLBACK / "events")
     ap.add_argument("--out-dir", type=Path, default=FALLBACK / "tuning")
     ap.add_argument("--only", action="append", metavar="NAME", help="clip name (repeatable)")
+    ap.add_argument("--wag-source", choices=["pose", "roi", "both"], default="pose",
+                    help="wag source: pose (default), roi, or both (overlay both)")
     return ap.parse_args(argv)
 
 
@@ -158,7 +204,22 @@ def main(argv=None) -> None:
         if not events["frame"]:
             print(f"  skip {entry['name']}: events file has no frames")
             continue
-        obs = plot_clip(entry["name"], entry, events, args.out_dir / f"{entry['name']}.png")
+
+        roi_wags = None
+        if args.wag_source in ("roi", "both"):
+            clip_path = args.manifest.parent / entry.get("clip", "")
+            roi_wags = compute_clip_roi_wag(clip_path, events["frame"])
+            if args.wag_source == "roi":
+                for i, r_w in enumerate(roi_wags):
+                    events["frame"][i]["features"]["tail_wag_hz"] = r_w
+
+        obs = plot_clip(
+            entry["name"],
+            entry,
+            events,
+            args.out_dir / f"{entry['name']}.png",
+            roi_wags=roi_wags if args.wag_source == "both" else None,
+        )
         expected = entry.get("expected_emotion")
         rows.append((entry["name"], expected or "?", obs["dominant"], expected == obs["dominant"],
                     label_breakdown(obs["seconds"], entry.get("duration_s", 0.0))))

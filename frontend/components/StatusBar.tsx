@@ -35,6 +35,12 @@ export default function StatusBar({ connected, everConnected, reconnectAttempt, 
           <><span className="inline-block h-2 w-2 rounded-full border-[1.5px] border-muted" />{llm?.enabled ? "AI offline · rules only" : "Rules only"}</>
         )}
       </div>
+      {Boolean(status?.pipeline_status?.torch) && (
+        <div className="flex items-center gap-1.5 rounded-full bg-yellow-500/10 px-2 py-0.5 text-[11px] font-semibold text-yellow-300 border border-yellow-500/30">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2v1"/><path d="M12 7a5 5 0 0 0-5 5c0 2 1.5 3.5 2.5 4.5.5.5.5 1.5.5 1.5h4s0-1 .5-1.5c1-1 2.5-2.5 2.5-4.5a5 5 0 0 0-5-5z"/></svg>
+          Light ON
+        </div>
+      )}
       <div className="grow" />
       <div role="group" aria-label="Mode" className="flex gap-0.5 rounded-lg bg-surface-2 p-[3px]">
         {(["live", "demo"] as const).map((m) => {

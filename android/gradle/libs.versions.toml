@@ -1,0 +1,55 @@
+# Exact versions only: every one of these was checked against the upstream repository on the day
+# this scaffold was written (see docs/superpowers/plans/2026-10-02-android-ondevice-v2.md, Task 2.2).
+# LiteRT >= 2.1 (16 KB-aligned prebuilt .so); no NNAPI and no NPU code, so no ORT/ncnn dependency is
+# declared here until the Phase 0 bake-off picks a runtime.
+[versions]
+agp = "8.10.1"
+kotlin = "2.2.21"
+coroutines = "1.10.2"
+serialization = "1.9.0"
+# 5.3.2, not 5.5.0: okhttp-android 5.4.0+ declares minCompileSdk=36 (5.5.0 wants 37) and this app
+# compiles against 35. 5.3.2's okhttp-android declares no minimum, and it was built against Kotlin
+# 2.2.21, which is the Kotlin version pinned above.
+okhttp = "5.3.2"
+camerax = "1.5.3"
+litert = "2.2.0" # NOT a leaf dependency. litert -> litert-api -> com.google.android.play:ai-delivery:0.1.1-alpha01
+                 # (an alpha, unpinned here), which merges ~60 <uses-native-library> declarations for vendor NPU
+                 # blobs (libedgetpu_litert.so, Qualcomm libcdsprpc.so, MediaTek .mtk.so) plus RECEIVE_BOOT_COMPLETED,
+                 # ACCESS_NETWORK_STATE, FOREGROUND_SERVICE_DATA_SYNC, WorkManager, Room and Play asset packs into the
+                 # manifest. None of those .so are packaged (only 5 LiteRT libs per ABI are) and none is ever loaded:
+                 # Tasks 2.3/2.4/4.1 MUST select the accelerator explicitly (CPU/XNNPACK) to honour the plan's
+                 # "no NNAPI, no NPU code". Dropping ai-delivery or moving to litert-accelerator:cpu needs the owner.
+junit = "5.14.4"
+junitPlatform = "1.14.4"
+truth = "1.4.5"
+zxing = "3.5.3"
+
+[libraries]
+# Inference runtime. Ships prebuilt 16 KB-aligned .so; CPU/XNNPACK only.
+litert = { group = "com.google.ai.edge.litert", name = "litert", version.ref = "litert" }
+
+# Capture.
+camerax-core = { group = "androidx.camera", name = "camera-core", version.ref = "camerax" }
+camerax-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camerax" }
+camerax-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camerax" }
+camerax-view = { group = "androidx.camera", name = "camera-view", version.ref = "camerax" }
+
+# Barcode / QR decoding (pure Java bytecode, no native JNI/so)
+zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
+
+# Kotlin runtime.
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+
+# Test.
+junit-jupiter = { group = "org.junit.jupiter", name = "junit-jupiter", version.ref = "junit" }
+junit-platform-launcher = { group = "org.junit.platform", name = "junit-platform-launcher", version.ref = "junitPlatform" }
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
+okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "okhttp" }
+truth = { group = "com.google.truth", name = "truth", version.ref = "truth" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

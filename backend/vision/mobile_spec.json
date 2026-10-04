@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "detector": {
+    "default_model": "out/android_models/det_yolo26n_320_int8.tflite",
+    "fallback_model": "out/android_models/det_yolo26n_320_fp32.tflite",
+    "input_size": 320,
+    "input_layout": "NCHW",
+    "letterbox_pad_color": 114,
+    "dog_class_coco": 16,
+    "conf_threshold": 0.25,
+    "nms_iou_threshold": 0.5,
+    "crop_pad": 0.15,
+    "normalize_scale": 255.0
+  },
+  "pose": {
+    "default_model": "out/android_models/pose_rtmpose_ap10k_litert.tflite",
+    "fallback_model": "out/android_models/pose_rtmpose_m_ap10k.onnx",
+    "input_size": 256,
+    "input_layout": "NCHW",
+    "simcc_split_ratio": 2.0,
+    "simcc_bins": 512,
+    "crop_pad": 0.15,
+    "bbox_scale": 1.25,
+    "conf_threshold": 0.3,
+    "outside_margin_frac": 0.05,
+    "prep_mode": "stretch",
+    "imagenet_mean": [0.485, 0.456, 0.406],
+    "imagenet_std": [0.229, 0.224, 0.225],
+    "keypoint_names": [
+      "L_Eye", "R_Eye", "Nose", "Neck", "Root of tail",
+      "L_Shoulder", "L_Elbow", "L_F_Paw", "R_Shoulder", "R_Elbow", "R_F_Paw",
+      "L_Hip", "L_Knee", "L_B_Paw", "R_Hip", "R_Knee", "R_B_Paw"
+    ],
+    "keypoint_mapping": {
+      "L_Eye": "left_eye",
+      "R_Eye": "right_eye",
+      "Nose": "nose",
+      "Neck": "withers",
+      "Root of tail": "hip",
+      "L_F_Paw": "left_front_paw",
+      "R_F_Paw": "right_front_paw",
+      "L_B_Paw": "left_back_paw",
+      "R_B_Paw": "right_back_paw"
+    }
+  },
+  "face": {
+    "default_model": "out/android_models/face_dog_landmarks_384.tflite",
+    "input_size": 384,
+    "input_layout": "NHWC",
+    "crop_pad": 0.25,
+    "min_crop_px": 48,
+    "min_head_points": 3,
+    "min_inside_frac": 0.9,
+    "min_spread": 0.25,
+    "num_landmarks": 46
+  },
+  "audio": {
+    "default_model": "out/android_models/audio_yamnet.tflite",
+    "sample_rate": 16000,
+    "window_samples": 15600,
+    "hop_samples": 7680,
+    "hop_s": 0.48,
+    "threshold": 0.3,
+    "silence_rms": 0.005,
+    "debounce_s": 1.0,
+    "pcm_scale": 32768.0,
+    "num_classes": 521,
+    "label_map": {
+      "bark": ["Bark", "Bow-wow"],
+      "yip": ["Yip"],
+      "growl": ["Growling"],
+      "whimper": ["Whimper (dog)"],
+      "howl": ["Howl"]
+    }
+  },
+  "cadence": {
+    "camera_fps": 15,
+    "detect_hz": 3,
+    "pose_hz": 6,
+    "face_hz": 1,
+    "audio_hz": 2,
+    "wag_hz": 15
+  },
+  "tier_zero_gate": {
+    "enabled": true,
+    "diff_threshold": 0.02,
+    "min_dog_motion": 0.01
+  },
+  "tolerances": {
+    "max_abs_diff_warmup": 0.05
+  }
+}

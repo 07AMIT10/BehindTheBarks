@@ -24,3 +24,24 @@ torchvision==0.29.0
 ultralytics==8.4.100
 # Body pose (Step 4): DeepLabCut SuperAnimal-Quadruped. Pulls opencv-python-headless next to opencv-python (cv2 still imports fine).
 deeplabcut==3.0.2
+# --- Optional: the Android export toolchain, for scripts/export_android_models.py (Phase 0 Task 0.1).
+# Every line below is commented out on purpose: a plain `pip install -r requirements-data.txt` must
+# not pull these in. `litert-torch` requires torch<2.14, so it would downgrade the torch==2.14.0 pin
+# above (deeplabcut and ultralytics included) and drag in transformers, kagglehub and jax; `onnx2tf`
+# pulls sng4onnx, onnx-graphsurgeon and einops on top of tensorflow and jax. Install them only when
+# re-running the export, into a throwaway env or with --no-deps, as the Phase 0 run did
+# (x86_64 Linux, Python 3.12, verified 2026-10-03):
+#   pip install onnx==1.23.1 onnxruntime==1.30.0 onnxscript==0.7.2 torchao==0.18.0 jax==0.11.2 jaxlib==0.11.2
+#   pip install --no-deps litert-torch==0.9.4 ai-edge-litert==2.2.0 litert-converter==0.4.0 \
+#       ai-edge-quantizer==0.9.0 xdsl==0.72.0
+#   pip install --no-deps onnx2tf==2.6.9 sng4onnx==2.0.1 onnx-graphsurgeon==0.6.1 einops==0.8.2 simplejson==4.1.2
+# ai-edge-litert==2.2.0          # the LiteRT interpreter and litert_torch's runtime
+# ai-edge-quantizer==0.9.0       # ultralytics' INT8 pass over the exported .tflite
+# litert-converter==0.4.0        # litert_torch's MLIR converter
+# litert-torch==0.9.4           # torch -> .tflite; needs torch<2.14, hence commented out
+# onnx==1.23.1
+# onnxruntime==1.30.0
+# onnxscript==0.7.2              # torch.onnx.export's dynamo path
+# onnx2tf==2.6.9
+# torchao==0.18.0
+# xdsl==0.72.0

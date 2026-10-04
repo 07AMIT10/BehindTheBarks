@@ -1,0 +1,1 @@
+{"ts":1727340000.123,"source":"live","dog_detected":true,"bbox":[120.5,240.0,610.0,480.25],"bbox_conf":null,"body_keypoints":{"tail_base":[300.0,400.0,0.91],"tail_tip":null},"face_landmarks":null,"features":{"tail_height":null,"tail_wag_hz":2.1,"ear_position":"up","mouth_open":null,"body_lowering":0.1,"motion_energy":0.7,"in_feeding_zone":null}}
