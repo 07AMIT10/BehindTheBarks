@@ -10,9 +10,11 @@
   <img src="https://img.shields.io/badge/Built_with-Claude_Opus-d97757" alt="Built with Claude Opus">
   <img src="https://img.shields.io/badge/tests-381_passing-22c55e" alt="381 tests passing">
 
-  <p><a href="#why">Why</a> · <a href="#see-it-work">Demo</a> · <a href="#photos">Photos</a> · <a href="#new-capability">New capability</a> · <a href="#how-it-works">How it works</a> · <a href="#run-it">Run it</a> · <a href="#team">Team</a></p>
+  <p><a href="#why">Why</a> · <a href="#see-it-work">Demo</a> · <a href="#photos">Photos</a> · <a href="./docs/USER_ONBOARDING_GUIDE.md"><b>User Onboarding Guide</b></a> · <a href="https://github.com/07AMIT10/BehindTheBarks/releases/tag/v1.0.0-android"><b>Download APK</b></a> · <a href="#run-it">Run it</a> · <a href="#team">Team</a></p>
 
 </div>
+
+> 📱 **Just installed the app?** Check out the step-by-step [User Onboarding & Station Setup Guide](./docs/USER_ONBOARDING_GUIDE.md) to set up your camera station in 3 minutes!
 
 ## Why
 
