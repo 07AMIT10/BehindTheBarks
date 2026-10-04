@@ -33,6 +33,12 @@ WEB_DEFAULTS: dict[str, Any] = {
     "remote": {"stale_s": 2.0, "clock_samples": 5, "ping_every_s": 30.0, "max_skew_s": 60.0,
               "downlink_timeout_s": 5.0},
     "profile": {"dog_name": "Bruno", "location": "Kitchen", "zone_label": "feeding area"},
+    "auth": {
+        "enabled": False,
+        "dashboard_pin": "",
+        "ingest_token": "",
+        "api_token": "",
+    },
 }
 
 
@@ -60,6 +66,16 @@ def load_config(path: str | Path = "config.yaml", env: Mapping[str, str] | None 
         cfg["web"]["notify"]["mode"] = env["NOTIFY_MODE"]
     if cfg["web"]["demo_mode"]:
         cfg["web"]["notify"]["mode"] = "dashboard_only"
+    auth = cfg["web"].setdefault("auth", {})
+    if env.get("BTB_AUTH_ENABLED") is not None:
+        auth["enabled"] = _truthy(env.get("BTB_AUTH_ENABLED"))
+    if env.get("BTB_DASHBOARD_PIN"):
+        auth["dashboard_pin"] = env["BTB_DASHBOARD_PIN"].strip()
+        auth["enabled"] = True
+    if env.get("BTB_INGEST_TOKEN"):
+        auth["ingest_token"] = env["BTB_INGEST_TOKEN"].strip()
+    if env.get("BTB_API_TOKEN"):
+        auth["api_token"] = env["BTB_API_TOKEN"].strip()
     return cfg
 
 

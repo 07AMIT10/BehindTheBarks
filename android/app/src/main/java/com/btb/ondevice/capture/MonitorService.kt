@@ -56,6 +56,7 @@ import kotlin.math.roundToInt
 interface MonitorServiceListener {
     fun onStateUpdate(overlayState: OverlayState) {}
     fun onConnectionUpdate(state: ConnectionState) {}
+    fun onQrCodeDetected(rawText: String) {}
 }
 
 class MonitorService : Service(), LifecycleOwner {
@@ -81,6 +82,60 @@ class MonitorService : Service(), LifecycleOwner {
     private val isRunning = AtomicBoolean(false)
     private val lastPreviewSendMs = AtomicLong(0)
     private var listener: MonitorServiceListener? = null
+    private val privacyMode = AtomicBoolean(false)
+    private var privacySlateJpeg: ByteArray? = null
+    private val isScanningQr = AtomicBoolean(false)
+    private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
+
+    fun setScanningQr(enabled: Boolean) {
+        isScanningQr.set(enabled)
+    }
+
+    fun isScanningQr(): Boolean = isScanningQr.get()
+
+    private fun getOrCreatePrivacySlate(): ByteArray {
+        privacySlateJpeg?.let { return it }
+        val bmp = Bitmap.createBitmap(320, 240, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bmp)
+        canvas.drawColor(android.graphics.Color.rgb(22, 24, 30))
+        val paint = android.graphics.Paint().apply {
+            color = android.graphics.Color.rgb(239, 68, 68)
+            textSize = 20f
+            isAntiAlias = true
+            textAlign = android.graphics.Paint.Align.CENTER
+        }
+        canvas.drawText("PRIVACY MODE ACTIVE", 160f, 110f, paint)
+        paint.color = android.graphics.Color.rgb(156, 163, 175)
+        paint.textSize = 12f
+        canvas.drawText("Camera & Mic Muted", 160f, 140f, paint)
+        val out = ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.JPEG, 75, out)
+        bmp.recycle()
+        val bytes = out.toByteArray()
+        privacySlateJpeg = bytes
+        return bytes
+    }
+
+    fun setPrivacyMode(enabled: Boolean): Boolean {
+        privacyMode.set(enabled)
+        if (enabled) {
+            cameraSource?.setTorch(false)
+            listener?.onStateUpdate(
+                OverlayState(
+                    bbox = null,
+                    keypoints = null,
+                    wagRoi = null,
+                    emotionLabel = "PRIVACY",
+                    confidence = 1.0f,
+                    degradeLevel = null
+                )
+            )
+        }
+        return enabled
+    }
+
+    fun isPrivacyMode(): Boolean = privacyMode.get()
+    fun togglePrivacyMode(): Boolean = setPrivacyMode(!privacyMode.get())
 
     fun setListener(l: MonitorServiceListener?) {
         listener = l
@@ -105,6 +160,7 @@ class MonitorService : Service(), LifecycleOwner {
         val prefs = getSharedPreferences("btb_station_prefs", Context.MODE_PRIVATE)
         val defaultUrl = prefs.getString("server_url", DEFAULT_CLOUD_URL) ?: DEFAULT_CLOUD_URL
         val defaultDevice = prefs.getString("device_name", Build.MODEL) ?: Build.MODEL
+        val defaultToken = prefs.getString("access_token", "")?.takeIf { it.isNotBlank() }
 
         val serverUrl = intent?.getStringExtra(EXTRA_SERVER_URL)
             ?: intent?.getStringExtra("server_url")
@@ -112,12 +168,15 @@ class MonitorService : Service(), LifecycleOwner {
         val deviceName = intent?.getStringExtra(EXTRA_DEVICE_NAME)
             ?: intent?.getStringExtra("device_name")
             ?: defaultDevice
+        val token = intent?.getStringExtra(EXTRA_TOKEN)
+            ?: intent?.getStringExtra("token")
+            ?: defaultToken
 
-        startMonitoring(serverUrl, deviceName)
+        startMonitoring(serverUrl, deviceName, token)
         return START_STICKY
     }
 
-    private fun startMonitoring(serverUrl: String, deviceName: String) {
+    private fun startMonitoring(serverUrl: String, deviceName: String, token: String? = null) {
         if (!isRunning.compareAndSet(false, true)) return
 
         // 1. Foreground Notification
@@ -180,6 +239,7 @@ class MonitorService : Service(), LifecycleOwner {
         val up = EventUploader(
             serverUrl = serverUrl,
             deviceName = deviceName,
+            token = token,
             spool = spool,
             listener = object : EventUploaderListener {
                 override fun onStateChanged(state: ConnectionState) {
@@ -194,6 +254,9 @@ class MonitorService : Service(), LifecycleOwner {
                 }
                 override fun onFlipDownlink() {
                     cameraSource?.flipCamera()
+                }
+                override fun onPrivacyDownlink(enabled: Boolean) {
+                    setPrivacyMode(enabled)
                 }
             }
         )
@@ -212,6 +275,25 @@ class MonitorService : Service(), LifecycleOwner {
             targetHeight = 480,
             targetFps = 15,
             frameCallback = { rgba, width, height, rotation, ts ->
+                if (privacyMode.get()) {
+                    val nowMs = System.currentTimeMillis()
+                    if (nowMs - lastPreviewSendMs.get() >= 1000) {
+                        lastPreviewSendMs.set(nowMs)
+                        try {
+                            up.sendPreview(getOrCreatePrivacySlate())
+                        } catch (_: Exception) {}
+                    }
+                    return@CameraSource
+                }
+
+                if (isScanningQr.get()) {
+                    val qrText = com.btb.ondevice.util.QrDecoder.decodeRgba(rgba, width, height)
+                    if (qrText != null) {
+                        isScanningQr.set(false)
+                        listener?.onQrCodeDetected(qrText)
+                    }
+                }
+
                 // Check thermal governor and memory guard
                 val deg = thermal.poll()
                 pipe.scheduler.setLevel(deg)
@@ -219,12 +301,16 @@ class MonitorService : Service(), LifecycleOwner {
 
                 val buffer = ByteBuffer.wrap(rgba)
                 exec.submitLatest {
-                    val (frameEvent, rulesLabel) = pipe.processFrame(ts, width, height, buffer)
-                    up.sendFrame(frameEvent)
-                    if (rulesLabel != null) {
-                        up.sendRules(rulesLabel)
+                    try {
+                        val (frameEvent, rulesLabel) = pipe.processFrame(ts, width, height, buffer)
+                        up.sendFrame(frameEvent)
+                        if (rulesLabel != null) {
+                            up.sendRules(rulesLabel)
+                        }
+                        updateUiOverlay(frameEvent, rulesLabel, width, height)
+                    } catch (t: Throwable) {
+                        android.util.Log.e("MonitorService", "Inference error: ${t.message}", t)
                     }
-                    updateUiOverlay(frameEvent, rulesLabel, width, height)
                     // Dashboard video, best-effort at ~2 Hz. JPEG encode stays on this
                     // background thread; sendPreview applies its own rate limit and
                     // backpressure drop, so this never blocks inference.
@@ -235,7 +321,8 @@ class MonitorService : Service(), LifecycleOwner {
                             encodePreviewJpeg(rgba, width, height, rotation)?.let { jpeg ->
                                 up.sendPreview(jpeg)
                             }
-                        } catch (_: Exception) {
+                        } catch (t: Throwable) {
+                            android.util.Log.e("MonitorService", "Preview error: ${t.message}", t)
                         }
                     }
                 }
@@ -248,6 +335,9 @@ class MonitorService : Service(), LifecycleOwner {
             sampleRate = 16_000,
             chunkDurationMs = 100,
             audioCallback = { pcm16, sampleRate, ts ->
+                if (privacyMode.get()) {
+                    return@MicSource
+                }
                 val shortArray = ShortArray(pcm16.size / 2)
                 ByteBuffer.wrap(pcm16).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shortArray)
                 val events = pipe.pushAudioPcm16(ts, shortArray)
@@ -256,6 +346,8 @@ class MonitorService : Service(), LifecycleOwner {
         )
         micSource = mic
         mic.start()
+
+        registerNetworkCallback()
     }
 
     fun attachCameraPreview(surfaceProvider: Preview.SurfaceProvider) {
@@ -450,8 +542,33 @@ class MonitorService : Service(), LifecycleOwner {
         }
         wakeLock = null
 
+        unregisterNetworkCallback()
+
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         stopForeground(STOP_FOREGROUND_REMOVE)
+    }
+
+    private fun registerNetworkCallback() {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager ?: return
+        val cb = object : android.net.ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: android.net.Network) {
+                uploader?.triggerFastReconnect()
+            }
+        }
+        try {
+            cm.registerDefaultNetworkCallback(cb)
+            networkCallback = cb
+        } catch (_: Exception) {}
+    }
+
+    private fun unregisterNetworkCallback() {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager ?: return
+        networkCallback?.let {
+            try {
+                cm.unregisterNetworkCallback(it)
+            } catch (_: Exception) {}
+        }
+        networkCallback = null
     }
 
     override fun onDestroy() {
@@ -468,6 +585,7 @@ class MonitorService : Service(), LifecycleOwner {
         const val ACTION_STOP = "com.btb.ondevice.action.STOP"
         const val EXTRA_SERVER_URL = "extra_server_url"
         const val EXTRA_DEVICE_NAME = "extra_device_name"
-        const val DEFAULT_CLOUD_URL = "wss://annually-moment-most-racial.trycloudflare.com/ingest-events"
+        const val EXTRA_TOKEN = "extra_token"
+        const val DEFAULT_CLOUD_URL = "wss://lighter-drew-leone-basement.trycloudflare.com/ingest-events"
     }
 }

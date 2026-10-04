@@ -39,6 +39,7 @@ interface EventUploaderListener {
     fun onConfigDownlink(configJson: String) {}
     fun onTorchDownlink(enabled: Boolean) {}
     fun onFlipDownlink() {}
+    fun onPrivacyDownlink(enabled: Boolean) {}
 }
 
 /**
@@ -51,11 +52,12 @@ interface EventUploaderListener {
  *  - Backpressure: drops preview first, then frame events if OkHttp queue > 256 KB.
  *  - Event spooling: saves non-frame events to [spool] when disconnected, flushes on reconnect.
  *  - Reconnection with exponential backoff (0.5s, 1s, 2s, 4s, 5s).
- *  - Permanent closure on codes 4400 (bad hello), 4408 (replaced), 4409 (busy), 1000 (normal).
+ *  - Permanent closure on codes 4400 (bad hello), 4401 (unauthorized), 4408 (replaced), 4409 (busy), 1000 (normal).
  */
 class EventUploader(
     val serverUrl: String,
     val deviceName: String,
+    val token: String? = null,
     val spool: EventSpool? = null,
     val okHttpClient: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
@@ -71,6 +73,7 @@ class EventUploader(
     companion object {
         const val KIND_PREVIEW: Byte = 0x01
         const val CLOSE_BAD_HELLO = 4400
+        const val CLOSE_UNAUTHORIZED = 4401
         const val CLOSE_REPLACED = 4408
         const val CLOSE_BUSY = 4409
         const val CLOSE_NORMAL = 1000
@@ -78,6 +81,7 @@ class EventUploader(
         val TERMINAL_CLOSE_CODES = setOf(
             CLOSE_NORMAL,
             CLOSE_BAD_HELLO,
+            CLOSE_UNAUTHORIZED,
             CLOSE_REPLACED,
             CLOSE_BUSY,
         )
@@ -132,7 +136,13 @@ class EventUploader(
     private fun connect() {
         if (!isRunning.get()) return
 
-        setState(ConnectionState.CONNECTING)
+        synchronized(lock) {
+            if (state == ConnectionState.CONNECTED || state == ConnectionState.CONNECTING) {
+                return
+            }
+            state = ConnectionState.CONNECTING
+        }
+        listener?.onStateChanged(ConnectionState.CONNECTING)
 
         val httpUrl = if (serverUrl.startsWith("ws://")) {
             "http://" + serverUrl.removePrefix("ws://")
@@ -144,33 +154,59 @@ class EventUploader(
 
         try {
             val request = Request.Builder().url(httpUrl).build()
-            webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
-                override fun onOpen(webSocket: WebSocket, response: Response) {
+            val socket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
+                override fun onOpen(ws: WebSocket, response: Response) {
+                    synchronized(lock) {
+                        if (webSocket != null && ws !== webSocket) return
+                        webSocket = ws
+                    }
+                    try {
+                        android.util.Log.i("EventUploader", "WebSocket connected to $serverUrl")
+                    } catch (_: Throwable) {}
                     // Send hello handshake immediately
                     val phoneTime = clock()
-                    val helloJson = """{"type":"hello","proto":1,"device":"$deviceName","phone_time":$phoneTime,"models":{},"profile":"mobile"}"""
-                    webSocket.send(helloJson)
-                }
-
-                override fun onMessage(webSocket: WebSocket, text: String) {
-                    handleServerText(webSocket, text)
-                }
-
-                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    val tokenField = if (!token.isNullOrBlank()) ""","token":"$token"""" else ""
+                    val helloJson = """{"type":"hello","proto":1,"device":"$deviceName","phone_time":$phoneTime,"models":{},"profile":"mobile"$tokenField}"""
+                    val sent = ws.send(helloJson)
                     try {
-                        webSocket.close(code, reason)
+                        android.util.Log.i("EventUploader", "Sent hello: $sent")
+                    } catch (_: Throwable) {}
+                }
+
+                override fun onMessage(ws: WebSocket, text: String) {
+                    synchronized(lock) {
+                        if (webSocket != null && ws !== webSocket) return
+                    }
+                    handleServerText(ws, text)
+                }
+
+                override fun onClosing(ws: WebSocket, code: Int, reason: String) {
+                    synchronized(lock) {
+                        if (webSocket != null && ws !== webSocket) return
+                    }
+                    try {
+                        ws.close(code, reason)
                     } catch (_: Exception) {}
                     handleClose(code, reason)
                 }
 
-                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                override fun onClosed(ws: WebSocket, code: Int, reason: String) {
+                    synchronized(lock) {
+                        if (webSocket != null && ws !== webSocket) return
+                    }
                     handleClose(code, reason)
                 }
 
-                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
+                    synchronized(lock) {
+                        if (webSocket != null && ws !== webSocket) return
+                    }
                     handleFailure(t)
                 }
             })
+            synchronized(lock) {
+                webSocket = socket
+            }
         } catch (e: Exception) {
             handleFailure(e)
         }
@@ -183,6 +219,7 @@ class EventUploader(
 
             when (type) {
                 "hello_ack" -> {
+                    android.util.Log.i("EventUploader", "Received hello_ack from server")
                     synchronized(lock) {
                         state = ConnectionState.CONNECTED
                     }
@@ -211,12 +248,18 @@ class EventUploader(
                 "flip" -> {
                     listener?.onFlipDownlink()
                 }
+                "privacy" -> {
+                    val enabled = root["data"]?.jsonObject?.get("enabled")?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true
+                    listener?.onPrivacyDownlink(enabled)
+                }
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            android.util.Log.e("EventUploader", "Error handling server text: ${e.message}", e)
         }
     }
 
     private fun handleClose(code: Int, reason: String) {
+        android.util.Log.w("EventUploader", "WebSocket closed ($serverUrl): code=$code, reason=$reason")
         pingJob?.cancel()
         synchronized(lock) {
             webSocket = null
@@ -235,9 +278,7 @@ class EventUploader(
     }
 
     private fun handleFailure(t: Throwable) {
-        try {
-            android.util.Log.e("EventUploader", "WebSocket failed ($serverUrl): ${t.message}", t)
-        } catch (_: Throwable) {}
+        android.util.Log.e("EventUploader", "WebSocket failed ($serverUrl): ${t.message}", t)
         pingJob?.cancel()
         synchronized(lock) {
             webSocket = null
@@ -257,6 +298,19 @@ class EventUploader(
             val delayMs = BACKOFF_STEPS_MS[min(idx, BACKOFF_STEPS_MS.size - 1)]
             delay(delayMs)
             if (isRunning.get()) {
+                connect()
+            }
+        }
+    }
+
+    /**
+     * Called when the OS reports a network reconnect (e.g. Wi-Fi re-associated),
+     * bypassing the exponential backoff to re-establish the connection immediately.
+     */
+    fun triggerFastReconnect() {
+        if (isRunning.get() && connectionState != ConnectionState.CONNECTED && connectionState != ConnectionState.CONNECTING) {
+            reconnectJob?.cancel()
+            reconnectJob = scope.launch {
                 connect()
             }
         }
@@ -299,9 +353,15 @@ class EventUploader(
         val ws = webSocket ?: return false
         // Backpressure check: drop frame if queue > maxQueueBytes
         if (ws.queueSize() > maxQueueBytes) {
+            android.util.Log.w("EventUploader", "sendFrame backpressure drop: queue=${ws.queueSize()} > $maxQueueBytes")
             return false
         }
-        val jsonPayload = ContractsJson.encodeToString(FrameEvent.serializer(), frame)
+        val jsonPayload = try {
+            ContractsJson.encodeToString(FrameEvent.serializer(), frame)
+        } catch (t: Throwable) {
+            android.util.Log.e("EventUploader", "sendFrame json serialization error: ${t.message}", t)
+            return false
+        }
         return sendEnvelope("frame", jsonPayload)
     }
 
@@ -347,6 +407,7 @@ class EventUploader(
 
         // Backpressure: drop preview first if queue > maxQueueBytes
         if (ws.queueSize() > maxQueueBytes) {
+            android.util.Log.w("EventUploader", "sendPreview backpressure drop: queue=${ws.queueSize()} > $maxQueueBytes")
             return false
         }
 
@@ -354,12 +415,20 @@ class EventUploader(
         val msg = ByteArray(1 + jpeg.size)
         msg[0] = KIND_PREVIEW
         System.arraycopy(jpeg, 0, msg, 1, jpeg.size)
-        return ws.send(msg.toByteString())
+        val sent = ws.send(msg.toByteString())
+        if (!sent) {
+            android.util.Log.w("EventUploader", "ws.send preview failed, queue=${ws.queueSize()}")
+        }
+        return sent
     }
 
     private fun sendEnvelope(type: String, jsonPayload: String): Boolean {
         val ws = webSocket ?: return false
         val envelope = """{"type":"$type","data":$jsonPayload}"""
-        return ws.send(envelope)
+        val sent = ws.send(envelope)
+        if (!sent) {
+            android.util.Log.w("EventUploader", "ws.send failed for $type, queue=${ws.queueSize()}")
+        }
+        return sent
     }
 }

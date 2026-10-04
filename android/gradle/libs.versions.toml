@@ -22,6 +22,7 @@ litert = "2.2.0" # NOT a leaf dependency. litert -> litert-api -> com.google.and
 junit = "5.14.4"
 junitPlatform = "1.14.4"
 truth = "1.4.5"
+zxing = "3.5.3"
 
 [libraries]
 # Inference runtime. Ships prebuilt 16 KB-aligned .so; CPU/XNNPACK only.
@@ -32,6 +33,9 @@ camerax-core = { group = "androidx.camera", name = "camera-core", version.ref = 
 camerax-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camerax" }
 camerax-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camerax" }
 camerax-view = { group = "androidx.camera", name = "camera-view", version.ref = "camerax" }
+
+# Barcode / QR decoding (pure Java bytecode, no native JNI/so)
+zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
 
 # Kotlin runtime.
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }

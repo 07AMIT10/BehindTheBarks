@@ -16,6 +16,12 @@
     <!-- Streaming events to the backend's wss:// /ingest-events. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Security hardening: restrict MonitorService IPC to app's own signature and ADB shell -->
+    <permission
+        android:name="com.btb.ondevice.permission.CONTROL_MONITOR"
+        android:protectionLevel="signatureOrSystem" />
+    <uses-permission android:name="com.btb.ondevice.permission.CONTROL_MONITOR" />
+
     <!-- A phone without a camera cannot run the demo. -->
     <uses-feature android:name="android.hardware.camera.any" android:required="true" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
@@ -42,6 +48,7 @@
         <service
             android:name=".capture.MonitorService"
             android:exported="true"
+            android:permission="com.btb.ondevice.permission.CONTROL_MONITOR"
             android:foregroundServiceType="camera|microphone" />
 
     </application>

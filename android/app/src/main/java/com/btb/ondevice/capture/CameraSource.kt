@@ -113,44 +113,48 @@ class CameraSource(
     }
 
     fun attachPreview(surfaceProvider: Preview.SurfaceProvider) {
-        currentSurfaceProvider = surfaceProvider
-        val provider = cameraProvider ?: return
-        val cameraSelector = if (isBackCamera) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
-        val preview = Preview.Builder().build()
-        preview.setSurfaceProvider(surfaceProvider)
-        previewUseCase = preview
+        ContextCompat.getMainExecutor(context).execute {
+            currentSurfaceProvider = surfaceProvider
+            val provider = cameraProvider ?: return@execute
+            val cameraSelector = if (isBackCamera) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
+            val preview = Preview.Builder().build()
+            preview.setSurfaceProvider(surfaceProvider)
+            previewUseCase = preview
 
-        val analysis = imageAnalysis
-        if (analysis != null) {
-            provider.unbindAll()
-            try {
-                val cam = provider.bindToLifecycle(lifecycleOwner, cameraSelector, analysis, preview)
-                camera = cam
-                if (torchEnabled && cam.cameraInfo.hasFlashUnit()) {
-                    cam.cameraControl.enableTorch(true)
+            val analysis = imageAnalysis
+            if (analysis != null) {
+                provider.unbindAll()
+                try {
+                    val cam = provider.bindToLifecycle(lifecycleOwner, cameraSelector, analysis, preview)
+                    camera = cam
+                    if (torchEnabled && cam.cameraInfo.hasFlashUnit()) {
+                        cam.cameraControl.enableTorch(true)
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("CameraSource", "Failed to attach preview: ${e.message}", e)
                 }
-            } catch (e: Exception) {
-                android.util.Log.e("CameraSource", "Failed to attach preview: ${e.message}", e)
             }
         }
     }
 
     fun detachPreview() {
-        currentSurfaceProvider = null
-        val provider = cameraProvider ?: return
-        val cameraSelector = if (isBackCamera) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
-        val analysis = imageAnalysis
-        previewUseCase = null
-        if (analysis != null) {
-            provider.unbindAll()
-            try {
-                val cam = provider.bindToLifecycle(lifecycleOwner, cameraSelector, analysis)
-                camera = cam
-                if (torchEnabled && cam.cameraInfo.hasFlashUnit()) {
-                    cam.cameraControl.enableTorch(true)
+        ContextCompat.getMainExecutor(context).execute {
+            currentSurfaceProvider = null
+            val provider = cameraProvider ?: return@execute
+            val cameraSelector = if (isBackCamera) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
+            val analysis = imageAnalysis
+            previewUseCase = null
+            if (analysis != null) {
+                provider.unbindAll()
+                try {
+                    val cam = provider.bindToLifecycle(lifecycleOwner, cameraSelector, analysis)
+                    camera = cam
+                    if (torchEnabled && cam.cameraInfo.hasFlashUnit()) {
+                        cam.cameraControl.enableTorch(true)
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("CameraSource", "Failed to detach preview: ${e.message}", e)
                 }
-            } catch (e: Exception) {
-                android.util.Log.e("CameraSource", "Failed to detach preview: ${e.message}", e)
             }
         }
     }

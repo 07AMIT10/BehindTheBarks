@@ -24,6 +24,33 @@ from typing import Any, Awaitable, Callable
 log = logging.getLogger("remote-pipeline")
 
 DOWNLINK_QUEUE = 64
+TORCH_RATE_LIMIT_S = 1.2
+FLIP_RATE_LIMIT_S = 2.5
+TREAT_RATE_LIMIT_S = 3.5
+
+
+def _build_privacy_slate() -> bytes:
+    try:
+        import io
+        from PIL import Image, ImageDraw
+        img = Image.new("RGB", (640, 360), color=(22, 24, 30))
+        d = ImageDraw.Draw(img)
+        d.rectangle([10, 10, 629, 349], outline=(55, 65, 81), width=2)
+        d.text((230, 160), "PRIVACY MODE ACTIVE", fill=(239, 68, 68))
+        d.text((180, 190), "Live camera preview & microphone are muted", fill=(156, 163, 175))
+        b = io.BytesIO()
+        img.save(b, format="JPEG", quality=80)
+        return b.getvalue()
+    except Exception:
+        return (
+            b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00`\x00`\x00\x00"
+            b"\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\t\x08\n\x0c"
+            b"\x14\r\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c"
+            b"\x1c $.' \",#\x1c\x1c(7),01444\x1f'9=82<.342\xff\xc0\x00\x0b\x08\x00\x01"
+            b"\x00\x01\x01\x01\x11\x00\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01"
+            b"\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08"
+            b"\t\n\x0b\xff\xda\x00\x08\x01\x01\x00\x00?\x00\xbf\x00\xff\xd9"
+        )
 
 
 class RemotePipeline:
@@ -58,6 +85,11 @@ class RemotePipeline:
         self.downlinks_sent = 0
         self.downlinks_dropped = 0
         self._torch_enabled = False
+        self._last_torch_ts = 0.0
+        self._last_flip_ts = 0.0
+        self._last_treat_ts = 0.0
+        self._privacy_mode = False
+        self._privacy_jpeg: bytes = _build_privacy_slate()
 
     # -- Pipeline interface -------------------------------------------------------------------
     async def run(self, on_frame_event=None, on_audio_event=None, on_rules_label=None) -> None:
@@ -79,7 +111,9 @@ class RemotePipeline:
             self._flush_task = None
 
     def latest_frame_jpeg(self) -> bytes | None:
-        """The newest preview JPEG the phone sent, or None before the first one."""
+        """The newest preview JPEG the phone sent, or privacy slate in privacy mode, or None before the first one."""
+        if self._privacy_mode:
+            return self._privacy_jpeg
         return self._jpeg
 
     def mark_treat(self, ts: float) -> None:
@@ -123,6 +157,16 @@ class RemotePipeline:
         sent = self._post({"type": "flip", "data": {}})
         log.info("remote: sent camera flip to phone (%s)", "sent" if sent else "no phone")
         return sent
+
+    def set_privacy(self, enabled: bool) -> bool:
+        """Enable or disable family privacy mode remotely (mutes mic & replaces video with privacy slate)."""
+        self._privacy_mode = bool(enabled)
+        sent = self._post({"type": "privacy", "data": {"enabled": self._privacy_mode}})
+        log.info("remote: sent privacy=%s to phone (%s)", self._privacy_mode, "sent" if sent else "no phone")
+        return sent
+
+    def get_privacy(self) -> bool:
+        return self._privacy_mode
 
     # -- phone session --------------------------------------------------------------------------
     def attach(self, session: Any, send: Callable[[dict], Awaitable[None]] | None) -> None:
@@ -246,6 +290,7 @@ class RemotePipeline:
             "downlinks_dropped": self.downlinks_dropped,
             "treats": len(self._treats),
             "torch": self._torch_enabled,
+            "privacy_mode": self._privacy_mode,
         }
 
     def _metrics(self, now: float) -> dict:

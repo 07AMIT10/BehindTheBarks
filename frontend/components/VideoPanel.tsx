@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FrameEvent } from "@/lib/contracts";
 import { durationLabel, hhmmss } from "@/lib/format";
 import { drawOverlay, fitContain, type Layers } from "@/lib/overlay";
@@ -12,12 +12,25 @@ type Props = {
   location: string;
   paused: boolean;
   lastDogTs: number | null;
+  privacyMode?: boolean;
+  onTogglePrivacy?: () => void;
+  token?: string | null;
 };
 
 const chip = "flex h-[30px] items-center rounded-lg px-3 text-[12px]";
 const scrim = { background: "var(--overlay-scrim)" };
 
-export default function VideoPanel({ http, frame, nowSec, location, paused, lastDogTs }: Props) {
+export default function VideoPanel({
+  http,
+  frame,
+  nowSec,
+  location,
+  paused,
+  lastDogTs,
+  privacyMode = false,
+  onTogglePrivacy,
+  token,
+}: Props) {
   const boxRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -58,21 +71,29 @@ export default function VideoPanel({ http, frame, nowSec, location, paused, last
   const [flipping, setFlipping] = useState(false);
   const [snapshotFlash, setSnapshotFlash] = useState(false);
 
+  const getAuthHeaders = useCallback((): Record<string, string> => {
+    const h: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) h["Authorization"] = `Bearer ${token}`;
+    return h;
+  }, [token]);
+
   useEffect(() => {
     // Sync initial torch state from server
-    fetch(`${http}/torch`)
+    const tokenParam = token ? `?token=${encodeURIComponent(token)}` : "";
+    fetch(`${http}/torch${tokenParam}`, { headers: getAuthHeaders() })
       .then((r) => r.json())
       .then((d) => {
         if (typeof d.enabled === "boolean") setTorchOn(d.enabled);
       })
       .catch(() => {});
-  }, [http]);
+  }, [http, token, getAuthHeaders]);
 
   const toggleTorch = async () => {
     try {
-      const res = await fetch(`${http}/torch`, {
+      const tokenParam = token ? `?token=${encodeURIComponent(token)}` : "";
+      const res = await fetch(`${http}/torch${tokenParam}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ enabled: !torchOn }),
       });
       const data = await res.json();
@@ -85,7 +106,8 @@ export default function VideoPanel({ http, frame, nowSec, location, paused, last
   const flipCamera = async () => {
     setFlipping(true);
     try {
-      await fetch(`${http}/camera/flip`, { method: "POST" });
+      const tokenParam = token ? `?token=${encodeURIComponent(token)}` : "";
+      await fetch(`${http}/camera/flip${tokenParam}`, { method: "POST", headers: getAuthHeaders() });
       setTorchOn(false);
     } catch (e) {
       console.warn("Camera flip failed", e);
@@ -140,13 +162,15 @@ export default function VideoPanel({ http, frame, nowSec, location, paused, last
   const toggle = (k: keyof Layers) => setLayers((l) => ({ ...l, [k]: !l[k] }));
   // When the backend restarts, Chrome ends the MJPEG stream without an error event, so the <img> would
   // freeze on its last frame. Keying the stream on `paused` opens a fresh stream once we're live again.
+  const tokenParam = token ? `&token=${encodeURIComponent(token)}` : "";
   const streamId = `${retryKey}${paused ? "p" : ""}`;
+  const videoSrc = `${http}/video?k=${streamId}${tokenParam}`;
 
   return (
     <section aria-label="Live video of the feeding area" ref={boxRef}
       className="relative h-full min-h-[216px] overflow-hidden rounded-xl bg-[#1B1D1F]">
       {/* eslint-disable-next-line @next/next/no-img-element -- MJPEG stream, next/image can't handle it */}
-      <img ref={imgRef} key={streamId} src={`${http}/video?k=${streamId}`} alt=""
+      <img ref={imgRef} key={streamId} src={videoSrc} alt=""
         crossOrigin="anonymous"
         onLoad={() => setVideoOk(true)} onError={onError}
         className="absolute inset-0 h-full w-full object-contain" />
@@ -156,7 +180,25 @@ export default function VideoPanel({ http, frame, nowSec, location, paused, last
         <div className="pointer-events-none absolute inset-0 z-20 bg-white/40 transition-opacity duration-300" />
       )}
 
-      {(paused || !videoOk) && (
+      {privacyMode && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 p-6 text-center text-[#D6D8DB]" style={{ background: "rgba(18, 20, 26, 0.9)", backdropFilter: "blur(12px)" }}>
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-red-500/10 text-red-400 ring-1 ring-red-500/30">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <div className="text-lg font-bold text-white">Family Privacy Active</div>
+          <p className="max-w-xs text-xs text-[#9CA3AF]">
+            Live camera preview & microphone are muted. Tap Privacy below to resume monitoring.
+          </p>
+          {onTogglePrivacy && (
+            <button type="button" onClick={onTogglePrivacy}
+              className="mt-1 rounded-lg bg-red-600/80 px-4 py-1.5 text-xs font-semibold text-white shadow-lg hover:bg-red-500 transition-colors active:scale-95">
+              Resume Monitoring
+            </button>
+          )}
+        </div>
+      )}
+
+      {(paused || !videoOk) && !privacyMode && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center text-[#D6D8DB]" style={scrim}>
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#7FE3E8" strokeWidth="2" strokeLinecap="round"
             style={{ animation: "spin 1.2s linear infinite" }} aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
@@ -199,6 +241,15 @@ export default function VideoPanel({ http, frame, nowSec, location, paused, last
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={flipping ? "animate-spin" : ""} aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
             Flip
           </button>
+          {onTogglePrivacy && (
+            <button type="button" aria-pressed={privacyMode} onClick={onTogglePrivacy}
+              title={privacyMode ? "Disable Privacy Mode (Resume monitoring)" : "Enable Privacy Mode (Mute camera & mic)"}
+              className="flex h-[30px] items-center gap-1.5 rounded-sm px-2.5 text-[12px] font-semibold transition-all active:scale-95"
+              style={privacyMode ? { background: "rgba(239, 68, 68, 0.25)", color: "#FCA5A5", border: "1px solid rgba(239, 68, 68, 0.5)" } : { color: "#A0A5AD" }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              {privacyMode ? "Privacy ON" : "Privacy"}
+            </button>
+          )}
         </div>
 
         <div role="group" aria-label="Overlay layers" className="flex gap-1 rounded-md p-1" style={scrim}>

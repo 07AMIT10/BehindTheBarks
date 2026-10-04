@@ -186,3 +186,8 @@ web:
     dog_name: Bruno
     location: Kitchen
     zone_label: feeding area
+  auth:                       # Access control & security (set BTB_DASHBOARD_PIN or BTB_INGEST_TOKEN in .env)
+    enabled: false            # true to require PIN for dashboard & token for phone ingest
+    dashboard_pin: ""         # e.g. "1234" (or family PIN)
+    ingest_token: ""          # secret token for Android /ingest-events
+    api_token: ""             # bearer token for external API calls

@@ -33,6 +33,8 @@ class InferenceExecutor(
             executor.submit {
                 try {
                     task()
+                } catch (t: Throwable) {
+                    android.util.Log.e("InferenceExecutor", "Inference task threw exception: ${t.message}", t)
                 } finally {
                     busy.set(false)
                 }

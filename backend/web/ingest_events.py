@@ -56,6 +56,7 @@ class RemoteHello:
     models: dict[str, Any] = field(default_factory=dict)
     profile: str = "mobile"
     proto: int = PROTO
+    token: str | None = None
 
 
 def _num(msg: dict, key: str, lo: float, hi: float) -> float:
@@ -97,12 +98,15 @@ def parse_remote_hello(text: str | None) -> RemoteHello:
     proto = msg.get("proto", PROTO)
     if isinstance(proto, bool) or not isinstance(proto, int) or proto != PROTO:
         raise HelloError(f"hello.proto must be {PROTO}")
+    tok = msg.get("token")
+    token_str = str(tok).strip() if tok is not None and isinstance(tok, str) else None
     return RemoteHello(
         device=_name(msg, "device", MAX_DEVICE_LEN, ""),
         phone_time=_num(msg, "phone_time", MIN_EPOCH, MAX_EPOCH),
         models=_models(msg),
         profile=_name(msg, "profile", MAX_NAME_LEN, "mobile"),
         proto=proto,
+        token=token_str,
     )
 
 
