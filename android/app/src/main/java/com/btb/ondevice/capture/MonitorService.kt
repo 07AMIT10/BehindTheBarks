@@ -158,7 +158,7 @@ class MonitorService : Service(), LifecycleOwner {
         }
 
         val prefs = getSharedPreferences("btb_station_prefs", Context.MODE_PRIVATE)
-        val defaultUrl = prefs.getString("server_url", DEFAULT_CLOUD_URL) ?: DEFAULT_CLOUD_URL
+        val defaultUrl = prefs.getString("server_url", DEFAULT_SERVER_URL) ?: DEFAULT_SERVER_URL
         val defaultDevice = prefs.getString("device_name", Build.MODEL) ?: Build.MODEL
         val defaultToken = prefs.getString("access_token", "")?.takeIf { it.isNotBlank() }
 
@@ -586,6 +586,6 @@ class MonitorService : Service(), LifecycleOwner {
         const val EXTRA_SERVER_URL = "extra_server_url"
         const val EXTRA_DEVICE_NAME = "extra_device_name"
         const val EXTRA_TOKEN = "extra_token"
-        const val DEFAULT_CLOUD_URL = "wss://lighter-drew-leone-basement.trycloudflare.com/ingest-events"
+        const val DEFAULT_SERVER_URL = "ws://10.0.2.2:8000/ingest-events"
     }
 }

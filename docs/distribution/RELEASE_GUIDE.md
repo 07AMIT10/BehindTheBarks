@@ -68,8 +68,8 @@ $ANDROID_HOME/build-tools/35.0.0/zipalign -c -P 16 4 android/app/build/outputs/a
 ### Store Listing Assets (Located in `fastlane/metadata/android/en-US/`)
 - **Title (<= 30 chars)**: `WagWatch: Dog Emotion Monitor`
 - **Short Description (<= 80 chars)**: `Contactless on-device dog emotional perception & well-being monitor.`
-- **Full Description (<= 4000 chars)**: See [`fastlane/metadata/android/en-US/full_description.txt`](file:///home/amit/hck/cc/Behind_The_Barks/fastlane/metadata/android/en-US/full_description.txt).
-- **Privacy Policy URL**: Host [`PRIVACY_POLICY.md`](file:///home/amit/hck/cc/Behind_The_Barks/PRIVACY_POLICY.md) on your public GitHub Pages or project website.
+- **Full Description (<= 4000 chars)**: See [`fastlane/metadata/android/en-US/full_description.txt`](../../fastlane/metadata/android/en-US/full_description.txt).
+- **Privacy Policy URL**: Host [`PRIVACY_POLICY.md`](../../PRIVACY_POLICY.md) on your public GitHub Pages or project website.
 
 ### Data Safety Form Declarations
 When filling out the Google Play Data Safety questionnaire:
@@ -88,7 +88,7 @@ When filling out the Google Play Data Safety questionnaire:
 WagWatch complies with all F-Droid free software guidelines (Apache 2.0 license, no proprietary tracking binaries, models open/reproducible).
 
 1. Fork `https://gitlab.com/fdroid/fdroiddata`.
-2. Add the metadata descriptor from [`metadata/com.btb.ondevice.yml`](file:///home/amit/hck/cc/Behind_The_Barks/metadata/com.btb.ondevice.yml) to `metadata/com.btb.ondevice.yml`.
+2. Add the metadata descriptor from [`metadata/com.btb.ondevice.yml`](../../metadata/com.btb.ondevice.yml) to `metadata/com.btb.ondevice.yml`.
 3. Submit a Merge Request titled: `Add com.btb.ondevice (WagWatch)`.
 
 ---

@@ -263,7 +263,7 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.parseColor("#1565C0"))
             setTextColor(Color.WHITE)
             setOnClickListener {
-                urlEditText.setText(CLOUD_URL)
+                showCloudPrompt()
             }
         }
         presetsLayout.addView(cloudPreset, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f).apply { rightMargin = 8 })
@@ -715,6 +715,37 @@ class MainActivity : Activity() {
             .show()
     }
 
+    private fun showCloudPrompt() {
+        val input = EditText(this).apply {
+            hint = "e.g. your-tunnel.trycloudflare.com"
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.GRAY)
+            val current = urlEditText.text.toString()
+            val match = Regex("""wss://([^/]+)""").find(current)
+            if (match != null) {
+                setText(match.groupValues[1])
+            }
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Cloud WSS Server")
+            .setMessage("Enter the domain or Cloudflare Tunnel of your Behind The Barks server:")
+            .setView(input)
+            .setPositiveButton("Set URL") { _, _ ->
+                val domain = input.text.toString().trim()
+                    .removePrefix("https://")
+                    .removePrefix("http://")
+                    .removePrefix("wss://")
+                    .removePrefix("ws://")
+                    .removeSuffix("/ingest-events")
+                    .removeSuffix("/")
+                if (domain.isNotEmpty()) {
+                    urlEditText.setText("wss://$domain/ingest-events")
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     private fun handlePaste() {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
         val clip = clipboard?.primaryClip
@@ -893,7 +924,6 @@ class MainActivity : Activity() {
         private const val KEY_TOKEN = "access_token"
         private const val KEY_BATTERY_TIP_SHOWN = "battery_tip_shown"
         private const val KEY_STATION_TIP_SHOWN = "station_tip_shown"
-        private const val CLOUD_URL = "wss://lighter-drew-leone-basement.trycloudflare.com/ingest-events"
-        private const val DEFAULT_URL = CLOUD_URL
+        private const val DEFAULT_URL = "ws://10.0.2.2:8000/ingest-events"
     }
 }
