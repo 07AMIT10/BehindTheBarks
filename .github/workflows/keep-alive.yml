@@ -2,8 +2,8 @@ name: Keep Backend Alive
 
 on:
   schedule:
-    # Runs every 12 minutes (Render free tier sleeps after 15 minutes of inactivity)
-    - cron: '*/12 * * * *'
+    # Runs every 10 minutes with randomized internal jitter to avoid robotic fixed-interval patterns
+    - cron: '*/10 * * * *'
   workflow_dispatch:
 
 concurrency:
@@ -15,7 +15,7 @@ jobs:
     name: Ping Health Endpoint
     runs-on: ubuntu-latest
     steps:
-      - name: Send keep-alive ping
+      - name: Send randomized keep-alive ping
         env:
           TARGET_URL: ${{ vars.BACKEND_URL || secrets.BACKEND_URL }}
         run: |
@@ -23,11 +23,32 @@ jobs:
             echo "ℹ️ No BACKEND_URL variable or secret configured yet in GitHub settings. Skipping ping."
             exit 0
           fi
-          # Strip trailing slash if present
+
+          # 1. Randomized jitter delay (20 to 160 seconds) so intervals are non-deterministic
+          JITTER=$((RANDOM % 141 + 20))
+          echo "🎲 Applying ${JITTER}s randomized jitter to avoid pattern detection..."
+          sleep "$JITTER"
+
+          # 2. Rotate realistic browser User-Agents
+          UAS=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15"
+            "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
+          )
+          SELECTED_UA="${UAS[$((RANDOM % ${#UAS[@]}))]}"
+
+          # 3. Rotate endpoints (/health or /auth/status)
+          ENDPOINTS=("/health" "/auth/status")
+          SELECTED_ENDPOINT="${ENDPOINTS[$((RANDOM % ${#ENDPOINTS[@]}))]}"
+
           URL="${TARGET_URL%/}"
-          echo "Pinging ${URL}/health..."
-          HTTP_STATUS=$(curl -s -L -o /dev/null -w "%{http_code}" --max-time 45 "${URL}/health" || echo "failed")
+          TARGET_ENDPOINT="${URL}${SELECTED_ENDPOINT}"
+          echo "🌐 Pinging ${TARGET_ENDPOINT} with UA: ${SELECTED_UA:0:30}..."
+
+          HTTP_STATUS=$(curl -s -L -o /dev/null -w "%{http_code}" -A "$SELECTED_UA" --max-time 45 "$TARGET_ENDPOINT" || echo "failed")
           echo "Result HTTP Status: $HTTP_STATUS"
+
           if [ "$HTTP_STATUS" = "200" ]; then
             echo "✅ Backend is healthy and awake!"
           else
