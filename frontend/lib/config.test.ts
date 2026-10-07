@@ -17,4 +17,9 @@ describe("backendBase", () => {
       http: "https://b.example", ws: "wss://b.example",
     });
   });
+  it("https protocol uses standard origin without port 8000", () => {
+    expect(backendBase({ search: "", env: "", protocol: "https:", hostname: "behind-the-barks.onrender.com" })).toEqual({
+      http: "https://behind-the-barks.onrender.com", ws: "wss://behind-the-barks.onrender.com",
+    });
+  });
 });

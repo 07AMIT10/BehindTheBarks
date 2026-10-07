@@ -18,5 +18,8 @@ export function backendBase(opts: Opts = {}): BackendBase {
   if (env) return normalise(env);
   const protocol = opts.protocol ?? loc?.protocol ?? "http:";
   const hostname = opts.hostname ?? loc?.hostname ?? "localhost";
+  if (protocol === "https:") {
+    return normalise(loc?.origin ?? `https://${hostname}`);
+  }
   return normalise(`${protocol}//${hostname}:8000`);
 }
