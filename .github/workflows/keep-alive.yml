@@ -1,0 +1,35 @@
+name: Keep Backend Alive
+
+on:
+  schedule:
+    # Runs every 12 minutes (Render free tier sleeps after 15 minutes of inactivity)
+    - cron: '*/12 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: keep-alive-backend
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    name: Ping Health Endpoint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send keep-alive ping
+        env:
+          TARGET_URL: ${{ vars.BACKEND_URL || secrets.BACKEND_URL }}
+        run: |
+          if [ -z "$TARGET_URL" ]; then
+            echo "ℹ️ No BACKEND_URL variable or secret configured yet in GitHub settings. Skipping ping."
+            exit 0
+          fi
+          # Strip trailing slash if present
+          URL="${TARGET_URL%/}"
+          echo "Pinging ${URL}/health..."
+          HTTP_STATUS=$(curl -s -L -o /dev/null -w "%{http_code}" --max-time 45 "${URL}/health" || echo "failed")
+          echo "Result HTTP Status: $HTTP_STATUS"
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "✅ Backend is healthy and awake!"
+          else
+            echo "⚠️ Health check returned status: $HTTP_STATUS"
+          fi
