@@ -11,6 +11,7 @@ import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
@@ -426,6 +427,11 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             if detach is not None:
                 detach(session)
             rt.phone_close(session, code)
+
+    frontend_out = Path(__file__).resolve().parent.parent / "frontend" / "out"
+    if frontend_out.is_dir():
+        from fastapi.staticfiles import StaticFiles
+        app.mount("/", StaticFiles(directory=str(frontend_out), html=True), name="frontend")
 
     return app
 

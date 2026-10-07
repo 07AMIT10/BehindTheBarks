@@ -457,6 +457,25 @@ class MainActivity : Activity() {
     }
 
     private fun handleIntent(intent: Intent?) {
+        val uri = intent?.data
+        if (uri != null && (uri.scheme == "wagwatch" || uri.scheme == "btb")) {
+            val linkUrl = uri.getQueryParameter("url")
+            val linkToken = uri.getQueryParameter("token")
+            val linkDevice = uri.getQueryParameter("device")
+            if (!linkUrl.isNullOrBlank()) {
+                urlEditText.setText(linkUrl)
+                prefs.edit().putString(KEY_URL, linkUrl).apply()
+            }
+            if (!linkToken.isNullOrBlank()) {
+                prefs.edit().putString(KEY_TOKEN, linkToken).apply()
+            }
+            if (!linkDevice.isNullOrBlank()) {
+                deviceEditText.setText(linkDevice)
+                prefs.edit().putString(KEY_DEVICE, linkDevice).apply()
+            }
+            Toast.makeText(this, "✓ Paired to Server via Link!", Toast.LENGTH_SHORT).show()
+        }
+
         val extraUrl = intent?.getStringExtra("extra_server_url") ?: intent?.getStringExtra("url")
         if (!extraUrl.isNullOrBlank()) {
             urlEditText.setText(extraUrl)
@@ -924,6 +943,6 @@ class MainActivity : Activity() {
         private const val KEY_TOKEN = "access_token"
         private const val KEY_BATTERY_TIP_SHOWN = "battery_tip_shown"
         private const val KEY_STATION_TIP_SHOWN = "station_tip_shown"
-        private const val DEFAULT_URL = "ws://10.0.2.2:8000/ingest-events"
+        private val DEFAULT_URL = com.btb.ondevice.BuildConfig.DEFAULT_INGEST_URL
     }
 }

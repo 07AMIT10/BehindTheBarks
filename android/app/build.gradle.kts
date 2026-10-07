@@ -24,6 +24,11 @@ android {
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
+
+        val defaultIngestUrl = project.findProperty("btbDefaultIngestUrl") as? String
+            ?: System.getenv("BTB_DEFAULT_INGEST_URL")
+            ?: "ws://10.0.2.2:8000/ingest-events"
+        buildConfigField("String", "DEFAULT_INGEST_URL", "\"$defaultIngestUrl\"")
     }
 
     signingConfigs {
