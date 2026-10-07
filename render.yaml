@@ -12,7 +12,6 @@ services:
       - key: WEB_PIPELINE
         value: remote
       - key: BTB_DASHBOARD_PIN
-        sync: false
         value: "1234"
       - key: PYTHON_VERSION
         value: "3.12.3"
