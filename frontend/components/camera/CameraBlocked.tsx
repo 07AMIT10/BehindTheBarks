@@ -20,7 +20,7 @@ export default function CameraBlocked({ dogName, error, onRetry, onMicOnly }: Pr
         </div>
         <div className="flex flex-col gap-2">
           <h1 className="m-0 text-[26px] font-bold leading-[1.2]">Camera access is blocked</h1>
-          <p className="m-0 text-[15px] leading-normal text-muted">Claude Pet needs the camera to see {dogName}’s posture and face. Your browser blocked it for this site.</p>
+          <p className="m-0 text-[15px] leading-normal text-muted">WagWatch needs the camera to see {dogName}’s posture and face. Your browser blocked it for this site.</p>
         </div>
         <ol className="m-0 flex list-none flex-col gap-3 rounded-lg border border-border bg-surface p-4 text-[14px] leading-[1.4]">
           {STEPS.map((s, i) => (

@@ -37,7 +37,7 @@ function CameraBlocked({ status, onDemo }: { status: Status | null; onDemo?: () 
         </svg>
       </div>
       <div className="text-[18px] font-bold">Camera blocked on the camera phone</div>
-      <div className="max-w-[380px] text-[14px] leading-[1.45] text-muted">Open Claude Pet on that phone and allow camera access, or play a demo clip instead.</div>
+      <div className="max-w-[380px] text-[14px] leading-[1.45] text-muted">Open WagWatch on that phone and allow camera access, or play a demo clip instead.</div>
       <div className="flex gap-2.5">
         <button type="button" aria-expanded={showFix} onClick={() => setShowFix((v) => !v)}
           className="h-11 rounded-md bg-accent px-4 text-[14px] font-bold text-accent-fg">How to fix</button>
@@ -47,7 +47,7 @@ function CameraBlocked({ status, onDemo }: { status: Status | null; onDemo?: () 
       </div>
       {showFix && (
         <ol className="m-0 flex list-none flex-col gap-2 rounded-md bg-surface-2 p-4 text-left text-[14px] leading-[1.4]">
-          <li className="text-small font-semibold text-muted">On the camera phone, on the Claude Pet camera page:</li>
+          <li className="text-small font-semibold text-muted">On the camera phone, on the WagWatch camera page:</li>
           {FIX_STEPS.map((s, i) => (
             <li key={s} className="flex gap-3">
               <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-surface text-[12px] font-bold">{i + 1}</span>
@@ -64,7 +64,7 @@ export default function SystemNotice({ connected, everConnected, reconnectAttemp
   if (!connected && everConnected) {
     return (
       <Banner>
-        <span className="font-bold text-text">Reconnecting to Claude Pet</span>
+        <span className="font-bold text-text">Reconnecting to WagWatch</span>
         <span>attempt {reconnectAttempt}</span>
         {lastFrameTs && <span className="font-mono">last frame {hhmmss(lastFrameTs)}</span>}
       </Banner>

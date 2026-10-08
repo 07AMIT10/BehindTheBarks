@@ -82,7 +82,7 @@ export default function Dashboard() {
 
   return (
     <div className={projector ? "projector" : undefined}>
-      <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-4 px-4 pb-28 pt-3 lg:gap-5 lg:p-8">
+      <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-3 px-3 pb-28 pt-2 sm:gap-4 sm:px-4 lg:gap-5 lg:p-8">
         <Header dogName={profile.dog_name} location={profile.location}>
           <button
             type="button"
@@ -127,8 +127,8 @@ export default function Dashboard() {
           </>
         ) : (
           <>
-          <div className="grid gap-4 [grid-template-areas:'card'_'video'_'signals'] lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:grid-rows-[auto_auto_1fr] lg:gap-6 lg:[grid-template-areas:'video_card'_'video_treat'_'video_signals']">
-            <div className="min-h-[216px] [grid-area:video] lg:min-h-[480px]">
+          <div className="grid gap-3 sm:gap-4 [grid-template-areas:'video'_'card'_'signals'] lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:grid-rows-[auto_auto_1fr] lg:gap-6 lg:[grid-template-areas:'video_card'_'video_treat'_'video_signals']">
+            <div className="min-h-[260px] sm:min-h-[340px] lg:min-h-[480px] [grid-area:video]">
               <VideoPanel
                 http={backend.http}
                 frame={state.frame}

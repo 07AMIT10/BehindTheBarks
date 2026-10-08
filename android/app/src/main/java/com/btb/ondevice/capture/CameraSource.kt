@@ -1,8 +1,12 @@
 package com.btb.ondevice.capture
 
 import android.content.Context
+import android.os.Build
 import android.os.SystemClock
 import android.util.Size
+import android.view.OrientationEventListener
+import android.view.Surface
+import android.view.WindowManager
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -36,6 +40,8 @@ class CameraSource(
     private var torchEnabled: Boolean = false
     private var currentSurfaceProvider: Preview.SurfaceProvider? = null
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
+    private var currentTargetRotation: Int = Surface.ROTATION_0
+    private var orientationEventListener: OrientationEventListener? = null
 
     private val minFrameIntervalNs = (1_000_000_000.0 / targetFps).toLong()
     private var lastFrameTimeNs = 0L
@@ -44,6 +50,17 @@ class CameraSource(
     private val bootToEpochOffsetS = (System.currentTimeMillis() / 1000.0) - (SystemClock.elapsedRealtimeNanos() / 1e9)
 
     fun start(surfaceProvider: Preview.SurfaceProvider? = null) {
+        val wm = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+        @Suppress("DEPRECATION")
+        val initialRotation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            context.display?.rotation ?: Surface.ROTATION_0
+        } else {
+            wm?.defaultDisplay?.rotation ?: Surface.ROTATION_0
+        }
+        currentTargetRotation = initialRotation
+
+        setupOrientationListener()
+
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
             try {
@@ -53,6 +70,32 @@ class CameraSource(
                 // Handle camera initialization failure
             }
         }, ContextCompat.getMainExecutor(context))
+    }
+
+    private fun setupOrientationListener() {
+        try {
+            orientationEventListener = object : OrientationEventListener(context) {
+                override fun onOrientationChanged(orientation: Int) {
+                    if (orientation == ORIENTATION_UNKNOWN) return
+                    val newRotation = when (orientation) {
+                        in 45..134 -> Surface.ROTATION_270
+                        in 135..224 -> Surface.ROTATION_180
+                        in 225..314 -> Surface.ROTATION_90
+                        else -> Surface.ROTATION_0
+                    }
+                    if (newRotation != currentTargetRotation) {
+                        currentTargetRotation = newRotation
+                        imageAnalysis?.targetRotation = newRotation
+                        previewUseCase?.targetRotation = newRotation
+                    }
+                }
+            }
+            if (orientationEventListener?.canDetectOrientation() == true) {
+                orientationEventListener?.enable()
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("CameraSource", "Orientation listener unavailable: ${e.message}")
+        }
     }
 
     private fun bindCamera(surfaceProvider: Preview.SurfaceProvider?) {
@@ -81,6 +124,7 @@ class CameraSource(
             .setResolutionSelector(resolutionSelector)
             .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .setTargetRotation(currentTargetRotation)
             .build()
 
         analysis.setAnalyzer(executor) { imageProxy ->
@@ -95,7 +139,9 @@ class CameraSource(
         val useCases = mutableListOf<androidx.camera.core.UseCase>(analysis)
 
         if (surfaceProvider != null) {
-            val preview = Preview.Builder().build()
+            val preview = Preview.Builder()
+                .setTargetRotation(currentTargetRotation)
+                .build()
             preview.setSurfaceProvider(surfaceProvider)
             previewUseCase = preview
             useCases.add(preview)
@@ -117,7 +163,9 @@ class CameraSource(
             currentSurfaceProvider = surfaceProvider
             val provider = cameraProvider ?: return@execute
             val cameraSelector = if (isBackCamera) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
-            val preview = Preview.Builder().build()
+            val preview = Preview.Builder()
+                .setTargetRotation(currentTargetRotation)
+                .build()
             preview.setSurfaceProvider(surfaceProvider)
             previewUseCase = preview
 
@@ -224,6 +272,8 @@ class CameraSource(
     }
 
     fun stop() {
+        orientationEventListener?.disable()
+        orientationEventListener = null
         cameraProvider?.unbindAll()
         cameraProvider = null
         imageAnalysis = null

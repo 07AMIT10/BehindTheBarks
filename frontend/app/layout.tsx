@@ -6,8 +6,8 @@ const hanken = Hanken_Grotesk({ variable: "--font-hanken", subsets: ["latin"], w
 const plexMono = IBM_Plex_Mono({ variable: "--font-plex-mono", subsets: ["latin"], weight: ["400", "500"] });
 
 export const metadata: Metadata = {
-  title: "Claude Pet",
-  description: "Live emotion monitor for your dog's feeding area",
+  title: "WagWatch · Behind The Barks",
+  description: "Real-time multimodal dog perception and well-being monitor",
 };
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover" };

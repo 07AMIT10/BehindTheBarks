@@ -116,6 +116,10 @@ export default function VideoPanel({
     }
   };
 
+  const [rotation, setRotation] = useState<0 | 90 | 180 | 270>(0);
+  const isSideways = rotation === 90 || rotation === 270;
+  const rotateVideo = () => setRotation((r) => ((r + 90) % 360) as 0 | 90 | 180 | 270);
+
   const takeSnapshot = () => {
     const img = imgRef.current;
     if (!img) return;
@@ -125,12 +129,17 @@ export default function VideoPanel({
     const w = img.naturalWidth || 640;
     const h = img.naturalHeight || 480;
     const exportCanvas = document.createElement("canvas");
-    exportCanvas.width = w;
-    exportCanvas.height = h;
+    exportCanvas.width = isSideways ? h : w;
+    exportCanvas.height = isSideways ? w : h;
     const ctx = exportCanvas.getContext("2d");
     if (!ctx) return;
 
     try {
+      if (rotation !== 0) {
+        ctx.translate(exportCanvas.width / 2, exportCanvas.height / 2);
+        ctx.rotate((rotation * Math.PI) / 180);
+        ctx.translate(-w / 2, -h / 2);
+      }
       ctx.drawImage(img, 0, 0, w, h);
       if (frame) {
         drawOverlay(ctx, frame, { scale: 1, dx: 0, dy: 0 }, layers, 1);
@@ -143,7 +152,7 @@ export default function VideoPanel({
           const d = new Date();
           const pad = (n: number) => String(n).padStart(2, "0");
           const dateStr = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-          link.download = `bruno-${dateStr}.jpg`;
+          link.download = `wagwatch-${dateStr}.jpg`;
           link.href = url;
           link.click();
           URL.revokeObjectURL(url);
@@ -168,13 +177,24 @@ export default function VideoPanel({
 
   return (
     <section aria-label="Live video of the feeding area" ref={boxRef}
-      className="relative h-full min-h-[216px] overflow-hidden rounded-xl bg-[#1B1D1F]">
-      {/* eslint-disable-next-line @next/next/no-img-element -- MJPEG stream, next/image can't handle it */}
-      <img ref={imgRef} key={streamId} src={videoSrc} alt=""
-        crossOrigin="anonymous"
-        onLoad={() => setVideoOk(true)} onError={onError}
-        className="absolute inset-0 h-full w-full object-contain" />
-      <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
+      className="relative h-full min-h-[260px] sm:min-h-[320px] lg:min-h-[480px] overflow-hidden rounded-xl bg-[#1B1D1F]">
+      <div
+        className="absolute inset-0 flex items-center justify-center transition-transform duration-300"
+        style={{
+          transform: `rotate(${rotation}deg)${
+            isSideways && size.w > 0 && size.h > 0
+              ? ` scale(${Math.min(size.w / size.h, size.h / size.w)})`
+              : ""
+          }`,
+        }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element -- MJPEG stream, next/image can't handle it */}
+        <img ref={imgRef} key={streamId} src={videoSrc} alt=""
+          crossOrigin="anonymous"
+          onLoad={() => setVideoOk(true)} onError={onError}
+          className="h-full w-full object-contain" />
+        <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
+      </div>
 
       {snapshotFlash && (
         <div className="pointer-events-none absolute inset-0 z-20 bg-white/40 transition-opacity duration-300" />
@@ -207,59 +227,82 @@ export default function VideoPanel({
         </div>
       )}
 
-      <div className="absolute left-4 top-4 flex flex-wrap gap-2">
-        <div className={`${chip} gap-2 font-bold tracking-[0.06em] text-white`} style={scrim}>
-          <span className="h-2 w-2 rounded-full" style={{ background: "var(--live)" }} />LIVE
-          <span className="font-mono font-normal tracking-normal text-[#D6D8DB]">{hhmmss(nowSec)}</span>
-        </div>
-        <div className={`${chip} text-[#D6D8DB]`} style={scrim}>{location} · bowl cam</div>
-        {noDog && (
-          <div className={`${chip} gap-1 text-white`} style={scrim}>
-            No dog in view{lastDogTs && <span className="font-mono text-[#A0A5AD]">· {durationLabel(nowSec - lastDogTs)}</span>}
+      {/* Top status bar: Live indicator + Rotate button + Dog status */}
+      <div className="absolute inset-x-3 top-3 flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+          <div className={`${chip} gap-1.5 sm:gap-2 font-bold tracking-[0.06em] text-white text-[11px] sm:text-[12px]`} style={scrim}>
+            <span className="h-2 w-2 rounded-full" style={{ background: "var(--live)" }} />LIVE
+            <span className="font-mono font-normal tracking-normal text-[#D6D8DB]">{hhmmss(nowSec)}</span>
           </div>
-        )}
-      </div>
-
-      <div className="absolute inset-x-4 bottom-4 flex flex-wrap items-center gap-2">
-        <div className={`${chip} gap-3 text-[#D6D8DB]`} style={scrim}><span>Pose {kp} kp</span><span>Face {facePts} pts</span></div>
-        <div className="grow" />
-
-        <div role="group" aria-label="Camera controls" className="flex gap-1 rounded-md p-1" style={scrim}>
-          <button type="button" onClick={takeSnapshot} title="Save instant photo of Bruno"
-            className="flex h-[30px] items-center gap-1.5 rounded-sm px-2.5 text-[12px] font-semibold text-[#D6D8DB] hover:text-white transition-colors active:scale-95">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-            Photo
-          </button>
-          <button type="button" aria-pressed={torchOn} onClick={toggleTorch} title={torchOn ? "Turn off room light" : "Turn on room light"}
-            className="flex h-[30px] items-center gap-1.5 rounded-sm px-2.5 text-[12px] font-semibold transition-all active:scale-95"
-            style={torchOn ? { background: "rgba(255, 235, 59, 0.22)", color: "#FFF59D", boxShadow: "0 0 8px rgba(255, 235, 59, 0.35)" } : { color: "#A0A5AD" }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2v1"/><path d="M12 7a5 5 0 0 0-5 5c0 2 1.5 3.5 2.5 4.5.5.5.5 1.5.5 1.5h4s0-1 .5-1.5c1-1 2.5-2.5 2.5-4.5a5 5 0 0 0-5-5z"/></svg>
-            {torchOn ? "Light ON" : "Light"}
-          </button>
-          <button type="button" onClick={flipCamera} disabled={flipping} title="Switch between front and back camera"
-            className="flex h-[30px] items-center gap-1.5 rounded-sm px-2.5 text-[12px] font-semibold text-[#D6D8DB] hover:text-white transition-all active:scale-95 disabled:opacity-50">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={flipping ? "animate-spin" : ""} aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
-            Flip
-          </button>
-          {onTogglePrivacy && (
-            <button type="button" aria-pressed={privacyMode} onClick={onTogglePrivacy}
-              title={privacyMode ? "Disable Privacy Mode (Resume monitoring)" : "Enable Privacy Mode (Mute camera & mic)"}
-              className="flex h-[30px] items-center gap-1.5 rounded-sm px-2.5 text-[12px] font-semibold transition-all active:scale-95"
-              style={privacyMode ? { background: "rgba(239, 68, 68, 0.25)", color: "#FCA5A5", border: "1px solid rgba(239, 68, 68, 0.5)" } : { color: "#A0A5AD" }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-              {privacyMode ? "Privacy ON" : "Privacy"}
-            </button>
+          <div className={`${chip} text-[#D6D8DB] text-[11px] sm:text-[12px] hidden sm:flex`} style={scrim}>{location} · bowl cam</div>
+          {noDog && (
+            <div className={`${chip} gap-1 text-white text-[11px] sm:text-[12px]`} style={scrim}>
+              No dog in view{lastDogTs && <span className="font-mono text-[#A0A5AD]">· {durationLabel(nowSec - lastDogTs)}</span>}
+            </div>
           )}
         </div>
 
-        <div role="group" aria-label="Overlay layers" className="flex gap-1 rounded-md p-1" style={scrim}>
-          {(["box", "skeleton", "face"] as const).map((k) => (
-            <button key={k} type="button" aria-pressed={layers[k]} onClick={() => toggle(k)}
-              className="h-[30px] rounded-sm px-2.5 text-[12px] font-semibold"
-              style={layers[k] ? { background: "rgba(127,227,232,.18)", color: "#BFF2F4" } : { color: "#A0A5AD" }}>
-              {k === "box" ? "Box" : k === "skeleton" ? "Skeleton" : "Face"}
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={rotateVideo}
+            title={`Rotate stream 90° clockwise (current: ${rotation}°)`}
+            className="flex h-[30px] items-center gap-1.5 rounded-lg px-2.5 text-[11px] sm:text-[12px] font-semibold text-[#D6D8DB] hover:text-white transition-all active:scale-95 border border-white/10"
+            style={scrim}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+            </svg>
+            <span>{rotation !== 0 ? `${rotation}°` : "Rotate"}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Bottom controls bar: responsive and mobile-adaptive */}
+      <div className="absolute inset-x-2 sm:inset-x-4 bottom-2 sm:bottom-4 flex flex-wrap items-center justify-between gap-1.5 sm:gap-2">
+        <div className={`${chip} gap-2 text-[#D6D8DB] text-[11px] sm:text-[12px]`} style={scrim}>
+          <span>Pose {kp} kp</span>
+          <span>Face {facePts} pts</span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          <div role="group" aria-label="Camera controls" className="flex gap-0.5 sm:gap-1 rounded-md p-0.5 sm:p-1" style={scrim}>
+            <button type="button" onClick={takeSnapshot} title="Save instant photo"
+              className="flex h-[28px] sm:h-[30px] items-center gap-1 rounded-sm px-2 sm:px-2.5 text-[11px] sm:text-[12px] font-semibold text-[#D6D8DB] hover:text-white transition-colors active:scale-95">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+              <span className="hidden sm:inline">Photo</span>
             </button>
-          ))}
+            <button type="button" aria-pressed={torchOn} onClick={toggleTorch} title={torchOn ? "Turn off room light" : "Turn on room light"}
+              className="flex h-[28px] sm:h-[30px] items-center gap-1 rounded-sm px-2 sm:px-2.5 text-[11px] sm:text-[12px] font-semibold transition-all active:scale-95"
+              style={torchOn ? { background: "rgba(255, 235, 59, 0.22)", color: "#FFF59D", boxShadow: "0 0 8px rgba(255, 235, 59, 0.35)" } : { color: "#A0A5AD" }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2v1"/><path d="M12 7a5 5 0 0 0-5 5c0 2 1.5 3.5 2.5 4.5.5.5.5 1.5.5 1.5h4s0-1 .5-1.5c1-1 2.5-2.5 2.5-4.5a5 5 0 0 0-5-5z"/></svg>
+              <span>{torchOn ? "Light ON" : "Light"}</span>
+            </button>
+            <button type="button" onClick={flipCamera} disabled={flipping} title="Switch between front and back camera"
+              className="flex h-[28px] sm:h-[30px] items-center gap-1 rounded-sm px-2 sm:px-2.5 text-[11px] sm:text-[12px] font-semibold text-[#D6D8DB] hover:text-white transition-all active:scale-95 disabled:opacity-50">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={flipping ? "animate-spin" : ""} aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
+              <span className="hidden sm:inline">Flip</span>
+            </button>
+            {onTogglePrivacy && (
+              <button type="button" aria-pressed={privacyMode} onClick={onTogglePrivacy}
+                title={privacyMode ? "Disable Privacy Mode (Resume monitoring)" : "Enable Privacy Mode (Mute camera & mic)"}
+                className="flex h-[28px] sm:h-[30px] items-center gap-1 rounded-sm px-2 sm:px-2.5 text-[11px] sm:text-[12px] font-semibold transition-all active:scale-95"
+                style={privacyMode ? { background: "rgba(239, 68, 68, 0.25)", color: "#FCA5A5", border: "1px solid rgba(239, 68, 68, 0.5)" } : { color: "#A0A5AD" }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                <span>{privacyMode ? "Privacy ON" : "Privacy"}</span>
+              </button>
+            )}
+          </div>
+
+          <div role="group" aria-label="Overlay layers" className="flex gap-0.5 sm:gap-1 rounded-md p-0.5 sm:p-1" style={scrim}>
+            {(["box", "skeleton", "face"] as const).map((k) => (
+              <button key={k} type="button" aria-pressed={layers[k]} onClick={() => toggle(k)}
+                className="h-[28px] sm:h-[30px] rounded-sm px-2 sm:px-2.5 text-[11px] sm:text-[12px] font-semibold transition-colors"
+                style={layers[k] ? { background: "rgba(127,227,232,.18)", color: "#BFF2F4" } : { color: "#A0A5AD" }}>
+                {k === "box" ? "Box" : k === "skeleton" ? "Skel" : "Face"}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
     </section>

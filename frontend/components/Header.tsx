@@ -14,14 +14,17 @@ export default function Header({ dogName, location, children }: Props) {
     <header className="flex h-[52px] items-center gap-3 lg:h-12 lg:gap-6">
       <div className="hidden items-center gap-3 lg:flex">
         <Logo size={32} />
-        <div className="text-[20px] font-bold tracking-[-0.01em]">Claude Pet</div>
+        <div className="flex flex-col">
+          <div className="text-[19px] font-bold tracking-[-0.01em] leading-tight text-text">WagWatch</div>
+          <div className="text-[11px] font-medium text-accent tracking-wide uppercase">Behind The Barks</div>
+        </div>
       </div>
       <div className="hidden h-7 w-px bg-border lg:block" />
-      <div className="flex items-center gap-3 lg:hidden"><Logo size={28} /></div>
+      <div className="flex items-center gap-2 lg:hidden"><Logo size={28} /></div>
       <div className="flex min-w-0 flex-col gap-0.5">
-        <div className="truncate text-heading font-bold lg:text-body lg:font-semibold">{dogName}</div>
+        <div className="truncate text-heading font-bold lg:text-body lg:font-semibold text-text">{dogName}</div>
         <div className="truncate text-[12px] text-muted lg:text-small">
-          <span className="lg:hidden">Claude Pet · {location}</span>
+          <span className="lg:hidden">WagWatch · {location}</span>
           <span className="hidden lg:inline">Feeding area · {location}</span>
         </div>
       </div>
