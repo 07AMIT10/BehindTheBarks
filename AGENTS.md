@@ -99,3 +99,19 @@ adb install -r android/app/build/outputs/apk/release/app-release.apk
 4. **Android Camera HAL Sleep Traps**:
    - When the phone's physical power button is pressed, Android CameraService HAL forcefully closes the camera session even for foreground services.
    - Always instruct users to use **Station Dim** (`🌙 Station Dim`), which turns the display black (0.01 brightness) while maintaining `FLAG_KEEP_SCREEN_ON`.
+
+---
+
+## 4. In-Home Privacy & Anti-Lurking Architecture
+
+See detailed specification in `docs/privacy_architecture_and_threat_model.md`.
+
+1. **Zero Silent Watching (Anti-Lurking Invariant)**:
+   - A remote browser must never stream `/video` silently. The on-device Android station plays an audible chime on viewer connection and displays active viewer count (`👁️ N Viewers Active`).
+2. **Kinematic-First Modality Separation**:
+   - Remote access defaults to behavioral telemetry (emotion state, tail wag frequency, meal events, and skeletal wireframe). Raw optical room video is a privileged secondary tier requiring explicit time-bounded access.
+3. **Session Inactivity Watchdog**:
+   - All active video streams automatically pause after 180 seconds of continuous viewing.
+4. **Local Hardware Shutter**:
+   - The station phone possesses absolute sovereignty over media delivery. Activating "Family Privacy" immediately mutes the camera and audio buffers at the local hardware level, returning a privacy slate to remote viewers.
+
