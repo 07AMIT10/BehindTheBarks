@@ -141,6 +141,7 @@ export default function Dashboard() {
                 location={profile.location}
                 paused={paused}
                 idle={idle}
+                onPair={() => setIsPairingOpen(true)}
                 lastDogTs={state.lastDogTs}
                 privacyMode={privacyMode}
                 onTogglePrivacy={() => void setPrivacy()}
