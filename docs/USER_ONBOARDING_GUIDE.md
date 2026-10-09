@@ -183,3 +183,13 @@ If you deploy the backend yourself (e.g. the included [`render.yaml`](../render.
 2. **Never commit these values.** This repository is public; a PIN in `render.yaml` is a public PIN. The Blueprint deliberately does not define `BTB_DASHBOARD_PIN`, so the value you set in the dashboard is the only source.
 3. Setting `BTB_DASHBOARD_PIN` turns on authentication (`backend/web/settings.py`); leave it unset only for trusted local networks.
 4. Render keeps dashboard-set env vars across deploys as long as the Blueprint does not define the same key — another reason the key is absent from `render.yaml`.
+
+### Pet name and location
+
+Open the dashboard, tap the **pencil** next to Pair Phone, and set your pet's name, where the
+camera is, and the zone label (e.g. "feeding area"). Every viewer sees the change immediately.
+
+These values are saved on the server as `profile.json` next to the event log. On a host with a
+persistent disk they survive restarts; **Render's free tier has an ephemeral disk**, so after a
+redeploy the profile falls back to the `BTB_DOG_NAME` / `BTB_LOCATION` env vars (or the neutral
+defaults) — just set it again, or pin a Render disk if you need it to stick.
