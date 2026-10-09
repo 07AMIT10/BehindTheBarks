@@ -195,7 +195,10 @@ are untouched; only the producer of the envelopes moves. (Plan:
      only move for envelopes that were actually dispatched.
   3. text `{"type": "ping", "phone_time": <epoch s>}` every `web.remote.ping_every_s` (30 s) →
      `{"type": "pong", "server_time": ...}`. This keeps the clock offset fresh.
-  4. binary `0x01` + JPEG preview (≤ 2 fps, ~320 px long side, quality ~0.6). Stamped at server receipt
+  4. text `{"type": "bye"}` — a deliberate stop (the app's Stop Monitoring), sent immediately before
+     its close frame. The session is marked `stopped`, so the phone is forgotten even if the close
+     frame itself never reaches the wire.
+  5. binary `0x01` + JPEG preview (≤ 2 fps, ~320 px long side, quality ~0.6). Stamped at server receipt
      like `/ingest`; it feeds `pipeline.latest_frame_jpeg()`, not the rules.
 - **Clocks:** `data.ts` is the phone's clock and every other timer (`no_dog_unknown_s`, `llm_stale_s`,
   cooldowns) compares against the server's. The server rebases `ts` by
@@ -218,10 +221,15 @@ are untouched; only the producer of the envelopes moves. (Plan:
   dead connection cannot silently swallow later treats and config pushes.
 - **/ingest-events close codes:** same as `/ingest` — `4400` bad hello, `4408` replaced by a newer
   phone after `web.ingest.stale_s` of silence, `4409` another phone is already streaming. Close code
-  `1000` (the app's own Stop) forgets the phone; anything else leaves a disconnected card.
+  `1000` (the app's own Stop) **or a `bye` envelope** forgets the phone and idles the pipeline;
+  anything else leaves a disconnected card.
 - **Stalling:** no FrameEvent or preview for `web.remote.stale_s` (2 s) → `pipeline.status().state`
   is `stalled`. There is no watchdog to inject "no dog" frames, so the Runtime's own no-dog path takes
   the label to `unknown` after `web.state.no_dog_unknown_s` and recovers by itself when events resume.
+- **Idle vs stalled:** a phone that stopped on purpose (`bye` + close, or close `1000`) is not an
+  error — the pipeline forgets its last frame and reports `state: "idle"` (never `stalled`), and the
+  same `idle` state covers a server no phone has ever attached to (first run). Only a phone that
+  went *quiet* stalls.
 - **Status card:** `status.phone` gains `transport: "ingest-events"`, `profile`, `proto`, `models`,
   `events`/`previews`/`treats`/`pings`/`dropped`, `preview_fps`, `clock_offset_s`, `clock_samples` and
   `ping_due_s` (negative = the phone is overdue or half-open).
@@ -456,7 +464,7 @@ class Pipeline:
 `mark_treat()` sets the rules engine's `treat_event_recent` flag for `data.rules.treat_window_s`
 (default 10 s). `ingest_*` are non-blocking, never raise, drop the oldest data when behind, and are
 no-ops (with one warning) unless the source type is `browser`. `status()` returns
-`{"source", "state": "running" | "stalled" | "stopped", "fps", "last_frame_age_s", "audio_ok"}`
+`{"source", "state": "running" | "idle" | "stalled" | "stopped", "fps", "last_frame_age_s", "audio_ok"}`
 (those five keys always; `RemotePipeline` adds the phone's own counters on top, and there
 `mark_treat()` pushes a downlink instead of setting a local flag — see "On-device phone").
 Web calls only these methods and never imports anything else from `vision/` or `audio/`.

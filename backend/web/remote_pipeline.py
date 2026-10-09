@@ -5,7 +5,8 @@ event sink needs:
     run()               awaits until stop(): no source, no models, no watchdog thread
     ingest_frame()      the phone's 0x01 preview JPEG, so /video and notification snapshots work
     mark_treat()        pushes {"type": "treat"} back down, so the phone's rules see treat_event_recent
-    status()            mirrors the phone's own metrics and reports stalled after web.remote.stale_s
+    status()            mirrors the phone's own metrics; "idle" before the first phone and after a
+                        deliberate stop, "stalled" after web.remote.stale_s of camera silence
 
 Everything the pipeline would normally report as a fault is the phone's fault now: no previews or no
 envelopes for longer than stale_s means the app (or the network) went quiet, and the Runtime's
@@ -69,6 +70,8 @@ class RemotePipeline:
         self._started_at = clock()
         self._stopped = False
         self._running = False
+        self._idle = False  # the phone stopped on purpose (or never showed up): not an error
+        self._ever_attached = False
         self._halt: asyncio.Event | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._session: Any = None
@@ -112,6 +115,8 @@ class RemotePipeline:
 
     def latest_frame_jpeg(self) -> bytes | None:
         """The newest preview JPEG the phone sent, or privacy slate in privacy mode, or None before the first one."""
+        if self._idle:
+            return None  # nothing is streaming: no stale frame and no privacy slate either
         if self._privacy_mode:
             return self._privacy_jpeg
         return self._jpeg
@@ -134,6 +139,11 @@ class RemotePipeline:
     def ingest_audio(self, pcm16: bytes, sample_rate: int, ts: float) -> None:
         """Not part of /ingest-events: the phone sends AudioEvents as JSON. Kept for the interface."""
         self._raw_audio_ts = float(ts)
+
+    def mark_stopped(self) -> None:
+        """The phone said bye / closed with 1000: forget its last frame so the dashboard shows
+        'idle' instead of 'stalled'."""
+        self._jpeg, self._preview_ts, self._idle = None, None, True
 
     def push_config(self, rules: dict | None = None) -> bool:
         """Push data.rules overrides to the phone, so retuning needs no APK rebuild. With no
@@ -172,6 +182,10 @@ class RemotePipeline:
     def attach(self, session: Any, send: Callable[[dict], Awaitable[None]] | None) -> None:
         """The live phone session plus the downlink sender, wired up by the /ingest-events endpoint."""
         self._session, self._send = session, send
+        self._ever_attached, self._idle = True, False
+        # A newly attached phone gets the same grace a booting pipeline gets, so the dashboard
+        # does not flash 'stalled' between the handshake and the phone's first preview frame.
+        self._started_at = self.clock()
         device = getattr(getattr(session, "hello", None), "device", None)
         log.info("remote: phone attached: %s", device or "unknown")
 
@@ -314,6 +328,9 @@ class RemotePipeline:
     def _state(self, now: float) -> str:
         if self._stopped:
             return "stopped"
+        # Idle is not an error: the phone stopped on purpose, or has never been here (first run).
+        if self._idle or not self._ever_attached:
+            return "idle"
         age = self._frame_age_s(now)
         # Never having had a frame counts as stalled once the grace period is over (Pipeline._state).
         since = age if age is not None else now - self._started_at

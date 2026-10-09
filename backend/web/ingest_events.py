@@ -12,6 +12,7 @@ Protocol (phone -> server):
   2. text    {"type": "frame" | "audio" | "rules", "data": {<the JSON contract>}}
      text    {"type": "treat", "data": {"ts": <epoch s>}}          (optional ts)
      text    {"type": "ping", "phone_time": <epoch s>}   ->  reply {"type": "pong", "server_time": ...}
+     text    {"type": "bye"}                              (deliberate stop: Stop Monitoring)
   3. binary  0x01 + JPEG                    (preview frame, for /video and notification snapshots)
 
 `data.ts` is the phone's clock. It is rebased by `server_time_at_hello - phone_time` before anything
@@ -157,6 +158,7 @@ class RemoteSession:
         self.ping_every_s = ping_every_s
         self.max_skew_s = max_skew_s
         self.connected = True
+        self.stopped = False  # the phone said bye: this socket ended on purpose, not a drop
         self.server_time_at_hello = clock()
         self.connected_at = self.server_time_at_hello
         self.last_msg_ts = self.server_time_at_hello
@@ -199,6 +201,9 @@ class RemoteSession:
         kind = msg.get("type")
         if kind == "ping":
             return self._ping(msg, now)
+        if kind == "bye":  # deliberate stop before its close frame: phone forgotten, pipeline idle
+            self.stopped = True
+            return "bye"
         data = msg.get("data")
         if kind == "treat":
             return self._treat(data, now)

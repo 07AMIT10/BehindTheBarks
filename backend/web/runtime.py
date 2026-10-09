@@ -27,6 +27,8 @@ from backend.web.settings import is_demo
 
 log = logging.getLogger("runtime")
 
+FPS_FRESH_S = 3.0  # status().fps is 0.0 when the newest frame is older than this
+
 
 class Runtime:
     def __init__(self, cfg: dict, pipeline: Any, interpreter: Any, notifier: Any, hub: Hub, clock=time.time, demo_clips: DemoClips | None = None):
@@ -219,14 +221,19 @@ class Runtime:
     def phone_close(self, session: IngestSession | RemoteSession, code: int | None = None) -> None:
         """The phone's socket ended. Ignored if this session was already replaced.
 
-        Close code 1000 means the Stop button: the phone is forgotten (status "phone": null). Anything
-        else (page killed, Wi-Fi drop) keeps a disconnected snapshot so the dashboard can say so."""
+        A stop is close code 1000 (the app's close frame) or a `bye` envelope first (`stopped`),
+        because the app used to cancel() so fast that the close frame never made it to the wire: the
+        phone is forgotten (status "phone": null) and the pipeline goes idle. Anything else (page
+        killed, Wi-Fi drop) keeps a disconnected snapshot so the dashboard can say so."""
         session.connected = False
         if self.phone is not session:
             return
-        stopped = code == 1000
+        stopped = code == 1000 or bool(getattr(session, "stopped", False))
         self.phone, self._phone_closer = None, None
         self._phone_prev = None if stopped else session
+        if stopped:
+            # MockPipeline/IngestSession-only pipelines have no mark_stopped(); getattr keeps them working.
+            getattr(self.pipeline, "mark_stopped", lambda: None)()
         log.info("phone %s: %s (code %s)", "stopped" if stopped else "disconnected", session.hello.device, code)
         self.publish_phone()
 
@@ -292,7 +299,9 @@ class Runtime:
     def status(self) -> dict:
         ps = self._pipeline_status()
         ft = list(self._frame_times)
-        fps = round((len(ft) - 1) / (ft[-1] - ft[0]), 1) if len(ft) > 1 and ft[-1] > ft[0] else 0.0
+        # No frame for FPS_FRESH_S means the number on the dashboard is stale, not "the old rate".
+        fresh = bool(ft) and self.clock() - ft[-1] <= FPS_FRESH_S
+        fps = round((len(ft) - 1) / (ft[-1] - ft[0]), 1) if fresh and len(ft) > 1 and ft[-1] > ft[0] else 0.0
         s = getattr(self.interpreter, "s", None)
         return {
             "pipeline": self.cfg["web"]["pipeline"],

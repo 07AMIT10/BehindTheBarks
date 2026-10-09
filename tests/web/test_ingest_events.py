@@ -412,7 +412,8 @@ async def test_run_awaits_until_stop_without_models_or_watchdog():
     p = RemotePipeline(stub_cfg())
     task = asyncio.create_task(p.run(None, None, None))
     await asyncio.sleep(0.01)
-    assert not task.done() and p.status()["state"] == "running"
+    # run() without a phone is 'idle', not 'running': no camera has ever attached (T1.2).
+    assert not task.done() and p.status()["state"] == "idle"
     p.stop()
     await asyncio.wait_for(task, 1.0)
     assert p.status()["state"] == "stopped"
@@ -486,6 +487,57 @@ def test_status_is_stalled_after_camera_silence_and_mirrors_phone_metrics():
 def test_bind_pipeline_is_a_no_op_for_pipelines_without_attach():
     s, _ = session()
     assert bind_pipeline(SpyPipeline(), s, None) is False
+
+
+# -- Step 1.5b: deliberate stop (bye) and the idle state -------------------------------------
+def test_bye_marks_the_session_stopped_without_dropping_it():
+    s, _ = session()
+    assert s.handle_text(json.dumps({"type": "bye"})) == "bye"
+    assert s.stopped is True
+    assert s.dropped == 0
+    assert s.handle_text(json.dumps({"type": "ping", "phone_time": PHONE_T})) == "ping"
+    assert s.handle_text(envelope("frame", frame_data(PHONE_T))) == "frame"
+    assert s.stopped is True and s.dropped == 0
+
+
+async def test_remote_pipeline_is_idle_before_any_phone_and_after_a_stop():
+    clock = Clock()
+    clock.t += 10.0  # a server that has been up for 10 s: past any fresh-boot grace
+    cfg = stub_cfg()
+    cfg["web"]["remote"] = {"stale_s": 2.0}
+    p = RemotePipeline(cfg, clock=clock)
+    assert p.status()["state"] == "idle"  # no phone ever: idle, not the 'fresh server shows Reconnecting' bug
+
+    s = RemoteSession(parse_remote_hello(hello_msg()), p, SpyRuntime(), clock=clock)
+    p.attach(s, None)
+    assert p.status()["state"] == "running"
+    s.handle_text(envelope("frame", frame_data(PHONE_T)))
+    s.handle(bytes([KIND_PREVIEW]) + phone_jpeg())
+    assert p.latest_frame_jpeg() is not None
+
+    p.mark_stopped()
+    assert p.status()["state"] == "idle"
+    assert p.latest_frame_jpeg() is None
+    clock.t += 30.0  # still idle an eternity later, never 'stalled'
+    assert p.status()["state"] == "idle"
+
+    s2 = RemoteSession(parse_remote_hello(hello_msg()), p, SpyRuntime(), clock=clock)  # a new socket
+    p.attach(s2, None)
+    assert p.status()["state"] == "running"
+    clock.t += 30.0  # and going quiet is stalled again, as before
+    assert p.status()["state"] == "stalled"
+
+
+async def test_remote_pipeline_idle_wins_over_the_privacy_slate():
+    cfg = stub_cfg()
+    p = RemotePipeline(cfg)
+    s = RemoteSession(parse_remote_hello(hello_msg()), p, SpyRuntime())
+    p.attach(s, None)
+    p.set_privacy(True)
+    assert p.latest_frame_jpeg() == p._privacy_jpeg
+    p.mark_stopped()
+    assert p._privacy_mode is True  # untouched
+    assert p.latest_frame_jpeg() is None  # no slate while idle: nothing is streaming
 
 
 # -- Step 1.5: drops and close codes ----------------------------------------------------------
