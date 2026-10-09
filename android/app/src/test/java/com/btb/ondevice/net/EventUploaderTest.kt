@@ -377,4 +377,37 @@ class EventUploaderTest {
 
         uploader.stop()
     }
+
+    @Test
+    fun `downlink treat reads the phone-clock ts from data`() = runBlocking {
+        val treatReceived = CompletableDeferred<Double>()
+
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (text.contains(""""type":"hello"""")) {
+                    webSocket.send("""{"type":"hello_ack","server_time":1700000000.0}""")
+                    // the real server shape: the treat ts lives under data, on the phone's clock
+                    webSocket.send("""{"type":"treat","data":{"ts":123.5,"offset_s":2.0}}""")
+                }
+            }
+        }))
+
+        val uploader = EventUploader(
+            serverUrl = server.url("/ingest-events").toString(),
+            deviceName = "test-galaxy",
+            spool = spool,
+            listener = object : EventUploaderListener {
+                override fun onTreatDownlink(ts: Double) {
+                    treatReceived.complete(ts)
+                }
+            }
+        )
+
+        uploader.start()
+
+        val treatTs = withTimeout(5000) { treatReceived.await() }
+        assertThat(treatTs).isEqualTo(123.5)  // not the phone clock fallback
+
+        uploader.stop()
+    }
 }

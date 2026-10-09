@@ -257,7 +257,11 @@ class EventUploader(
                     // Clock skew offset handled by server
                 }
                 "treat" -> {
-                    val ts = root["ts"]?.jsonPrimitive?.double ?: clock()
+                    // The server sends {"type":"treat","data":{"ts":<phone clock>,"offset_s":...}}; the
+                    // legacy root-level ts is still honoured, and the phone clock is the last resort.
+                    val ts = root["data"]?.jsonObject?.get("ts")?.jsonPrimitive?.double
+                        ?: root["ts"]?.jsonPrimitive?.double
+                        ?: clock()
                     listener?.onTreatDownlink(ts)
                 }
                 "config" -> {
