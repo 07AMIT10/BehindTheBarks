@@ -170,3 +170,16 @@ You can receive real-time notifications with snapshot photos on your phone whene
 
 ### Q: Is my dog's video being saved to the cloud?
 **A:** **No.** All computer vision (YOLO26, RTMPose, DogFLW) runs locally on the phone's processor. Video frames are processed in volatile RAM and immediately discarded. Continuous video is never saved to disk or sent to any company server.
+
+---
+
+## 🔐 Production PIN (self-hosted / Render deployments)
+
+If you deploy the backend yourself (e.g. the included [`render.yaml`](../render.yaml) Blueprint):
+
+1. In the Render dashboard, open your service → **Environment** → **Add Environment Variable**:
+   - `BTB_DASHBOARD_PIN` — the dashboard PIN viewers must type (pick something other than the old default; treat any value that ever lived in this repo's git history as compromised).
+   - Recommended alongside it: `BTB_API_TOKEN` and `BTB_INGEST_TOKEN` (see [`config.yaml`](../config.yaml) → `web.access`).
+2. **Never commit these values.** This repository is public; a PIN in `render.yaml` is a public PIN. The Blueprint deliberately does not define `BTB_DASHBOARD_PIN`, so the value you set in the dashboard is the only source.
+3. Setting `BTB_DASHBOARD_PIN` turns on authentication (`backend/web/settings.py`); leave it unset only for trusted local networks.
+4. Render keeps dashboard-set env vars across deploys as long as the Blueprint does not define the same key — another reason the key is absent from `render.yaml`.
