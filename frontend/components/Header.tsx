@@ -24,8 +24,14 @@ export default function Header({ dogName, location, children }: Props) {
       <div className="flex min-w-0 flex-col gap-0.5">
         <div className="truncate text-heading font-bold lg:text-body lg:font-semibold text-text">{dogName}</div>
         <div className="truncate text-[12px] text-muted lg:text-small">
-          <span className="lg:hidden">WagWatch · {location}</span>
-          <span className="hidden lg:inline">Feeding area · {location}</span>
+          {location ? (
+            <>
+              <span className="lg:hidden">WagWatch · {location}</span>
+              <span className="hidden lg:inline">Feeding area · {location}</span>
+            </>
+          ) : (
+            <span className="lg:hidden">WagWatch</span>
+          )}
         </div>
       </div>
       <div className="grow" />

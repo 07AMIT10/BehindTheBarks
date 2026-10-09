@@ -15,7 +15,17 @@ def test_web_defaults_filled_when_section_missing(tmp_path):
     assert cfg["web"]["pipeline"] == "mock"
     assert cfg["web"]["state"]["persist_s"] == 3.0
     assert cfg["web"]["llm"]["timeout_s"] == 8.0
-    assert cfg["web"]["profile"] == {"dog_name": "Bruno", "location": "Kitchen", "zone_label": "feeding area"}
+    assert cfg["web"]["profile"] == {"dog_name": "Your dog", "location": "", "zone_label": "feeding area"}
+
+
+def test_profile_env_overrides(tmp_path):
+    cfg = load_config(_write(tmp_path, ""), env={"BTB_DOG_NAME": "Rex", "BTB_LOCATION": "Living room"})
+    assert cfg["web"]["profile"] == {"dog_name": "Rex", "location": "Living room", "zone_label": "feeding area"}
+    # the YAML file still wins over defaults but loses to the env
+    cfg = load_config(_write(tmp_path, "web: {profile: {dog_name: FromFile\n}}\n"), env={"BTB_DOG_NAME": "Rex"})
+    assert cfg["web"]["profile"]["dog_name"] == "Rex"
+    cfg = load_config(_write(tmp_path, "web: {profile: {dog_name: FromFile}}\n"), env={})
+    assert cfg["web"]["profile"]["dog_name"] == "FromFile"
 
 
 def test_partial_web_section_is_deep_merged(tmp_path):

@@ -190,9 +190,9 @@ web:
                               # spools events across a longer outage)
     downlink_timeout_s: 5.0   # deadline for one treat/config downlink; a half-open socket must not wedge
                               # the queue, so a send that misses it is counted in pipeline_status.downlinks_dropped
-  profile:                    # shown in the UI header and Telegram captions (ui/screens)
-    dog_name: Bruno
-    location: Kitchen
+  profile:                    # shown in the UI header and Telegram captions; editable in the dashboard (PUT /profile)
+    dog_name: Your dog       # override with BTB_DOG_NAME
+    location: ""             # override with BTB_LOCATION; empty hides the location segment
     zone_label: feeding area
   auth:                       # Access control & security (set BTB_DASHBOARD_PIN or BTB_INGEST_TOKEN in .env)
     enabled: false            # true to require PIN for dashboard & token for phone ingest

@@ -74,7 +74,7 @@ describe("reduce", () => {
   });
 
   it("status envelope replaces or merges status", () => {
-    const full = { pipeline: "mock", fps: 8, profile: { dog_name: "Bruno", location: "Kitchen", zone_label: "feeding area" } };
+    const full = { pipeline: "mock", fps: 8, profile: { dog_name: "Buddy", location: "Living room", zone_label: "feeding area" } };
     let s = apply([{ kind: "envelope", env: env("status", full, 1), at: 0 }]);
     s = reduce(s, { kind: "envelope", env: env("status", { phone: { connected: true, device: "Pixel 7", facing: "back", fps: 12 } }, 2), at: 0 });
     expect(s.status?.pipeline).toBe("mock");
@@ -113,11 +113,11 @@ describe("reduce", () => {
 describe("toasts in the reducer", () => {
   const notif = (e: string, ts: number) =>
     env("notification", { state: { ts, emotion: e, confidence: 0.8, source: "fused", reason: `${e}!`, snapshot: null }, status: "dashboard_only", channel: "dashboard", detail: "would send to owner" }, ts);
-  const withProfile = reduce(initialState, { kind: "status", status: { pipeline: "mock", profile: { dog_name: "Bruno", location: "Kitchen", zone_label: "feeding area" } } });
+  const withProfile = reduce(initialState, { kind: "status", status: { pipeline: "mock", profile: { dog_name: "Buddy", location: "Living room", zone_label: "feeding area" } } });
 
   it("notification creates a toast using the dog name", () => {
     const s = reduce(withProfile, { kind: "envelope", env: notif("anxious", 10), at: 1_000 });
-    expect(s.toasts[0]).toMatchObject({ title: "Bruno seems anxious", sticky: true });
+    expect(s.toasts[0]).toMatchObject({ title: "Buddy seems anxious", sticky: true });
   });
   it("tick expires positive toasts after 6 s; dismiss removes", () => {
     let s = reduce(withProfile, { kind: "envelope", env: notif("excited", 10), at: 1_000 });

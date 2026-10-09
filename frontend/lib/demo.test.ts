@@ -25,14 +25,14 @@ const clip = (): LoadedClip => ({
 
 describe("buildDemoView", () => {
   it("empty before the first state; frame/history follow event time", () => {
-    const v = buildDemoView(clip(), 0.5, new Set(), "Bruno");
+    const v = buildDemoView(clip(), 0.5, new Set(), "Buddy");
     expect(v.emotion).toBeNull();
     expect(v.frame?.ts).toBe(0);
     expect(v.history).toHaveLength(1);
     expect(v.spans).toEqual([]);
   });
   it("state, spans, treats and audio at t=3", () => {
-    const v = buildDemoView(clip(), 3, new Set(), "Bruno");
+    const v = buildDemoView(clip(), 3, new Set(), "Buddy");
     expect(v.emotion).toMatchObject({ emotion: "excited", ts: 2 });
     expect(v.currentSince).toBe(2);
     expect(v.spans.map((s) => [s.emotion, s.start, s.end])).toEqual([["relaxed", 1, 2], ["excited", 2, 3]]);
@@ -41,16 +41,16 @@ describe("buildDemoView", () => {
     expect(v.frame?.ts).toBe(2);
   });
   it("notification toasts within 6 s; sticky negatives persist; dismissal works", () => {
-    const v = buildDemoView(clip(), 3, new Set(), "Bruno");
-    expect(v.toasts.map((t) => t.title)).toEqual(["Bruno is excited"]);
-    const v2 = buildDemoView(clip(), 20, new Set(), "Bruno");
+    const v = buildDemoView(clip(), 3, new Set(), "Buddy");
+    expect(v.toasts.map((t) => t.title)).toEqual(["Buddy is excited"]);
+    const v2 = buildDemoView(clip(), 20, new Set(), "Buddy");
     expect(v2.toasts).toEqual([]);
     expect(v2.notifications).toHaveLength(1);
   });
   it("seeking backwards rebuilds (no accumulation)", () => {
     const c = clip();
-    const fwd = buildDemoView(c, 3, new Set(), "Bruno");
-    const back = buildDemoView(c, 0.5, new Set(), "Bruno");
+    const fwd = buildDemoView(c, 3, new Set(), "Buddy");
+    const back = buildDemoView(c, 0.5, new Set(), "Buddy");
     expect(back.spans).toEqual([]);
     expect(back.toasts).toEqual([]);
     expect(fwd.spans).toHaveLength(2);

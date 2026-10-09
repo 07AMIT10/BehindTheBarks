@@ -36,7 +36,7 @@ WEB_DEFAULTS: dict[str, Any] = {
     "ingest": {"stale_s": 5.0, "status_every_s": 2.0, "fps_window_s": 3.0, "max_message_bytes": 2_000_000},
     "remote": {"stale_s": 2.0, "clock_samples": 5, "ping_every_s": 30.0, "max_skew_s": 60.0,
               "downlink_timeout_s": 5.0},
-    "profile": {"dog_name": "Bruno", "location": "Kitchen", "zone_label": "feeding area"},
+    "profile": {"dog_name": "Your dog", "location": "", "zone_label": "feeding area"},
     "auth": {
         "enabled": False,
         "dashboard_pin": "",
@@ -69,6 +69,12 @@ def load_config(path: str | Path = "config.yaml", env: Mapping[str, str] | None 
     notify = cfg["web"].setdefault("notify", {})
     if env.get("NOTIFY_MODE"):
         notify["mode"] = env["NOTIFY_MODE"]
+    profile = cfg["web"].setdefault("profile", {})
+    # The deployer names the dog without editing YAML; the saved profile file (PUT /profile) wins later.
+    if env.get("BTB_DOG_NAME"):
+        profile["dog_name"] = env["BTB_DOG_NAME"].strip()
+    if env.get("BTB_LOCATION"):
+        profile["location"] = env["BTB_LOCATION"].strip()
     if cfg["web"]["demo_mode"]:
         notify["mode"] = "dashboard_only"
     if env.get("TELEGRAM_BOT_TOKEN"):

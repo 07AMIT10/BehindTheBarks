@@ -41,7 +41,7 @@ export default function Dashboard() {
   const nowMs = useNow(1000);
   const nowSec = serverNow(state, nowMs);
   const projector = useMemo(() => new URLSearchParams(window.location.search).get("size") === "projector", []);
-  const profile = state.status?.profile ?? { dog_name: "your dog", location: "Kitchen", zone_label: "feeding area" };
+  const profile = state.status?.profile ?? { dog_name: "Your dog", location: "", zone_label: "feeding area" };
   const notice = phoneNotice(state.status);
   // A mic-only phone stalls the browser source on purpose; the camera-blocked card explains it instead.
   const st = stationState(state.status);

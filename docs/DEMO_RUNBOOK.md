@@ -38,7 +38,7 @@ The native Android app executes the entire perception stack on-device (YOLO26 do
    - Open the **Behind The Barks** app.
    - Tap **Cloud WSS** (populates `wss://<X>.trycloudflare.com/ingest-events`).
    - Tap **Start Monitoring**.
-   - Point the camera at Bruno. The on-screen debug HUD displays the real-time bounding box, body skeleton, and rules emotion badge.
+   - Point the camera at your dog (set its name in the dashboard profile). The on-screen debug HUD displays the real-time bounding box, body skeleton, and rules emotion badge.
 4. **View Live Dashboard**:
    - Open `https://<Y>.trycloudflare.com/?backend=https://<X>.trycloudflare.com` on any laptop/tablet.
    - Status bar shows `Galaxy-A07 · Remote · Live`.
@@ -48,7 +48,7 @@ The native Android app executes the entire perception stack on-device (YOLO26 do
 
 Troubleshooting:
 - If the screen turns off, the camera capture session closes. Keep the phone plugged in (`adb shell svc power stayon true`).
-- If you see "No dog visible for more than 2 s", ensure Bruno or a dog photo/video is well-lit and within frame (portrait orientation is automatically rotated upright in memory).
+- If you see "No dog visible for more than 2 s", ensure your dog or a dog photo/video is well-lit and within frame (portrait orientation is automatically rotated upright in memory).
 
 ## Browser Phone Camera (Web Fallback)
 
