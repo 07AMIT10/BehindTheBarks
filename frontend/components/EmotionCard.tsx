@@ -10,6 +10,7 @@ type Props = {
   nowMs: number;
   nowSec: number;
   paused: boolean;
+  idle?: boolean;
   projector: boolean;
   dogName: string;
   lastDogTs: number | null;
@@ -56,7 +57,7 @@ export default function EmotionCard(p: Props) {
     <section aria-label="Current emotion" className="relative flex flex-col gap-[18px] overflow-hidden rounded-xl border border-border bg-surface p-6 lg:p-7">
       <div className="absolute inset-x-0 top-0 h-1" style={{ background: p.paused ? "var(--unknown)" : v.solid }} />
       <div className="flex items-center gap-2.5">
-        <div className="micro text-muted">{p.paused ? "Paused · last reading" : "Right now"}</div>
+        <div className="micro text-muted">{p.idle ? "No live reading" : p.paused ? "Paused · last reading" : "Right now"}</div>
         <div className="grow" />
         {!p.paused && !noDog && <SourceBadge source={c.source} />}
         {!p.paused && <div className="font-mono text-[12px] text-muted">updated {updated}</div>}

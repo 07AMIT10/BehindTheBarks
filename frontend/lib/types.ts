@@ -13,7 +13,7 @@ export type Envelope = {
 
 export type PipelineStatus = {
   source: string;
-  state: "running" | "stalled" | "stopped" | string;
+  state: "running" | "idle" | "stalled" | "stopped" | string;
   fps: number;
   last_frame_age_s: number | null;
   audio_ok: boolean;

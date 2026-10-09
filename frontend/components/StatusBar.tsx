@@ -1,4 +1,4 @@
-import { deviceLabel } from "@/lib/phone";
+import { deviceLabel, stationState } from "@/lib/phone";
 import type { Status } from "@/lib/types";
 
 type Props = {
@@ -16,6 +16,7 @@ export default function StatusBar({ connected, everConnected, reconnectAttempt, 
   const mode = status?.mode ?? (status?.demo_mode ? "demo" : "live");
   const demoAvailable = Boolean(status?.modes?.includes("demo")) && Boolean(onMode);
   const conn = connected ? "Connected" : everConnected ? `Reconnecting · attempt ${reconnectAttempt}` : "Connecting…";
+  const idle = stationState(status) === "idle";
   return (
     <div role="status" className="flex min-h-10 flex-wrap items-center gap-x-5 gap-y-2 rounded-md border border-border bg-surface px-4 py-2 text-small text-muted">
       <div className="flex items-center gap-2 font-semibold text-text">
@@ -25,9 +26,16 @@ export default function StatusBar({ connected, everConnected, reconnectAttempt, 
       </div>
       <div className="flex items-center gap-1.5">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.5" /><path d="M11 18.5h2" /></svg>
-        {deviceLabel(status)}
+        {idle ? (
+          <>
+            <span className="h-2 w-2 rounded-full" style={{ background: "var(--unknown)" }} />
+            Station offline
+          </>
+        ) : (
+          deviceLabel(status)
+        )}
       </div>
-      <div className="font-mono">{Math.round(status?.fps ?? 0)} fps</div>
+      {(status?.fps ?? 0) > 0 && <div className="font-mono">{Math.round(status?.fps ?? 0)} fps</div>}
       <div className="flex items-center gap-1.5">
         {aiOk ? (
           <>AI · {llm?.model || "vision"}{latency !== undefined && <span className="font-mono">{Math.round(latency)} ms</span>}</>

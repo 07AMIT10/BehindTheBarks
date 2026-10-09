@@ -11,6 +11,7 @@ type Props = {
   nowSec: number;
   location: string;
   paused: boolean;
+  idle?: boolean;
   lastDogTs: number | null;
   privacyMode?: boolean;
   onTogglePrivacy?: () => void;
@@ -26,6 +27,7 @@ export default function VideoPanel({
   nowSec,
   location,
   paused,
+  idle = false,
   lastDogTs,
   privacyMode = false,
   onTogglePrivacy,
@@ -172,8 +174,30 @@ export default function VideoPanel({
   // When the backend restarts, Chrome ends the MJPEG stream without an error event, so the <img> would
   // freeze on its last frame. Keying the stream on `paused` opens a fresh stream once we're live again.
   const tokenParam = token ? `&token=${encodeURIComponent(token)}` : "";
-  const streamId = `${retryKey}${paused ? "p" : ""}`;
+  const streamId = `${retryKey}${paused ? "p" : ""}${idle ? "i" : ""}`;
   const videoSrc = `${http}/video?k=${streamId}${tokenParam}`;
+
+  // Monitoring is stopped on purpose (or has never started): no /video request at all, and a plain
+  // card instead of a spinner — "Reconnecting…" is only for a phone that dropped mid-session.
+  if (idle) {
+    return (
+      <section aria-label="Live video of the feeding area"
+        className="relative h-full min-h-[260px] sm:min-h-[320px] lg:min-h-[480px] overflow-hidden rounded-xl bg-[#1B1D1F]">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center text-[#D6D8DB]">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/5 text-[#9CA3AF] ring-1 ring-white/10">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M2 8.5A2.5 2.5 0 0 1 4.5 6h2l1.6-2h7.8L17.5 6h2A2.5 2.5 0 0 1 22 8.5v7A2.5 2.5 0 0 1 19.5 18h-15A2.5 2.5 0 0 1 2 15.5z" />
+              <path d="M3 3l18 18" />
+            </svg>
+          </div>
+          <div className="text-heading font-semibold text-white">Monitoring stopped</div>
+          <p className="max-w-sm text-small text-[#9CA3AF]">
+            Start monitoring in the WagWatch app, or pair a phone from the top bar.
+          </p>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section aria-label="Live video of the feeding area" ref={boxRef}

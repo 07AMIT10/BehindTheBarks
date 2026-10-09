@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { stationState } from "./phone";
 import { initialState, reduce, serverNow } from "./store";
 import type { Envelope, Span } from "./types";
 
@@ -78,6 +79,16 @@ describe("reduce", () => {
     s = reduce(s, { kind: "envelope", env: env("status", { phone: { connected: true, device: "Pixel 7", facing: "back", fps: 12 } }, 2), at: 0 });
     expect(s.status?.pipeline).toBe("mock");
     expect(s.status?.phone?.device).toBe("Pixel 7");
+  });
+
+  it("a stop's partial status merges over the live one and reads idle", async () => {
+    const full = { pipeline: "remote", fps: 8, phone: { connected: true, device: "DebugPhone", facing: "back", fps: 10 }, pipeline_status: { source: "remote", state: "running", fps: 8, last_frame_age_s: 0.1, audio_ok: false } };
+    let s = apply([{ kind: "envelope", env: env("status", full, 1), at: 0 }]);
+    // publish_phone() sends {phone, pipeline_status} only: the rest of the full status must survive.
+    s = reduce(s, { kind: "envelope", env: env("status", { phone: null, pipeline_status: { source: "remote", state: "idle", fps: 0, last_frame_age_s: null, audio_ok: false } }, 2), at: 0 });
+    expect(s.status?.pipeline).toBe("remote");
+    expect(s.status?.phone).toBeNull();
+    expect(stationState(s.status)).toBe("idle");
   });
 
   it("bootstrap uses server timeline for spans and replays the rest", () => {

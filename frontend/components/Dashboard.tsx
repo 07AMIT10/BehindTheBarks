@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ClipMeta } from "@/lib/demo";
-import { phoneNotice } from "@/lib/phone";
+import { phoneNotice, stationState } from "@/lib/phone";
 import { serverNow } from "@/lib/store";
 import { spanAt } from "@/lib/timeline";
 import { useBackend } from "@/lib/useBackend";
@@ -44,8 +44,10 @@ export default function Dashboard() {
   const profile = state.status?.profile ?? { dog_name: "your dog", location: "Kitchen", zone_label: "feeding area" };
   const notice = phoneNotice(state.status);
   // A mic-only phone stalls the browser source on purpose; the camera-blocked card explains it instead.
-  const stalled = state.status?.pipeline_status?.state === "stalled" && notice !== "blocked";
-  const paused = (!state.connected && state.everConnected) || stalled || notice === "dropped";
+  const st = stationState(state.status);
+  const idle = st === "idle"; // the phone stopped on purpose, or none has ever connected: not an error
+  const stalled = st === "stalled" && notice !== "blocked";
+  const paused = (!state.connected && state.everConnected) || stalled || st === "dropped";
   const lastSeenEmotion = useMemo(() => [...state.spans].reverse().find((s) => s.emotion !== "unknown")?.emotion ?? null, [state.spans]);
 
   const [treatFlash, setTreatFlash] = useState(false);
@@ -135,6 +137,7 @@ export default function Dashboard() {
                 nowSec={nowSec}
                 location={profile.location}
                 paused={paused}
+                idle={idle}
                 lastDogTs={state.lastDogTs}
                 privacyMode={privacyMode}
                 onTogglePrivacy={() => void setPrivacy()}
@@ -143,7 +146,7 @@ export default function Dashboard() {
             </div>
             <div className="[grid-area:card]">
               <EmotionCard current={state.current} currentSince={state.currentSince} lastEmotionAt={state.lastEmotionAt}
-                nowMs={nowMs} nowSec={nowSec} paused={paused} projector={projector} dogName={profile.dog_name}
+                nowMs={nowMs} nowSec={nowSec} paused={paused} idle={idle} projector={projector} dogName={profile.dog_name}
                 lastDogTs={state.lastDogTs} lastSeenEmotion={lastSeenEmotion} />
             </div>
             <div className="hidden [grid-area:treat] lg:block">

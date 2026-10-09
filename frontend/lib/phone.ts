@@ -16,6 +16,23 @@ export function phoneNotice(status: Status | null): PhoneNotice {
   return null;
 }
 
+/**
+ * The station as the dashboard should describe it. "idle" is the good, intentional state:
+ * the phone pressed Stop (the backend forgets it and the pipeline reports `idle`), or no phone
+ * has ever connected (first run). Only "dropped"/"stalled" mean something went wrong.
+ */
+export type StationState = "idle" | "live" | "stalled" | "dropped" | "blocked";
+
+export function stationState(s: Status | null): StationState {
+  const p = s?.phone;
+  const ps = s?.pipeline_status?.state;
+  if (p?.connected && p.camera === false) return "blocked";
+  if (p && !p.connected) return "dropped";
+  if (ps === "idle") return "idle";
+  if (ps === "stalled") return "stalled";
+  return "live";
+}
+
 /** Status-bar device label. */
 export function deviceLabel(s: Status | null): string {
   const p = s?.phone;
@@ -24,6 +41,7 @@ export function deviceLabel(s: Status | null): string {
     return p.camera === false ? `${name} · microphone only` : `${name} · ${p.facing ?? "back"} camera`;
   }
   if (p && !p.connected) return `${p.device ?? "Phone"} · disconnected`;
+  if (s?.pipeline_status?.state === "idle") return "No camera streaming";
   const src = s?.pipeline_status?.source;
   if (src === "mock") return "Mock camera";
   if (src === "browser") return "Phone camera · waiting";
