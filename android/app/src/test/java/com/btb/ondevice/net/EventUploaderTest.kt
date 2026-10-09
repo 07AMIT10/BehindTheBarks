@@ -6,8 +6,12 @@ import com.btb.ondevice.contracts.FrameEvent
 import com.btb.ondevice.pipeline.StubPerception
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
@@ -228,6 +232,118 @@ class EventUploaderTest {
 
         withTimeout(5000) { terminatedSignal.await() }
         assertThat(uploader.connectionState).isEqualTo(ConnectionState.TERMINATED)
+    }
+
+    @Test
+    fun `stop sends bye then a normal close frame`() = runBlocking {
+        val byeReceived = CompletableDeferred<String>()
+        val closingReceived = CompletableDeferred<Int>()
+        val connectedDeferred = CompletableDeferred<Unit>()
+
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (text.contains(""""type":"hello"""")) {
+                    webSocket.send("""{"type":"hello_ack","server_time":1700000000.0}""")
+                } else if (text.contains(""""type":"bye"""")) {
+                    byeReceived.complete(text)
+                }
+            }
+
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                if (code == EventUploader.CLOSE_NORMAL) {
+                    closingReceived.complete(code)
+                }
+            }
+        }))
+
+        val uploader = EventUploader(
+            serverUrl = server.url("/ingest-events").toString(),
+            deviceName = "test-galaxy",
+            spool = spool,
+            listener = object : EventUploaderListener {
+                override fun onStateChanged(state: ConnectionState) {
+                    if (state == ConnectionState.CONNECTED) {
+                        connectedDeferred.complete(Unit)
+                    }
+                }
+            }
+        )
+
+        uploader.start()
+        withTimeout(5000) { connectedDeferred.await() }
+        uploader.stop()
+
+        withTimeout(3000) {
+            val bye = byeReceived.await()
+            assertThat(bye).contains(""""type":"bye"""")
+            assertThat(closingReceived.await()).isEqualTo(EventUploader.CLOSE_NORMAL)
+        }
+        assertThat(uploader.connectionState).isEqualTo(ConnectionState.TERMINATED)
+    }
+
+    @Test
+    fun `device name with quotes still produces valid hello json`() = runBlocking {
+        val helloReceived = CompletableDeferred<String>()
+
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (text.contains(""""type":"hello"""")) {
+                    helloReceived.complete(text)
+                    webSocket.send("""{"type":"hello_ack","server_time":1700000000.0}""")
+                }
+            }
+        }))
+
+        val rawName = "Dog \"Cam\"\\1"
+        val uploader = EventUploader(
+            serverUrl = server.url("/ingest-events").toString(),
+            deviceName = rawName,
+            spool = spool,
+        )
+
+        uploader.start()
+
+        val helloText = withTimeout(5000) { helloReceived.await() }
+        val hello = Json.parseToJsonElement(helloText).jsonObject
+        assertThat(hello["device"]?.jsonPrimitive?.content).isEqualTo(rawName)
+
+        uploader.stop()
+    }
+
+    @Test
+    fun `late failure after stop does not resurrect the uploader`() = runBlocking {
+        val connectedDeferred = CompletableDeferred<Unit>()
+
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (text.contains(""""type":"hello"""")) {
+                    webSocket.send("""{"type":"hello_ack","server_time":1700000000.0}""")
+                }
+            }
+        }))
+
+        val uploader = EventUploader(
+            serverUrl = server.url("/ingest-events").toString(),
+            deviceName = "test-galaxy",
+            spool = spool,
+            listener = object : EventUploaderListener {
+                override fun onStateChanged(state: ConnectionState) {
+                    if (state == ConnectionState.CONNECTED) {
+                        connectedDeferred.complete(Unit)
+                    }
+                }
+            }
+        )
+
+        uploader.start()
+        withTimeout(5000) { connectedDeferred.await() }
+        uploader.stop()
+
+        // STOP_GRACE_MS later stop() force-cancels the socket: that late failure must not
+        // overwrite TERMINATED or trigger a reconnect.
+        delay(2000)
+        assertThat(uploader.connectionState).isEqualTo(ConnectionState.TERMINATED)
+        assertThat(server.requestCount).isEqualTo(1)
     }
 
     @Test

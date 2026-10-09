@@ -11,7 +11,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.double
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
@@ -77,6 +79,7 @@ class EventUploader(
         const val CLOSE_REPLACED = 4408
         const val CLOSE_BUSY = 4409
         const val CLOSE_NORMAL = 1000
+        const val PROTO_HELLO = 1
 
         val TERMINAL_CLOSE_CODES = setOf(
             CLOSE_NORMAL,
@@ -87,6 +90,13 @@ class EventUploader(
         )
 
         val BACKOFF_STEPS_MS = listOf(500L, 1000L, 2000L, 4000L, 5000L)
+
+        /**
+         * How long stop() waits before force-cancelling the socket. cancel() discards the queued
+         * close frame (observed on the real phone as close code 1005 "Socket closed"), so the
+         * close frame must get a moment on the wire first.
+         */
+        const val STOP_GRACE_MS = 1500L
     }
 
     private var webSocket: WebSocket? = null
@@ -108,21 +118,26 @@ class EventUploader(
     }
 
     fun stop() {
-        if (isRunning.compareAndSet(true, false)) {
-            synchronized(lock) {
-                state = ConnectionState.TERMINATED
-                reconnectJob?.cancel()
-                pingJob?.cancel()
-                try {
-                    webSocket?.close(CLOSE_NORMAL, "Client stopped")
-                } catch (_: Exception) {}
-                try {
-                    webSocket?.cancel()
-                } catch (_: Exception) {}
-                webSocket = null
-            }
-            listener?.onStateChanged(ConnectionState.TERMINATED)
+        if (!isRunning.compareAndSet(true, false)) return
+        val ws: WebSocket?
+        synchronized(lock) {
+            state = ConnectionState.TERMINATED
+            reconnectJob?.cancel()
+            pingJob?.cancel()
+            ws = webSocket
+            webSocket = null
         }
+        if (ws != null) {
+            // bye first: OkHttp rejects send() after close(), so the close frame would drop it.
+            try { ws.send("""{"type":"bye"}""") } catch (_: Exception) {}
+            try { ws.close(CLOSE_NORMAL, "Client stopped") } catch (_: Exception) {}
+            // Never cancel immediately: cancel() discards the queued close frame (observed as code 1005).
+            scope.launch {
+                delay(STOP_GRACE_MS)
+                try { ws.cancel() } catch (_: Exception) {}
+            }
+        }
+        listener?.onStateChanged(ConnectionState.TERMINATED)
     }
 
     private fun setState(newState: ConnectionState) {
@@ -163,10 +178,18 @@ class EventUploader(
                     try {
                         android.util.Log.i("EventUploader", "WebSocket connected to $serverUrl")
                     } catch (_: Throwable) {}
-                    // Send hello handshake immediately
+                    // Send hello handshake immediately (built, not interpolated: the device
+                    // name is user text and must never break the JSON).
                     val phoneTime = clock()
-                    val tokenField = if (!token.isNullOrBlank()) ""","token":"$token"""" else ""
-                    val helloJson = """{"type":"hello","proto":1,"device":"$deviceName","phone_time":$phoneTime,"models":{},"profile":"mobile"$tokenField}"""
+                    val helloJson = buildJsonObject {
+                        put("type", "hello")
+                        put("proto", PROTO_HELLO)
+                        put("device", deviceName)
+                        put("phone_time", phoneTime)
+                        put("models", buildJsonObject {})
+                        put("profile", "mobile")
+                        if (!token.isNullOrBlank()) put("token", token)
+                    }.toString()
                     val sent = ws.send(helloJson)
                     try {
                         android.util.Log.i("EventUploader", "Sent hello: $sent")
@@ -259,6 +282,11 @@ class EventUploader(
     }
 
     private fun handleClose(code: Int, reason: String) {
+        // A deliberate stop() already set TERMINATED; a late close callback must not
+        // overwrite it or notify the listener a second time.
+        synchronized(lock) {
+            if (state == ConnectionState.TERMINATED && !isRunning.get()) return
+        }
         android.util.Log.w("EventUploader", "WebSocket closed ($serverUrl): code=$code, reason=$reason")
         pingJob?.cancel()
         synchronized(lock) {
@@ -278,6 +306,10 @@ class EventUploader(
     }
 
     private fun handleFailure(t: Throwable) {
+        // stop()'s deferred cancel() lands here after STOP_GRACE_MS; stay terminated.
+        synchronized(lock) {
+            if (state == ConnectionState.TERMINATED && !isRunning.get()) return
+        }
         android.util.Log.e("EventUploader", "WebSocket failed ($serverUrl): ${t.message}", t)
         pingJob?.cancel()
         synchronized(lock) {
