@@ -72,6 +72,8 @@ export default function VideoPanel({
   const [torchOn, setTorchOn] = useState(false);
   const [flipping, setFlipping] = useState(false);
   const [snapshotFlash, setSnapshotFlash] = useState(false);
+  // Phones get one "controls" button opening a bottom sheet instead of the inline control bars.
+  const [controlsOpen, setControlsOpen] = useState(false);
 
   const getAuthHeaders = useCallback((): Record<string, string> => {
     const h: Record<string, string> = { "Content-Type": "application/json" };
@@ -179,10 +181,11 @@ export default function VideoPanel({
 
   // Monitoring is stopped on purpose (or has never started): no /video request at all, and a plain
   // card instead of a spinner — "Reconnecting…" is only for a phone that dropped mid-session.
+  // The idle card keeps the same min-height rules as the live panel.
   if (idle) {
     return (
       <section aria-label="Live video of the feeding area"
-        className="relative h-full min-h-[260px] sm:min-h-[320px] lg:min-h-[480px] overflow-hidden rounded-xl bg-[#1B1D1F]">
+        className="relative h-full min-h-0 overflow-hidden rounded-xl bg-[#1B1D1F] sm:min-h-[320px] lg:min-h-[480px]">
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center text-[#D6D8DB]">
           <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/5 text-[#9CA3AF] ring-1 ring-white/10">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -201,7 +204,7 @@ export default function VideoPanel({
 
   return (
     <section aria-label="Live video of the feeding area" ref={boxRef}
-      className="relative h-full min-h-[260px] sm:min-h-[320px] lg:min-h-[480px] overflow-hidden rounded-xl bg-[#1B1D1F]">
+      className="relative h-full min-h-0 overflow-hidden rounded-xl bg-[#1B1D1F] sm:min-h-[320px] lg:min-h-[480px]">
       <div
         className="absolute inset-0 flex items-center justify-center transition-transform duration-300"
         style={{
@@ -266,7 +269,7 @@ export default function VideoPanel({
           )}
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="hidden items-center gap-1.5 sm:flex">
           <button
             type="button"
             onClick={rotateVideo}
@@ -283,14 +286,14 @@ export default function VideoPanel({
       </div>
 
       {/* Bottom controls bar: responsive and mobile-adaptive */}
-      <div className="absolute inset-x-2 sm:inset-x-4 bottom-2 sm:bottom-4 flex flex-wrap items-center justify-between gap-1.5 sm:gap-2">
-        <div className={`${chip} gap-2 text-[#D6D8DB] text-[11px] sm:text-[12px]`} style={scrim}>
+      <div className="absolute inset-x-2 bottom-2 flex flex-wrap items-center justify-between gap-1.5 sm:inset-x-4 sm:bottom-4 sm:gap-2">
+        <div className={`${chip} hidden gap-2 text-[#D6D8DB] text-[11px] sm:text-[12px] sm:flex`} style={scrim}>
           <span>Pose {kp} kp</span>
           <span>Face {facePts} pts</span>
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
-          <div role="group" aria-label="Camera controls" className="flex gap-0.5 sm:gap-1 rounded-md p-0.5 sm:p-1" style={scrim}>
+          <div role="group" aria-label="Camera controls" className="hidden gap-0.5 rounded-md p-1 sm:flex" style={scrim}>
             <button type="button" onClick={takeSnapshot} title="Save instant photo"
               className="flex h-[28px] sm:h-[30px] items-center gap-1 rounded-sm px-2 sm:px-2.5 text-[11px] sm:text-[12px] font-semibold text-[#D6D8DB] hover:text-white transition-colors active:scale-95">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
@@ -304,7 +307,7 @@ export default function VideoPanel({
             </button>
             <button type="button" onClick={flipCamera} disabled={flipping} title="Switch between front and back camera"
               className="flex h-[28px] sm:h-[30px] items-center gap-1 rounded-sm px-2 sm:px-2.5 text-[11px] sm:text-[12px] font-semibold text-[#D6D8DB] hover:text-white transition-all active:scale-95 disabled:opacity-50">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={flipping ? "animate-spin" : ""} aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.0 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.0 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
               <span className="hidden sm:inline">Flip</span>
             </button>
             {onTogglePrivacy && (
@@ -318,7 +321,7 @@ export default function VideoPanel({
             )}
           </div>
 
-          <div role="group" aria-label="Overlay layers" className="flex gap-0.5 sm:gap-1 rounded-md p-0.5 sm:p-1" style={scrim}>
+          <div role="group" aria-label="Overlay layers" className="hidden gap-0.5 rounded-md p-1 sm:flex" style={scrim}>
             {(["box", "skeleton", "face"] as const).map((k) => (
               <button key={k} type="button" aria-pressed={layers[k]} onClick={() => toggle(k)}
                 className="h-[28px] sm:h-[30px] rounded-sm px-2 sm:px-2.5 text-[11px] sm:text-[12px] font-semibold transition-colors"
@@ -327,8 +330,74 @@ export default function VideoPanel({
               </button>
             ))}
           </div>
+
+          {/* Phone widths: photo and a controls button, both >= 44 px; the rest lives in the sheet. */}
+          <div role="group" aria-label="Camera controls" className="flex gap-1.5 sm:hidden" style={scrim}>
+            <button type="button" onClick={takeSnapshot} title="Save instant photo" aria-label="Save instant photo"
+              className="flex h-11 w-11 items-center justify-center rounded-lg text-[#D6D8DB] active:scale-95">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+            </button>
+            <button type="button" onClick={() => setControlsOpen(true)} aria-expanded={controlsOpen}
+              className="flex h-11 items-center gap-1.5 rounded-lg px-3 text-[13px] font-semibold text-[#D6D8DB] active:scale-95">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
+              Controls
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Bottom sheet (phones only): the secondary camera actions and overlay layers, >= 44 px each. */}
+      {controlsOpen && (
+        <div className="fixed inset-0 z-30 sm:hidden">
+          <button type="button" aria-label="Close controls" onClick={() => setControlsOpen(false)}
+            className="absolute inset-0 h-full w-full cursor-default bg-black/50" />
+          <div className="absolute inset-x-3 bottom-24 rounded-2xl border border-white/10 bg-[#121417]/95 p-4 backdrop-blur"
+            style={{ paddingBottom: "max(16px, env(safe-area-inset-bottom))" }}>
+            <div className="mb-3 flex items-center justify-between">
+              <span className="text-[14px] font-bold text-white">Camera controls</span>
+              <button type="button" onClick={() => setControlsOpen(false)} aria-label="Close controls"
+                className="flex h-11 w-11 items-center justify-center rounded-lg text-[#D6D8DB] active:scale-95">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" aria-pressed={torchOn} onClick={toggleTorch}
+                className="flex h-11 items-center justify-center gap-2 rounded-xl px-3 text-[14px] font-semibold text-[#D6D8DB] ring-1 ring-white/10 active:scale-95"
+                style={torchOn ? { background: "rgba(255, 235, 59, 0.22)", color: "#FFF59D" } : undefined}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2v1"/><path d="M12 7a5 5 0 0 0-5 5c0 2 1.5 3.5 2.5 4.5.5.5.5 1.5.5 1.5h4s0-1 .5-1.5c1-1 2.5-2.5 2.5-4.5a5 5 0 0 0-5-5z"/></svg>
+                {torchOn ? "Light ON" : "Light"}
+              </button>
+              <button type="button" onClick={flipCamera} disabled={flipping}
+                className="flex h-11 items-center justify-center gap-2 rounded-xl px-3 text-[14px] font-semibold text-[#D6D8DB] ring-1 ring-white/10 active:scale-95 disabled:opacity-50">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.0 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.0 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
+                Flip
+              </button>
+              <button type="button" onClick={rotateVideo}
+                className="flex h-11 items-center justify-center gap-2 rounded-xl px-3 text-[14px] font-semibold text-[#D6D8DB] ring-1 ring-white/10 active:scale-95">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                Rotate{rotation !== 0 ? ` ${rotation}°` : ""}
+              </button>
+              {onTogglePrivacy && (
+                <button type="button" aria-pressed={privacyMode} onClick={onTogglePrivacy}
+                  className="flex h-11 items-center justify-center gap-2 rounded-xl px-3 text-[14px] font-semibold ring-1 active:scale-95"
+                  style={privacyMode ? { background: "rgba(239, 68, 68, 0.25)", color: "#FCA5A5", borderColor: "rgba(239, 68, 68, 0.5)" } : { color: "#D6D8DB" }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                  {privacyMode ? "Privacy ON" : "Privacy"}
+                </button>
+              )}
+            </div>
+            <div className="mt-3 flex gap-2">
+              {(["box", "skeleton", "face"] as const).map((k) => (
+                <button key={k} type="button" aria-pressed={layers[k]} onClick={() => toggle(k)}
+                  className="h-11 flex-1 rounded-xl text-[14px] font-semibold ring-1 ring-white/10 active:scale-95"
+                  style={layers[k] ? { background: "rgba(127,227,232,.18)", color: "#BFF2F4" } : { color: "#A0A5AD" }}>
+                  {k === "box" ? "Box" : k === "skeleton" ? "Skel" : "Face"}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

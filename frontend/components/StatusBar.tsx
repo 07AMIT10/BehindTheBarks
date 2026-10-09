@@ -35,8 +35,9 @@ export default function StatusBar({ connected, everConnected, reconnectAttempt, 
           deviceLabel(status)
         )}
       </div>
-      {(status?.fps ?? 0) > 0 && <div className="font-mono">{Math.round(status?.fps ?? 0)} fps</div>}
-      <div className="flex items-center gap-1.5">
+      {/* Phone-width bar is one line: connection + device. fps and AI are desktop/debug-only (T6.3). */}
+      {(status?.fps ?? 0) > 0 && <div className="hidden font-mono sm:block">{Math.round(status?.fps ?? 0)} fps</div>}
+      <div className="hidden items-center gap-1.5 sm:flex">
         {aiOk ? (
           <>AI · {llm?.model || "vision"}{latency !== undefined && <span className="font-mono">{Math.round(latency)} ms</span>}</>
         ) : (
@@ -50,7 +51,8 @@ export default function StatusBar({ connected, everConnected, reconnectAttempt, 
         </div>
       )}
       <div className="grow" />
-      <div role="group" aria-label="Mode" className="flex gap-0.5 rounded-lg bg-surface-2 p-[3px]">
+      {/* The Live/Demo toggle is a developer feature: on phones it lives in the T6.3 debug drawer. */}
+      <div role="group" aria-label="Mode" className="hidden gap-0.5 rounded-lg bg-surface-2 p-[3px] sm:flex">
         {(["live", "demo"] as const).map((m) => {
           const active = mode === m;
           const disabled = m === "demo" ? !demoAvailable : !onMode && !active;

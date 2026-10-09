@@ -6,6 +6,7 @@ import { phoneNotice, stationState } from "@/lib/phone";
 import { serverNow } from "@/lib/store";
 import { spanAt } from "@/lib/timeline";
 import { useBackend } from "@/lib/useBackend";
+import { useIsMobile } from "@/lib/useIsMobile";
 import { useNow } from "@/lib/useNow";
 import AuthModal from "./AuthModal";
 import ClipList from "./ClipList";
@@ -40,6 +41,8 @@ export default function Dashboard() {
   } = backend;
   const nowMs = useNow(1000);
   const nowSec = serverNow(state, nowMs);
+  const isMobile = useIsMobile();
+  const [timelineOpen, setTimelineOpen] = useState(false);
   const projector = useMemo(() => new URLSearchParams(window.location.search).get("size") === "projector", []);
   const profile = state.status?.profile ?? { dog_name: "Your dog", location: "", zone_label: "feeding area" };
   const notice = phoneNotice(state.status);
@@ -130,7 +133,7 @@ export default function Dashboard() {
         ) : (
           <>
           <div className="grid gap-3 sm:gap-4 [grid-template-areas:'video'_'card'_'signals'] lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:grid-rows-[auto_auto_1fr] lg:gap-6 lg:[grid-template-areas:'video_card'_'video_treat'_'video_signals']">
-            <div className="min-h-[260px] sm:min-h-[340px] lg:min-h-[480px] [grid-area:video]">
+            <div className="aspect-video sm:aspect-auto sm:min-h-[340px] lg:min-h-[480px] [grid-area:video]">
               <VideoPanel
                 http={backend.http}
                 frame={state.frame}
@@ -153,12 +156,23 @@ export default function Dashboard() {
               <TreatButton onTreat={onTreat} flash={treatFlash} />
             </div>
             <div className="[grid-area:signals]">
-              <SignalsPanel history={state.history} defaultOpen={!projector} />
+              <SignalsPanel history={state.history} defaultOpen={!projector && !isMobile} />
             </div>
           </div>
+          {/* Phones get a disclosure for the timeline; desktop shows it inline. */}
           <div id="timeline">
-            <Timeline spans={state.spans} audio={state.audio} treats={state.treats} notifications={state.notifications}
-              nowSec={nowSec} selected={selectedSpan} onSelect={setSelectedSpan} />
+            <button type="button" aria-expanded={timelineOpen} onClick={() => setTimelineOpen((v) => !v)}
+              className="mb-2 flex w-full items-center justify-between rounded-md border border-border bg-surface px-4 py-2.5 text-small font-semibold text-text lg:hidden">
+              Timeline
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+                style={{ transform: timelineOpen ? "rotate(180deg)" : "none" }}>
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+            </button>
+            <div className={timelineOpen ? "" : "hidden lg:block"}>
+              <Timeline spans={state.spans} audio={state.audio} treats={state.treats} notifications={state.notifications}
+                nowSec={nowSec} selected={selectedSpan} onSelect={setSelectedSpan} />
+            </div>
           </div>
           </>
         )}
