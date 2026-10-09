@@ -64,8 +64,8 @@ npm --prefix frontend run build
 ### Android App
 ```bash
 # Set required environment paths
-export JAVA_HOME=/tmp/opencode/jdk
-export PATH="/tmp/opencode/jdk/bin:$PATH"
+export JAVA_HOME=$HOME/jdk17/jdk-17.0.20.1+1
+export PATH="$JAVA_HOME/bin:$PATH"
 export ANDROID_HOME=$HOME/Android/Sdk
 
 # Run all 136 unit tests
