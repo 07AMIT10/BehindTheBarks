@@ -198,6 +198,21 @@ export function useBackend() {
     }).catch(() => undefined);
   }, [base, token]);
 
+  const saveProfile = useCallback(async (patch: { dog_name: string; location: string; zone_label: string }) => {
+    const tok = token ?? getStoredToken();
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (tok) headers["Authorization"] = `Bearer ${tok}`;
+    const url = `${base.http}/profile${tok ? `?token=${encodeURIComponent(tok)}` : ""}`;
+    const res = await fetch(url, { method: "PUT", headers, body: JSON.stringify(patch) });
+    if (res.status === 401) {
+      setAuthRequired(true);
+      setAuthenticated(false);
+      throw new Error("HTTP 401 Unauthorized");
+    }
+    if (!res.ok) throw new Error(`profile: HTTP ${res.status}`);
+    return res.json();
+  }, [base, token]);
+
   const setPrivacy = useCallback(async (enabled?: boolean) => {
     const tok = token ?? getStoredToken();
     const headers: Record<string, string> = { "content-type": "application/json" };
@@ -239,5 +254,6 @@ export function useBackend() {
     logout,
     privacyMode,
     setPrivacy,
+    saveProfile,
   };
 }

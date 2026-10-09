@@ -26,6 +26,7 @@ from backend.web.event_log import EventLog
 from backend.web.hub import Hub
 from backend.web.ingest import CLOSE_BAD_HELLO, CLOSE_BUSY, CLOSE_REPLACED, HelloError, parse_hello
 from backend.web.ingest_events import MAX_SKEW_S, RemoteSession, bind_pipeline, parse_remote_hello
+from backend.web.profile_store import ProfileStore, validate_profile
 from backend.web.runtime import Runtime
 from backend.web.settings import LLMSettings, load_config
 
@@ -59,6 +60,10 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         hub = Hub(client_queue=web["ws"]["client_queue"], history=web["ws"]["history"],
                   frame_fps=web["ws"]["frame_fps"], log=EventLog(web["log_dir"]))
         demo = load_demo_clips(cfg)
+        # The saved profile wins over the config, so Runtime.status() and captions see the user's values.
+        profile_store = ProfileStore(web["log_dir"], defaults=cfg["web"].get("profile") or {})
+        app.state.profile_store = profile_store
+        cfg["web"]["profile"] = profile_store.load()
         rt = Runtime(cfg, pipeline or build_pipeline(cfg),
                      interpreter or LLMInterpreter(LLMSettings.from_config(cfg)),
                      notifier or build_notifier(cfg), hub, demo_clips=demo)
@@ -193,6 +198,28 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         get_fn = getattr(app.state.rt.pipeline, "get_torch", None)
         enabled = False if get_fn is None else bool(get_fn())
         return {"enabled": enabled}
+
+    @app.get("/profile")
+    async def get_profile(req: Request) -> dict:
+        """The pet profile every viewer sees: header, captions, toasts."""
+        verify_request_auth(req)
+        return dict(cfg["web"].get("profile") or {})
+
+    @app.put("/profile")
+    async def put_profile(req: Request, body: dict | None = None) -> dict:
+        """Save the viewer's pet name/location/zone label and broadcast it to every dashboard."""
+        verify_request_auth(req)
+        check_rate_limit("profile", 0.5)
+        store = getattr(app.state, "profile_store", None)
+        if store is None or not isinstance(body, dict):
+            raise HTTPException(400, "a JSON body with dog_name/location/zone_label is required")
+        try:
+            saved = store.save(body)
+        except ValueError as err:
+            raise HTTPException(400, str(err)) from None
+        cfg["web"]["profile"] = saved  # Runtime.status() reads this dict: no restart needed
+        app.state.rt.hub.publish("status", {"profile": saved})  # every open dashboard, live
+        return saved
 
     @app.post("/camera/flip")
     async def camera_flip(req: Request) -> dict:

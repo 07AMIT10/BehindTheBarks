@@ -91,6 +91,13 @@ describe("reduce", () => {
     expect(stationState(s.status)).toBe("idle");
   });
 
+  it("a saved profile broadcast merges over the live status (T1.8)", () => {
+    let s = apply([{ kind: "envelope", env: env("status", { pipeline: "remote", fps: 8, profile: { dog_name: "Your dog", location: "", zone_label: "feeding area" } }, 1), at: 0 }]);
+    s = reduce(s, { kind: "envelope", env: env("status", { profile: { dog_name: "Rex", location: "Living room", zone_label: "bowl" } }, 2), at: 0 });
+    expect(s.status?.pipeline).toBe("remote");  // the partial envelope kept the rest
+    expect(s.status?.profile?.dog_name).toBe("Rex");
+  });
+
   it("bootstrap uses server timeline for spans and replays the rest", () => {
     const timeline: Span[] = [{ emotion: "relaxed", start: 1, end: 9, confidence: 0.7, reason: "r", source: "rules" }];
     const s = reduce(initialState, {

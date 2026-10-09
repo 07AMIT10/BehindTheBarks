@@ -24,6 +24,7 @@ import ToastStack from "./ToastStack";
 import TreatButton from "./TreatButton";
 import VideoPanel from "./VideoPanel";
 import PairingModal from "./PairingModal";
+import ProfileModal from "./ProfileModal";
 
 export default function Dashboard() {
   const backend = useBackend(); // backend.readAll / backend.http are used by Tasks 6 and 8
@@ -38,6 +39,7 @@ export default function Dashboard() {
     logout,
     privacyMode,
     setPrivacy,
+    saveProfile,
   } = backend;
   const nowMs = useNow(1000);
   const nowSec = serverNow(state, nowMs);
@@ -57,6 +59,8 @@ export default function Dashboard() {
   const [selectedSpan, setSelectedSpan] = useState<number | null>(null);
   const [demoClip, setDemoClip] = useState<ClipMeta | null>(null);
   const [isPairingOpen, setIsPairingOpen] = useState(false);
+  // A fresh key per open re-seeds the form with the live profile (no effect, no reset on broadcasts).
+  const [profileOpen, setProfileOpen] = useState<number | null>(null);
   const mode = state.status?.mode ?? "live";
   const demo = mode === "demo";
   const viewMoment = useCallback((ts: number) => {
@@ -99,6 +103,15 @@ export default function Dashboard() {
             <span className="hidden sm:inline">
               {state.status?.phone?.connected ? "Station Paired" : "Pair Phone"}
             </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setProfileOpen((n) => (n ?? 0) + 1)}
+            title="Edit pet profile"
+            aria-label="Edit pet profile"
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
           </button>
           {token && (
             <button
@@ -179,6 +192,15 @@ export default function Dashboard() {
         )}
       </div>
       <AuthModal isOpen={authRequired && !authenticated} onVerify={verifyPin} />
+      {profileOpen !== null && (
+        <ProfileModal
+          key={profileOpen}
+          isOpen
+          onClose={() => setProfileOpen(null)}
+          profile={state.status?.profile}
+          onSave={saveProfile}
+        />
+      )}
       <PairingModal
         isOpen={isPairingOpen}
         onClose={() => setIsPairingOpen(false)}
