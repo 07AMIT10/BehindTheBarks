@@ -725,11 +725,16 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         for vid in viewer_ids:
             ctx.hub.kick(vid)
         await app.state.registry.forget(ctx.household_id)
-        log_dir = Path(str(ctx.runtime.cfg["web"]["log_dir"]))
-        if log_dir.is_dir():  # the household's event-log directory goes with it (data erasure)
-            import shutil
+        # Erase only this household's event-log directories: <root>/<hid> and <root>/<hid>_<station>.
+        # The root (web.log_dir) is shared by every household and holds the database in some setups, so
+        # it is never taken from a runtime's config (a station channel's config carries the root).
+        import shutil
 
-            shutil.rmtree(log_dir, ignore_errors=True)
+        root = Path(str(app.state.registry.cfg["web"]["log_dir"]))
+        if ctx.household_id and ctx.household_id != LEGACY:
+            for hid_dir in [root / ctx.household_id, *root.glob(f"{ctx.household_id}_*")]:
+                if hid_dir.is_dir():
+                    shutil.rmtree(hid_dir, ignore_errors=True)
         return {"deleted": True}
 
     rate_limit_cfg = web.get("rate_limits") or {}
