@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+import { useDialog } from "@/lib/useDialog";
 
 import { toggleSetting } from "../lib/household";
 
@@ -49,6 +50,8 @@ export default function MembersModal({ isOpen, onClose, isOwner, fetchMembers, r
     }
   };
 
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialog(dialogRef, isOpen, onClose);
   if (!isOpen) return null;
 
   const ago = (ts: number | null) => (ts ? new Date(ts * 1000).toLocaleString() : "never");
@@ -68,13 +71,13 @@ export default function MembersModal({ isOpen, onClose, isOwner, fetchMembers, r
   };
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="members-title"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md">
-      <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#16181d] p-6">
+    <div role="dialog" ref={dialogRef} tabIndex={-1} aria-modal="true" aria-labelledby="members-title"
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto p-4 bg-black/75 backdrop-blur-md">
+      <div className="w-full max-w-md rounded-2xl border border-white/10 dark m-auto bg-[#16181d] p-6">
         <div className="mb-4 flex items-center justify-between">
           <h2 id="members-title" className="text-xl font-bold text-white">Household members</h2>
           <button type="button" onClick={onClose} aria-label="Close dialog"
-            className="p-1 rounded-lg text-muted hover:text-white transition-colors">
+            className="flex h-11 w-11 items-center justify-center rounded-lg text-muted hover:text-white transition-colors md:h-8 md:w-8">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
         </div>
@@ -93,7 +96,7 @@ export default function MembersModal({ isOpen, onClose, isOwner, fetchMembers, r
                   <span className="shrink-0 text-[12px] text-muted">seen {ago(s.last_seen)}</span>
                   {isOwner && !s.revoked && (
                     <button type="button" disabled={busy} onClick={() => void revoke("station", s.id)}
-                      className="shrink-0 h-8 rounded-lg bg-red-600/20 px-3 text-[12px] font-semibold text-red-200">Unpair</button>
+                      className="shrink-0 h-11 md:h-8 rounded-lg bg-red-600/20 px-3 text-[12px] font-semibold text-red-200">Unpair</button>
                   )}
                 </div>
               ))}
@@ -109,7 +112,7 @@ export default function MembersModal({ isOpen, onClose, isOwner, fetchMembers, r
                   </span>
                   {isOwner && v.role !== "owner" && !v.revoked && (
                     <button type="button" disabled={busy} onClick={() => void revoke("viewer", v.id)}
-                      className="shrink-0 h-8 rounded-lg bg-red-600/20 px-3 text-[12px] font-semibold text-red-200">Remove</button>
+                      className="shrink-0 h-11 md:h-8 rounded-lg bg-red-600/20 px-3 text-[12px] font-semibold text-red-200">Remove</button>
                   )}
                 </div>
               ))}
@@ -120,12 +123,12 @@ export default function MembersModal({ isOpen, onClose, isOwner, fetchMembers, r
                 <p className="mb-3 text-[13px] text-muted">
                   Both are off unless you turn them on. Your phone&rsquo;s video never leaves this host on its own.
                 </p>
-                <label className="flex items-center justify-between gap-3 py-1.5 text-sm text-white">
+                <label className="flex min-h-11 items-center justify-between gap-3 py-1.5 text-sm text-white">
                   <span>Use AI interpretation for this household</span>
                   <input type="checkbox" checked={settings.llm_enabled} onChange={() => toggle("llm_enabled")}
                          aria-label="Use AI interpretation" />
                 </label>
-                <label className="flex items-center justify-between gap-3 py-1.5 text-sm text-white">
+                <label className="flex min-h-11 items-center justify-between gap-3 py-1.5 text-sm text-white">
                   <span>Save session logs in this household&rsquo;s folder</span>
                   <input type="checkbox" checked={settings.log_enabled} onChange={() => toggle("log_enabled")}
                          aria-label="Save session logs" />

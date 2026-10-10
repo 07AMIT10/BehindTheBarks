@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useDialog } from "@/lib/useDialog";
 
 type Props = {
   isOpen: boolean;
@@ -20,6 +21,8 @@ export default function AuthModal({ isOpen, onVerify }: Props) {
     }
   }, [isOpen]);
 
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialog(dialogRef, true, () => {});
   if (!isOpen) return null;
 
   const handleSubmit = async (e?: React.FormEvent) => {
@@ -64,7 +67,7 @@ export default function AuthModal({ isOpen, onVerify }: Props) {
 
   return (
     <div
-      role="dialog"
+      role="dialog" ref={dialogRef} tabIndex={-1}
       aria-modal="true"
       aria-labelledby="auth-modal-title"
       aria-describedby="auth-modal-desc"

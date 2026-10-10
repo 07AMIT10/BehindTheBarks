@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
+import { useDialog } from "@/lib/useDialog";
 import type { ViewMode } from "../lib/types";
 import { MODE_METADATA, MODE_ORDER, isModeAllowed, modeRank } from "../lib/modes";
 
@@ -46,6 +47,8 @@ export const ModeSheet: React.FC<ModeSheetProps> = ({
     return () => clearInterval(interval);
   }, [pendingMode, timedOut, effectiveMode]);
 
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialog(dialogRef, isOpen, onClose);
   if (!isOpen) return null;
 
   const handleSelectMode = async (mode: ViewMode) => {
@@ -79,7 +82,7 @@ export const ModeSheet: React.FC<ModeSheetProps> = ({
 
   return (
     <div
-      role="dialog"
+      role="dialog" ref={dialogRef} tabIndex={-1}
       aria-modal="true"
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-4"
       onClick={onClose}
@@ -97,7 +100,7 @@ export const ModeSheet: React.FC<ModeSheetProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="rounded-lg p-1 text-neutral-400 hover:bg-neutral-800 hover:text-white"
+            className="flex h-11 w-11 items-center justify-center rounded-lg text-neutral-400 hover:bg-neutral-800 hover:text-white md:h-8 md:w-8"
             aria-label="Close"
           >
             ✕
@@ -160,12 +163,12 @@ export const ModeSheet: React.FC<ModeSheetProps> = ({
                     <div className="flex items-center gap-2">
                       <span className="font-medium text-sm text-neutral-100">{meta.label}</span>
                       {isCurrent && (
-                        <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">
+                        <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[12px] font-semibold text-emerald-400">
                           Active
                         </span>
                       )}
                       {mode === householdMode && !isCurrent && (
-                        <span className="rounded-full bg-neutral-700 px-2 py-0.5 text-[10px] text-neutral-300">
+                        <span className="rounded-full bg-neutral-700 px-2 py-0.5 text-[12px] text-neutral-300">
                           Policy
                         </span>
                       )}
@@ -176,7 +179,7 @@ export const ModeSheet: React.FC<ModeSheetProps> = ({
 
                 {!isAllowed && (
                   <span
-                    className="flex items-center gap-1 text-[11px] text-neutral-400"
+                    className="flex items-center gap-1 text-[12px] text-neutral-400"
                     title="Exceeds your access ceiling"
                   >
                     🔒 Locked

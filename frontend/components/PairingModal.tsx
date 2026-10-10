@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+import { useDialog } from "@/lib/useDialog";
 import QRCode from "qrcode";
 
 type Props = {
@@ -46,6 +47,8 @@ export default function PairingModal({ isOpen, onClose, phoneConnected, deviceNa
       .catch(() => setQrUrl(null));
   }, [pairing, kind, joinLink]);
 
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialog(dialogRef, isOpen && !!pairing, onClose); // the root renders only once a code exists
   if (!isOpen || !pairing) return null;
 
   const copyLink = () => {
@@ -54,14 +57,14 @@ export default function PairingModal({ isOpen, onClose, phoneConnected, deviceNa
 
   return (
     <div
-      role="dialog"
+      role="dialog" ref={dialogRef} tabIndex={-1}
       aria-modal="true"
       aria-labelledby="pairing-title"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200"
     >
-      <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-[#16181d] p-6 shadow-2xl flex flex-col items-center">
+      <div className="relative w-full max-w-md rounded-2xl border border-white/10 dark m-auto bg-[#16181d] p-6 shadow-2xl flex flex-col items-center">
         <button type="button" onClick={onClose} aria-label="Close dialog"
-          className="absolute right-4 top-4 p-1 rounded-lg text-muted hover:text-white transition-colors">
+          className="absolute right-3 top-3 flex h-11 w-11 items-center justify-center rounded-lg text-muted hover:text-white transition-colors md:right-4 md:top-4 md:h-8 md:w-8">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
           </svg>
@@ -72,7 +75,7 @@ export default function PairingModal({ isOpen, onClose, phoneConnected, deviceNa
         <div role="tablist" aria-label="Pairing kind" className="mb-4 flex gap-2">
           {(["station", "viewer"] as const).map((t) => (
             <button key={t} type="button" role="tab" aria-selected={kind === t} onClick={() => onSwitchKind(t)}
-              className={`h-10 rounded-xl px-4 text-[13px] font-semibold ${kind === t ? "bg-accent text-accent-fg" : "bg-white/10 text-white"}`}>
+              className={`h-11 rounded-xl px-4 text-[13px] font-semibold ${kind === t ? "bg-accent text-accent-fg" : "bg-white/10 text-white"}`}>
               {t === "station" ? "Pair a phone" : "Invite a viewer"}
             </button>
           ))}
@@ -108,16 +111,16 @@ export default function PairingModal({ isOpen, onClose, phoneConnected, deviceNa
             <div className="absolute inset-0 bg-black/80 rounded-2xl flex flex-col items-center justify-center text-center p-4">
               <div className="text-sm font-semibold text-white">Code expired</div>
               <button type="button" onClick={onRegenerate}
-                className="mt-2 h-10 rounded-xl bg-accent px-4 text-[13px] font-bold text-accent-fg">Get a new one</button>
+                className="mt-2 h-11 rounded-xl bg-accent px-4 text-[13px] font-bold text-accent-fg">Get a new one</button>
             </div>
           )}
         </div>
 
         <div className="w-full flex items-center gap-2 p-2 rounded-xl bg-white/5 border border-white/10 text-xs text-muted font-mono mb-3">
-          <span className="truncate flex-1 pl-1 text-[11px] text-gray-300">
+          <span className="truncate flex-1 pl-1 text-[12px] text-gray-300">
             {kind === "station" ? `${pairing.qr.pair_url}/pair` : joinLink}
           </span>
-          <span className="shrink-0 text-[11px] text-gray-400">{Math.max(left, 0)}s</span>
+          <span className="shrink-0 text-[12px] text-gray-400">{Math.max(left, 0)}s</span>
           {kind === "viewer" && (
             <button type="button" onClick={copyLink}
               className="shrink-0 px-2.5 py-1 rounded-lg bg-accent/20 hover:bg-accent/30 text-accent font-sans text-xs font-medium transition-colors">
@@ -129,10 +132,10 @@ export default function PairingModal({ isOpen, onClose, phoneConnected, deviceNa
         {error && <div role="alert" className="mb-3 w-full rounded-lg bg-red-500/10 px-3 py-2 text-[13px] text-red-300">{error}</div>}
 
         <button type="button" onClick={onRegenerate}
-          className="w-full h-10 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-semibold transition-colors">
+          className="w-full h-11 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-semibold transition-colors">
           Regenerate code
         </button>
-        <p className="mt-3 text-center text-[11px] leading-relaxed text-muted">
+        <p className="mt-3 text-center text-[12px] leading-relaxed text-muted">
           {kind === "station"
             ? "Open the WagWatch app on the spare phone, tap Pair by QR, and scan this code. The phone can pair before monitoring starts."
             : "Send this link to the person you want to invite. Opening it adds them as a viewer of this household only."}

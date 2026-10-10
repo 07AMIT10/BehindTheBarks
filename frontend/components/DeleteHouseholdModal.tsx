@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
+import { useDialog } from "@/lib/useDialog";
 
 type Props = {
   isOpen: boolean;
@@ -13,6 +14,8 @@ export default function DeleteHouseholdModal({ isOpen, onClose, onDelete }: Prop
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialog(dialogRef, isOpen, onClose);
   if (!isOpen) return null;
 
   const submit = async () => {
@@ -27,9 +30,9 @@ export default function DeleteHouseholdModal({ isOpen, onClose, onDelete }: Prop
   };
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="delete-household-title"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md">
-      <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#16181d] p-6">
+    <div role="dialog" ref={dialogRef} tabIndex={-1} aria-modal="true" aria-labelledby="delete-household-title"
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto p-4 bg-black/75 backdrop-blur-md">
+      <div className="w-full max-w-md rounded-2xl border border-white/10 dark m-auto bg-[#16181d] p-6">
         <h2 id="delete-household-title" className="text-xl font-bold text-white">Delete this household</h2>
         <p className="mt-1 text-xs text-muted">
           This erases the household, its viewers and stations, and its event logs on the server. Type your

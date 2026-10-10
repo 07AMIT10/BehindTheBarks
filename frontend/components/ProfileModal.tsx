@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
+import { useDialog } from "@/lib/useDialog";
 import type { Status } from "@/lib/types";
 
 type Props = {
@@ -32,6 +33,8 @@ export default function ProfileModal({ isOpen, onClose, profile, onSave }: Props
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialog(dialogRef, isOpen, onClose);
   if (!isOpen) return null;
 
   const submit = async () => {
@@ -52,11 +55,11 @@ export default function ProfileModal({ isOpen, onClose, profile, onSave }: Props
   };
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="profile-title"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md">
-      <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-[#16181d] p-6 shadow-2xl">
+    <div role="dialog" ref={dialogRef} tabIndex={-1} aria-modal="true" aria-labelledby="profile-title"
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto p-4 bg-black/75 backdrop-blur-md">
+      <div className="relative w-full max-w-md rounded-2xl border border-white/10 dark m-auto bg-[#16181d] p-6 shadow-2xl">
         <button type="button" onClick={onClose} aria-label="Close dialog"
-          className="absolute right-4 top-4 p-1 rounded-lg text-muted hover:text-white transition-colors">
+          className="absolute right-3 top-3 flex h-11 w-11 items-center justify-center rounded-lg text-muted hover:text-white transition-colors md:right-4 md:top-4 md:h-8 md:w-8">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
           </svg>

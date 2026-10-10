@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+import { useDialog } from "@/lib/useDialog";
 import Sparkline from "./Sparkline";
 import {
   type DebugMetrics,
@@ -74,6 +75,8 @@ export default function DebugDrawer({
     };
   }, [open, http, token, stationId]);
 
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialog(dialogRef, open, onClose);
   if (!open) return null;
 
   const latest = metrics?.station.latest_telemetry;
@@ -130,7 +133,7 @@ export default function DebugDrawer({
   return (
     <div
       className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm transition-opacity"
-      role="dialog"
+      role="dialog" ref={dialogRef} tabIndex={-1}
       aria-modal="true"
       aria-labelledby="debug-drawer-title"
     >
@@ -179,10 +182,10 @@ export default function DebugDrawer({
 
           {/* Developer Info Chips */}
           <div className="space-y-1.5">
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-muted font-sans">
+            <div className="text-[12px] font-semibold uppercase tracking-wider text-muted font-sans">
               System Chips
             </div>
-            <div className="flex flex-wrap gap-1.5 font-mono text-[11px]">
+            <div className="flex flex-wrap gap-1.5 font-mono text-[12px]">
               <span className="rounded bg-black/30 border border-border px-2 py-0.5 text-muted">
                 LLM: <strong className="text-text">{llmInfo?.provider || "none"}</strong> ({llmInfo?.model || "off"})
               </span>
@@ -206,10 +209,10 @@ export default function DebugDrawer({
           {/* Server Resources */}
           {metrics && (
             <div className="space-y-2">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-muted font-sans">
+              <div className="text-[12px] font-semibold uppercase tracking-wider text-muted font-sans">
                 Backend Server Resources
               </div>
-              <div className="grid grid-cols-2 gap-2 text-[11px]">
+              <div className="grid grid-cols-2 gap-2 text-[12px]">
                 <div className="rounded border border-border bg-black/20 p-2">
                   <div className="text-muted">Process RSS</div>
                   <div className="text-[14px] font-bold text-text">{metrics.server.rss_mb} MB</div>
@@ -246,11 +249,11 @@ export default function DebugDrawer({
           {latest ? (
             <div className="space-y-3">
               <div className="flex items-center justify-between font-sans">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+                <span className="text-[12px] font-semibold uppercase tracking-wider text-muted">
                   Station Telemetry: {stationName || "Active"}
                 </span>
                 {metrics?.drain_pct_per_h !== null && metrics?.drain_pct_per_h !== undefined && (
-                  <span className="text-[10px] text-amber-400 font-mono">
+                  <span className="text-[12px] text-amber-400 font-mono">
                     Drain: ~{metrics.drain_pct_per_h}%/hr
                   </span>
                 )}
@@ -258,7 +261,7 @@ export default function DebugDrawer({
 
               {/* Battery */}
               <div className="rounded border border-border bg-black/20 p-2.5 space-y-1">
-                <div className="flex justify-between items-center text-[11px]">
+                <div className="flex justify-between items-center text-[12px]">
                   <span className="text-muted">Battery Level</span>
                   <span className="font-bold text-text">
                     {latest.battery_pct ?? "?"}% {latest.charging ? "(charging)" : ""}
@@ -269,7 +272,7 @@ export default function DebugDrawer({
 
               {/* Temperature */}
               <div className="rounded border border-border bg-black/20 p-2.5 space-y-1">
-                <div className="flex justify-between items-center text-[11px]">
+                <div className="flex justify-between items-center text-[12px]">
                   <span className="text-muted">Temperature</span>
                   <span className="font-bold text-text">{latest.temp_c ?? "?"}°C</span>
                 </div>
@@ -278,7 +281,7 @@ export default function DebugDrawer({
 
               {/* WebSocket RTT */}
               <div className="rounded border border-border bg-black/20 p-2.5 space-y-1">
-                <div className="flex justify-between items-center text-[11px]">
+                <div className="flex justify-between items-center text-[12px]">
                   <span className="text-muted">WebSocket RTT</span>
                   <span className="font-bold text-text">{latest.ws_rtt_ms ?? "?"} ms</span>
                 </div>
@@ -287,7 +290,7 @@ export default function DebugDrawer({
 
               {/* Detector Latency */}
               <div className="rounded border border-border bg-black/20 p-2.5 space-y-1">
-                <div className="flex justify-between items-center text-[11px]">
+                <div className="flex justify-between items-center text-[12px]">
                   <span className="text-muted">Detector Inference</span>
                   <span className="font-bold text-text">
                     {latest.inference_ms?.detector ?? "?"} ms
@@ -298,11 +301,11 @@ export default function DebugDrawer({
 
               {/* Raw Latest Key-Value Table */}
               <div className="space-y-1">
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-muted font-sans">
+                <div className="text-[12px] font-semibold uppercase tracking-wider text-muted font-sans">
                   Raw Telemetry Values
                 </div>
                 <div className="rounded border border-border bg-black/30 p-2 max-h-48 overflow-y-auto">
-                  <table className="w-full text-[10px]">
+                  <table className="w-full text-[12px]">
                     <tbody>
                       {Object.entries(latest).map(([k, v]) => (
                         <tr key={k} className="border-b border-white/5 last:border-0">
@@ -330,7 +333,7 @@ export default function DebugDrawer({
             type="button"
             onClick={handleCopyJson}
             disabled={!metrics}
-            className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-[11px] font-semibold text-text hover:bg-surface-2 transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-[12px] font-semibold text-text hover:bg-surface-2 transition-colors disabled:opacity-50"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
@@ -340,7 +343,7 @@ export default function DebugDrawer({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg border border-border px-3 py-1.5 text-[11px] font-semibold text-muted hover:text-white transition-colors"
+            className="rounded-lg border border-border px-3 py-1.5 text-[12px] font-semibold text-muted hover:text-white transition-colors"
           >
             Close
           </button>
