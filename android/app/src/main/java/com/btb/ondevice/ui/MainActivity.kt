@@ -34,6 +34,12 @@ import androidx.core.content.ContextCompat
 import com.btb.ondevice.capture.MonitorService
 import com.btb.ondevice.capture.MonitorServiceListener
 import com.btb.ondevice.net.ConnectionState
+import com.btb.ondevice.net.PairResult
+import com.btb.ondevice.net.StationKey
+import com.btb.ondevice.net.StationPairing
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.launch
+import com.btb.ondevice.util.PairingTarget
 import com.btb.ondevice.util.QrDecoder
 
 class MainActivity : Activity() {
@@ -61,6 +67,7 @@ class MainActivity : Activity() {
     private var monitorService: MonitorService? = null
     private var isBound = false
     private var isMonitoring = false
+    private var householdRef: TextView? = null
     private var isAmbientMode = false
 
     private val serviceConnection = object : ServiceConnection {
@@ -103,18 +110,22 @@ class MainActivity : Activity() {
 
                 override fun onQrCodeDetected(rawText: String) {
                     runOnUiThread {
-                        val config = QrDecoder.parsePairingText(rawText)
-                        if (config != null) {
-                            urlEditText.setText(config.url)
-                            prefs.edit().putString(KEY_URL, config.url).apply()
-                            config.token?.let {
-                                prefs.edit().putString(KEY_TOKEN, it).apply()
+                        when (val target = QrDecoder.parsePairingText(rawText)) {
+                            is PairingTarget.Code -> pairStation(target)  // v2: signed identity (T2.5)
+                            is PairingTarget.Manual -> {
+                                val config = target.config
+                                urlEditText.setText(config.url)
+                                prefs.edit().putString(KEY_URL, config.url).apply()
+                                config.token?.let {
+                                    prefs.edit().putString(KEY_TOKEN, it).apply()
+                                }
+                                config.deviceName?.let {
+                                    deviceEditText.setText(it)
+                                    prefs.edit().putString(KEY_DEVICE, it).apply()
+                                }
+                                Toast.makeText(this@MainActivity, "✓ Paired to Dashboard!", Toast.LENGTH_LONG).show()
                             }
-                            config.deviceName?.let {
-                                deviceEditText.setText(it)
-                                prefs.edit().putString(KEY_DEVICE, it).apply()
-                            }
-                            Toast.makeText(this@MainActivity, "✓ Paired to Dashboard!", Toast.LENGTH_LONG).show()
+                            null -> Unit
                         }
                     }
                 }
@@ -238,6 +249,34 @@ class MainActivity : Activity() {
             }
         }
         urlActionsRow.addView(scanQrBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = 8 })
+
+        // v2 pairing works before monitoring: the scanner is its own screen (T2.5).
+        val pairQrBtn = Button(this).apply {
+            text = "🔗 Pair by QR"
+            textSize = 11f
+            setBackgroundColor(Color.parseColor("#1565C0"))
+            setTextColor(Color.WHITE)
+            setOnClickListener {
+                startActivity(android.content.Intent(this@MainActivity, ScannerActivity::class.java))
+            }
+        }
+        urlActionsRow.addView(pairQrBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = 8 })
+
+        // The paired household, and a way out of it.
+        val householdRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 8, 0, 0) }
+        val householdLabel = TextView(this).apply { textSize = 11f }
+        val unpairBtn = Button(this).apply {
+            text = "Unpair"
+            textSize = 11f
+            setBackgroundColor(Color.parseColor("#B71C1C"))
+            setTextColor(Color.WHITE)
+            setOnClickListener { unpairStation() }
+        }
+        householdRow.addView(householdLabel, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        householdRow.addView(unpairBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        urlActionsRow.addView(householdRow)
+        householdRef = householdLabel
+        refreshHouseholdLabel()
 
         val pasteBtn = Button(this).apply {
             text = "📋 Paste"
@@ -463,19 +502,32 @@ class MainActivity : Activity() {
             val linkToken = uri.getQueryParameter("token")
             val linkDevice = uri.getQueryParameter("device")
             if (!linkUrl.isNullOrBlank()) {
-                urlEditText.setText(linkUrl)
-                prefs.edit().putString(KEY_URL, linkUrl).apply()
+                val host = runCatching { android.net.Uri.parse(linkUrl).host }.getOrNull() ?: linkUrl
+                // A deep link is attacker-controllable (any web page can fire one): confirm before it
+                // touches the stored configuration, and never take a token for a different host.
+                AlertDialog.Builder(this)
+                    .setTitle("Connect this station to $host?")
+                    .setMessage("A link asked to point WagWatch at $host${
+                        if (!linkToken.isNullOrBlank() && host != prefs.getString(KEY_URL, "")?.let { runCatching { android.net.Uri.parse(it).host }.getOrNull() })
+                            "\n\nIts access token was ignored because it does not match your current server." else ""
+                    }")
+                    .setPositiveButton("Connect") { _, _ ->
+                        urlEditText.setText(linkUrl)
+                        prefs.edit().putString(KEY_URL, linkUrl).apply()
+                        if (!linkDevice.isNullOrBlank()) {
+                            deviceEditText.setText(linkDevice)
+                            prefs.edit().putString(KEY_DEVICE, linkDevice).apply()
+                        }
+                        if (!linkToken.isNullOrBlank() && host == runCatching { android.net.Uri.parse(prefs.getString(KEY_URL, "") ?: "").host }.getOrNull()) {
+                            prefs.edit().putString(KEY_TOKEN, linkToken).apply()
+                        }
+                    }
+                    .setNegativeButton("Ignore", null)
+                    .show()
             }
-            if (!linkToken.isNullOrBlank()) {
-                prefs.edit().putString(KEY_TOKEN, linkToken).apply()
-            }
-            if (!linkDevice.isNullOrBlank()) {
-                deviceEditText.setText(linkDevice)
-                prefs.edit().putString(KEY_DEVICE, linkDevice).apply()
-            }
-            Toast.makeText(this, "✓ Paired to Server via Link!", Toast.LENGTH_SHORT).show()
         }
 
+        if (!com.btb.ondevice.BuildConfig.DEBUG) return  // extras are the adb dev loop: release builds ignore them
         val extraUrl = intent?.getStringExtra("extra_server_url") ?: intent?.getStringExtra("url")
         if (!extraUrl.isNullOrBlank()) {
             urlEditText.setText(extraUrl)
@@ -770,28 +822,67 @@ class MainActivity : Activity() {
         val clip = clipboard?.primaryClip
         if (clip != null && clip.itemCount > 0) {
             val text = clip.getItemAt(0)?.text?.toString()?.trim() ?: ""
-            val config = QrDecoder.parsePairingText(text)
-            if (config != null) {
-                urlEditText.setText(config.url)
-                prefs.edit().putString(KEY_URL, config.url).apply()
-                config.token?.let {
-                    prefs.edit().putString(KEY_TOKEN, it).apply()
+            when (val target = QrDecoder.parsePairingText(text)) {
+                is PairingTarget.Manual -> {
+                    urlEditText.setText(target.config.url)
+                    prefs.edit().putString(KEY_URL, target.config.url).apply()
+                    target.config.token?.let {
+                        prefs.edit().putString(KEY_TOKEN, it).apply()
+                    }
+                    target.config.deviceName?.let {
+                        deviceEditText.setText(it)
+                        prefs.edit().putString(KEY_DEVICE, it).apply()
+                    }
+                    Toast.makeText(this, "✓ Pasted server config!", Toast.LENGTH_SHORT).show()
                 }
-                config.deviceName?.let {
-                    deviceEditText.setText(it)
-                    prefs.edit().putString(KEY_DEVICE, it).apply()
-                }
-                Toast.makeText(this, "✓ Pasted server config!", Toast.LENGTH_SHORT).show()
-            } else if (text.startsWith("ws://") || text.startsWith("wss://")) {
-                urlEditText.setText(text)
-                prefs.edit().putString(KEY_URL, text).apply()
-                Toast.makeText(this, "✓ Pasted WebSocket URL!", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(this, "Clipboard does not contain a valid server URL", Toast.LENGTH_LONG).show()
+                is PairingTarget.Code -> pairStation(target)
+                null -> Toast.makeText(this, "Clipboard is not a pairing payload", Toast.LENGTH_SHORT).show()
             }
         } else {
             Toast.makeText(this, "Clipboard is empty", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /**
+     * v2 pairing (T2.5): trade the one-time code for a station id. The Keystore key signs the
+     * server's later challenges, so nothing secret leaves the device here.
+     */
+    private fun pairStation(target: PairingTarget.Code) {
+        Toast.makeText(this, "Pairing station…", Toast.LENGTH_SHORT).show()
+        MainScope().launch {
+            val deviceName = prefs.getString(KEY_DEVICE, Build.MODEL) ?: Build.MODEL
+            val result = StationPairing.pair(target.pairUrl, target.code, deviceName, StationKey.getOrCreate())
+            when (result) {
+                is PairResult.Ok -> {
+                    prefs.edit()
+                        .putString(KEY_STATION_ID, result.pairing.stationId)
+                        .putString(KEY_HOUSEHOLD_ID, result.pairing.householdId)
+                        .putString(KEY_PAIR_URL, target.pairUrl)
+                        .putString(KEY_URL, target.wsUrl)
+                        .apply()
+                    urlEditText.setText(target.wsUrl)
+                    Toast.makeText(this@MainActivity, "✓ Station paired — start monitoring", Toast.LENGTH_LONG).show()
+                }
+                PairResult.InvalidCode -> Toast.makeText(this@MainActivity, "That pairing code is expired or used", Toast.LENGTH_LONG).show()
+                is PairResult.Failed -> Toast.makeText(this@MainActivity, "Pairing failed: ${result.detail}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun refreshHouseholdLabel() {
+        householdRef?.text = prefs.getString(StationPrefs.HOUSEHOLD_ID, null)?.let { "Household: $it" }
+            ?: "No household paired (use Pair by QR)"
+    }
+
+    /** Drop the station identity: the next start pairs again from the dashboard. */
+    private fun unpairStation() {
+        prefs.edit()
+            .remove(StationPrefs.STATION_ID)
+            .remove(StationPrefs.HOUSEHOLD_ID)
+            .remove(StationPrefs.PAIR_URL)
+            .apply()
+        refreshHouseholdLabel()
+        Toast.makeText(this, "Station unpaired", Toast.LENGTH_SHORT).show()
     }
 
     private fun startQrScan() {
@@ -937,10 +1028,13 @@ class MainActivity : Activity() {
         const val ACTION_ENTER_AMBIENT = "com.btb.ondevice.action.ENTER_AMBIENT"
         const val ACTION_EXIT_AMBIENT = "com.btb.ondevice.action.EXIT_AMBIENT"
 
-        private const val PREFS_NAME = "btb_station_prefs"
-        private const val KEY_URL = "server_url"
-        private const val KEY_DEVICE = "device_name"
-        private const val KEY_TOKEN = "access_token"
+        private const val PREFS_NAME = StationPrefs.NAME
+        private const val KEY_URL = StationPrefs.URL
+        private const val KEY_DEVICE = StationPrefs.DEVICE
+        private const val KEY_TOKEN = StationPrefs.TOKEN
+        private const val KEY_STATION_ID = StationPrefs.STATION_ID   // v2 pairing (T2.5)
+        private const val KEY_HOUSEHOLD_ID = StationPrefs.HOUSEHOLD_ID
+        private const val KEY_PAIR_URL = StationPrefs.PAIR_URL
         private const val KEY_BATTERY_TIP_SHOWN = "battery_tip_shown"
         private const val KEY_STATION_TIP_SHOWN = "station_tip_shown"
         private val DEFAULT_URL = com.btb.ondevice.BuildConfig.DEFAULT_INGEST_URL

@@ -14,6 +14,15 @@ data class PairingConfig(
     val deviceName: String? = null,
 )
 
+/**
+ * What a scanned QR means (T2.5). v1 JSON and plain URLs are manual configuration; v2 JSON carries a
+ * one-time pairing code that buys the station a signed identity (POST /pair).
+ */
+sealed interface PairingTarget {
+    data class Manual(val config: PairingConfig) : PairingTarget
+    data class Code(val pairUrl: String, val wsUrl: String, val code: String) : PairingTarget
+}
+
 object QrDecoder {
     private val qrReader = QRCodeReader()
 
@@ -49,7 +58,7 @@ object QrDecoder {
      * 1. JSON payload: {"v": 1, "url": "wss://...", "token": "..."}
      * 2. Direct URL: "wss://..." or "ws://" or "https://" or "http://"
      */
-    fun parsePairingText(rawText: String): PairingConfig? {
+    fun parsePairingText(rawText: String): PairingTarget? {
         val trimmed = rawText.trim()
         if (trimmed.isEmpty()) return null
 
@@ -57,10 +66,16 @@ object QrDecoder {
         if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
             return try {
                 val obj = Json.parseToJsonElement(trimmed).jsonObject
+                if (obj["v"]?.jsonPrimitive?.content?.toIntOrNull() == 2) {
+                    val code = obj["code"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } ?: return null
+                    val wsUrl = obj["url"]?.jsonPrimitive?.content ?: return null
+                    val pairUrl = obj["pair_url"]?.jsonPrimitive?.content ?: return null
+                    return PairingTarget.Code(pairUrl, normalizeUrl(wsUrl), code)
+                }
                 val url = obj["url"]?.jsonPrimitive?.content ?: return null
                 val token = obj["token"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
                 val device = obj["device"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-                PairingConfig(normalizeUrl(url), token, device)
+                PairingTarget.Manual(PairingConfig(normalizeUrl(url), token, device))
             } catch (_: Exception) {
                 null
             }
@@ -70,7 +85,7 @@ object QrDecoder {
         if (trimmed.startsWith("ws://") || trimmed.startsWith("wss://") ||
             trimmed.startsWith("http://") || trimmed.startsWith("https://")
         ) {
-            return PairingConfig(normalizeUrl(trimmed))
+            return PairingTarget.Manual(PairingConfig(normalizeUrl(trimmed)))
         }
 
         return null

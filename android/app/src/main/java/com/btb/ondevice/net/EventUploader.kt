@@ -42,6 +42,8 @@ interface EventUploaderListener {
     fun onTorchDownlink(enabled: Boolean) {}
     fun onFlipDownlink() {}
     fun onPrivacyDownlink(enabled: Boolean) {}
+    /** T2.5: the server refused the station's identity (4401) or revoked it (4410): pair again. */
+    fun onPairingInvalid(reason: String) {}
 }
 
 /**
@@ -60,6 +62,9 @@ class EventUploader(
     val serverUrl: String,
     val deviceName: String,
     val token: String? = null,
+    /** Households mode (T2.5): set together, the hello becomes proto 2 and the challenge is signed. */
+    val stationId: String? = null,
+    val signer: Signer? = null,
     val spool: EventSpool? = null,
     val okHttpClient: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
@@ -80,6 +85,8 @@ class EventUploader(
         const val CLOSE_BUSY = 4409
         const val CLOSE_NORMAL = 1000
         const val PROTO_HELLO = 1
+        const val CLOSE_REVOKED = 4410  // T2.4/T2.5: the owner revoked this station
+        const val PROTO_HELLO_STATION = 2
 
         val TERMINAL_CLOSE_CODES = setOf(
             CLOSE_NORMAL,
@@ -87,6 +94,7 @@ class EventUploader(
             CLOSE_UNAUTHORIZED,
             CLOSE_REPLACED,
             CLOSE_BUSY,
+            CLOSE_REVOKED,
         )
 
         val BACKOFF_STEPS_MS = listOf(500L, 1000L, 2000L, 4000L, 5000L)
@@ -183,11 +191,12 @@ class EventUploader(
                     val phoneTime = clock()
                     val helloJson = buildJsonObject {
                         put("type", "hello")
-                        put("proto", PROTO_HELLO)
+                        put("proto", if (stationId != null) PROTO_HELLO_STATION else PROTO_HELLO)
                         put("device", deviceName)
                         put("phone_time", phoneTime)
                         put("models", buildJsonObject {})
                         put("profile", "mobile")
+                        if (stationId != null) put("station_id", stationId)
                         if (!token.isNullOrBlank()) put("token", token)
                     }.toString()
                     val sent = ws.send(helloJson)
@@ -253,6 +262,16 @@ class EventUploader(
                     startPings()
                     flushSpool()
                 }
+                "challenge" -> {
+                    // households mode: sign nonce|station_id|device so the server knows it is this station
+                    val nonce = root["nonce"]?.jsonPrimitive?.content
+                    val signer = this.signer
+                    if (nonce != null && stationId != null && signer != null) {
+                        try {
+                            webSocket.send(StationPairing.authEnvelope(nonce, stationId, deviceName, signer))
+                        } catch (_: Exception) {}
+                    }
+                }
                 "pong" -> {
                     // Clock skew offset handled by server
                 }
@@ -290,6 +309,9 @@ class EventUploader(
         // overwrite it or notify the listener a second time.
         synchronized(lock) {
             if (state == ConnectionState.TERMINATED && !isRunning.get()) return
+        }
+        if (code == CLOSE_UNAUTHORIZED || code == CLOSE_REVOKED) {
+            listener?.onPairingInvalid(reason)  // T2.5: the UI should offer to pair again
         }
         android.util.Log.w("EventUploader", "WebSocket closed ($serverUrl): code=$code, reason=$reason")
         pingJob?.cancel()

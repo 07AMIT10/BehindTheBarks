@@ -347,8 +347,7 @@ class EventUploaderTest {
     }
 
     @Test
-    fun `downlink treat triggers listener`() = runBlocking {
-        val treatReceived = CompletableDeferred<Double>()
+    fun `downlink treat triggers listener`() = runBlocking {        val treatReceived = CompletableDeferred<Double>()
 
         server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -409,5 +408,81 @@ class EventUploaderTest {
         assertThat(treatTs).isEqualTo(123.5)  // not the phone clock fallback
 
         uploader.stop()
+    }
+
+    @Test
+    fun `station hello is proto 2 and the challenge is answered with a signature`() = runBlocking {
+        val helloReceived = CompletableDeferred<String>()
+        val authReceived = CompletableDeferred<String>()
+        val signer = SoftwareSigner()
+
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (text.contains(""""type":"hello"""")) {
+                    helloReceived.complete(text)
+                    webSocket.send("""{"type":"challenge","nonce":"MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=","server_time":1700000000.0}""")
+                } else if (text.contains(""""type":"auth"""")) {
+                    authReceived.complete(text)
+                }
+            }
+        }))
+
+        val uploader = EventUploader(
+            serverUrl = server.url("/ingest-events").toString(),
+            deviceName = "Pixel 8",
+            spool = spool,
+            stationId = "st1",
+            signer = signer,
+        )
+
+        uploader.start()
+        val hello = Json.parseToJsonElement(withTimeout(5000) { helloReceived.await() }).jsonObject
+        assertThat(hello["proto"]?.jsonPrimitive?.content?.toInt()).isEqualTo(2)
+        assertThat(hello["station_id"]?.jsonPrimitive?.content).isEqualTo("st1")
+
+        val auth = withTimeout(5000) { authReceived.await() }
+        val authObj = Json.parseToJsonElement(auth).jsonObject
+        assertThat(authObj["sig"]?.jsonPrimitive?.content?.isNotBlank()).isTrue()
+
+        // the signature verifies against the same public key the app registered
+        val expected = StationPairing.authMessage("MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=", "st1", "Pixel 8")
+        val sig = java.util.Base64.getDecoder().decode(authObj["sig"]?.jsonPrimitive?.content)
+        val verifies = java.security.Signature.getInstance("SHA256withECDSA").run {
+            initVerify(signer.publicKey)
+            update(expected)
+            verify(sig)
+        }
+        assertThat(verifies).isTrue()
+
+        uploader.stop()
+    }
+
+    @Test
+    fun `closed with 4410 fires onPairingInvalid and does not reconnect`() = runBlocking {
+        val invalidReason = CompletableDeferred<String>()
+
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (text.contains(""""type":"hello"""")) {
+                    webSocket.close(4410, "station removed")
+                }
+            }
+        }))
+
+        val uploader = EventUploader(
+            serverUrl = server.url("/ingest-events").toString(),
+            deviceName = "Pixel 8",
+            spool = spool,
+            listener = object : EventUploaderListener {
+                override fun onPairingInvalid(reason: String) {
+                    invalidReason.complete(reason)
+                }
+            },
+        )
+
+        uploader.start()
+        assertThat(withTimeout(5000) { invalidReason.await() }).isEqualTo("station removed")
+        assertThat(uploader.connectionState).isEqualTo(ConnectionState.TERMINATED)
+        assertThat(server.requestCount).isEqualTo(1)  // no reconnect after a revoke
     }
 }
