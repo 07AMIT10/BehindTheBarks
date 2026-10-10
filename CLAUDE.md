@@ -245,10 +245,13 @@ are untouched; only the producer of the envelopes moves. (Plan:
 - **Stalling:** no FrameEvent or preview for `web.remote.stale_s` (2 s) → `pipeline.status().state`
   is `stalled`. There is no watchdog to inject "no dog" frames, so the Runtime's own no-dog path takes
   the label to `unknown` after `web.state.no_dog_unknown_s` and recovers by itself when events resume.
-- **Idle vs stalled:** a phone that stopped on purpose (`bye` + close, or close `1000`) is not an
+- **Idle vs stalled vs paused:** a phone that stopped on purpose (`bye` + close, or close `1000`) is not an
   error — the pipeline forgets its last frame and reports `state: "idle"` (never `stalled`), and the
-  same `idle` state covers a server no phone has ever attached to (first run). Only a phone that
-  went *quiet* stalls.
+  same `idle` state covers a server no phone has ever attached to (first run). A **deliberate blackout**
+  is `state: "paused"`: the phone is silent on purpose but still pinging, so while the effective mode
+  is `blackout` and any message (ping or envelope) arrived within 2 x `ping_every_s` (60 s), the pipeline
+  reports `paused`, which the dashboard shows as a neutral card (never "Reconnecting"). A blackout phone
+  that stopped pinging, and a phone that went quiet in any other mode, is `stalled`.
 - **Status card:** `status.phone` gains `transport: "ingest-events"`, `profile`, `proto`, `models`,
   `events`/`previews`/`treats`/`pings`/`dropped`, `preview_fps`, `clock_offset_s`, `clock_samples` and
   `ping_due_s` (negative = the phone is overdue or half-open).
@@ -483,7 +486,7 @@ class Pipeline:
 `mark_treat()` sets the rules engine's `treat_event_recent` flag for `data.rules.treat_window_s`
 (default 10 s). `ingest_*` are non-blocking, never raise, drop the oldest data when behind, and are
 no-ops (with one warning) unless the source type is `browser`. `status()` returns
-`{"source", "state": "running" | "idle" | "stalled" | "stopped", "fps", "last_frame_age_s", "audio_ok"}`
+`{"source", "state": "running" | "idle" | "paused" | "stalled" | "stopped", "fps", "last_frame_age_s", "audio_ok"}`
 (those five keys always; `RemotePipeline` adds the phone's own counters on top, and there
 `mark_treat()` pushes a downlink instead of setting a local flag — see "On-device phone").
 Web calls only these methods and never imports anything else from `vision/` or `audio/`.

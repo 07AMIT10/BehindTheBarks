@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FrameEvent } from "@/lib/contracts";
 import { durationLabel, hhmmss } from "@/lib/format";
+import { PAUSED_NOTICE } from "@/lib/phone";
 import { drawOverlay, fitContain, type Layers } from "@/lib/overlay";
 import { StreamWatchdog } from "@/lib/watchdog";
 import type { ViewMode } from "@/lib/types";
@@ -15,6 +16,7 @@ type Props = {
   location: string;
   paused: boolean;
   idle?: boolean;
+  blackoutPaused?: boolean;  // a deliberate Blackout (stationState "paused"): neutral card, no stream
   onPair?: () => void;
   lastDogTs: number | null;
   privacyMode?: boolean;
@@ -41,6 +43,7 @@ export default function VideoPanel({
   location,
   paused,
   idle = false,
+  blackoutPaused = false,
   onPair,
   lastDogTs,
   privacyMode = false,
@@ -254,6 +257,24 @@ export default function VideoPanel({
   // Monitoring is stopped on purpose (or has never started): no /video request at all, and a plain
   // card instead of a spinner — "Reconnecting…" is only for a phone that dropped mid-session.
   // The idle card keeps the same min-height rules as the live panel.
+  if (blackoutPaused) {
+    return (
+      <section aria-label="Live video of the feeding area"
+        className="relative h-full min-h-0 overflow-hidden rounded-xl bg-[#1B1D1F] sm:min-h-[320px] lg:min-h-[480px]">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center text-[#D6D8DB]" data-testid="blackout-paused">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/5 text-[#9CA3AF] ring-1 ring-white/10">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M2 8.5A2.5 2.5 0 0 1 4.5 6h2l1.6-2h7.8L17.5 6h2A2.5 2.5 0 0 1 22 8.5v7A2.5 2.5 0 0 1 19.5 18h-15A2.5 2.5 0 0 1 2 15.5z" />
+              <path d="M3 3l18 18" />
+            </svg>
+          </div>
+          <div className="text-heading font-semibold text-white">Paused</div>
+          <p className="max-w-sm text-small text-[#9CA3AF]">{PAUSED_NOTICE}</p>
+        </div>
+      </section>
+    );
+  }
+
   if (idle) {
     return (
       <section aria-label="Live video of the feeding area"

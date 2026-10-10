@@ -16,12 +16,16 @@ export function phoneNotice(status: Status | null): PhoneNotice {
   return null;
 }
 
+/** Shown for a deliberate Blackout: a neutral card, never a reconnecting or error state. */
+export const PAUSED_NOTICE = "Sharing is paused — the station is in Blackout. Nothing leaves the phone.";
+
 /**
  * The station as the dashboard should describe it. "idle" is the good, intentional state:
  * the phone pressed Stop (the backend forgets it and the pipeline reports `idle`), or no phone
- * has ever connected (first run). Only "dropped"/"stalled" mean something went wrong.
+ * has ever connected (first run). "paused" is a deliberate Blackout: the phone is alive and
+ * silent on purpose, so it is neutral too. Only "dropped"/"stalled" mean something went wrong.
  */
-export type StationState = "idle" | "live" | "stalled" | "dropped" | "blocked";
+export type StationState = "idle" | "paused" | "live" | "stalled" | "dropped" | "blocked";
 
 export function stationState(s: Status | null): StationState {
   const p = s?.phone;
@@ -29,6 +33,7 @@ export function stationState(s: Status | null): StationState {
   if (p?.connected && p.camera === false) return "blocked";
   if (p && !p.connected) return "dropped";
   if (ps === "idle") return "idle";
+  if (ps === "paused") return "paused";
   if (ps === "stalled") return "stalled";
   return "live";
 }
@@ -36,6 +41,7 @@ export function stationState(s: Status | null): StationState {
 /** Status-bar device label. */
 export function deviceLabel(s: Status | null): string {
   const p = s?.phone;
+  if (p?.connected && s?.pipeline_status?.state === "paused") return `${p.device ?? "Phone"} · paused (Blackout)`;
   if (p?.connected) {
     const name = p.device ?? "Phone";
     return p.camera === false ? `${name} · microphone only` : `${name} · ${p.facing ?? "back"} camera`;

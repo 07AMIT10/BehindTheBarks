@@ -42,7 +42,7 @@ export default function StationTile({
   const dotColor =
     state === "live"
       ? "var(--accent)"
-      : state === "idle"
+      : state === "idle" || state === "paused"
       ? "var(--unknown)"
       : "var(--anxious, #f59e0b)";
 

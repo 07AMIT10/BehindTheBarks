@@ -17,11 +17,15 @@ export default function StatusBar({ connected, everConnected, reconnectAttempt, 
   const demoAvailable = Boolean(status?.modes?.includes("demo")) && Boolean(onMode);
   const conn = connected ? "Connected" : everConnected ? `Reconnecting · attempt ${reconnectAttempt}` : "Connecting…";
   const idle = stationState(status) === "idle";
+  const paused = stationState(status) === "paused"; // a deliberate Blackout: connected, but a muted dot
   return (
     <div role="status" className="flex min-h-10 flex-wrap items-center gap-x-5 gap-y-2 rounded-md border border-border bg-surface px-4 py-2 text-small text-muted">
       <div className="flex items-center gap-2 font-semibold text-text">
         <span className="h-2 w-2 rounded-full"
-          style={{ background: connected ? "var(--accent)" : "var(--unknown)", boxShadow: connected ? "0 0 0 3px var(--accent-soft)" : "none" }} />
+          style={{
+            background: connected && !paused ? "var(--accent)" : "var(--unknown)",
+            boxShadow: connected && !paused ? "0 0 0 3px var(--accent-soft)" : "none",
+          }} />
         {conn}
       </div>
       <div className="flex items-center gap-1.5">

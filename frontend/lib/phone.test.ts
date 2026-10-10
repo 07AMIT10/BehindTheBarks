@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { deviceLabel, phoneNotice, stationState } from "./phone";
+import { deviceLabel, PAUSED_NOTICE, phoneNotice, stationState } from "./phone";
 import type { PhoneStatus, Status } from "./types";
 
 const phone = (p: Partial<PhoneStatus>): Status => ({
   pipeline: "mock",
   pipeline_status: { source: "browser", state: "running", fps: 8, last_frame_age_s: 0.1, audio_ok: true },
   phone: { connected: true, device: "Pixel 7", facing: "back", camera: true, fps: 8, ...p },
+});
+
+const paused = (extra: Partial<PhoneStatus> = {}): Status => ({
+  ...phone(extra),
+  pipeline_status: { source: "remote", state: "paused", fps: 0, last_frame_age_s: 40, audio_ok: false },
 });
 
 const idleRemote: Status = {
@@ -56,6 +61,17 @@ describe("stationState", () => {
   });
   it("stalled is its own state, not idle", () => {
     expect(stationState({ ...idleRemote, pipeline_status: { source: "remote", state: "stalled", fps: 0, last_frame_age_s: 5, audio_ok: false } })).toBe("stalled");
+  });
+  it("a deliberate blackout is paused: neutral, never stalled or dropped", () => {
+    expect(stationState(paused())).toBe("paused");
+    expect(stationState({ ...idleRemote, pipeline_status: { ...idleRemote.pipeline_status!, state: "paused" } })).toBe("paused");
+    // a phone that really dropped is still dropped, whatever the pipeline says
+    expect(stationState(paused({ connected: false }))).toBe("dropped");
+    expect(stationState(paused({ camera: false }))).toBe("blocked");
+  });
+  it("the status bar names a paused station as paused, not as a reconnect", () => {
+    expect(deviceLabel(paused())).toBe("Pixel 7 · paused (Blackout)");
+    expect(PAUSED_NOTICE).toBe("Sharing is paused — the station is in Blackout. Nothing leaves the phone.");
   });
   it("a connected phone is live, camera-denied is blocked, dropped is dropped", () => {
     expect(stationState(phone({}))).toBe("live");

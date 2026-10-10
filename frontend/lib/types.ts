@@ -18,7 +18,7 @@ export type Envelope = {
 
 export type PipelineStatus = {
   source: string;
-  state: "running" | "idle" | "stalled" | "stopped" | string;
+  state: "running" | "idle" | "paused" | "stalled" | "stopped" | string; // paused = deliberate Blackout, not an error
   fps: number;
   last_frame_age_s: number | null;
   audio_ok: boolean;

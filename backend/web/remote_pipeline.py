@@ -382,7 +382,19 @@ class RemotePipeline:
         # Idle is not an error: the phone stopped on purpose, or has never been here (first run).
         if self._idle or not self._ever_attached:
             return "idle"
+        if self._paused(now):
+            return "paused"  # a deliberate blackout: the phone is alive and silent on purpose
         age = self._frame_age_s(now)
         # Never having had a frame counts as stalled once the grace period is over (Pipeline._state).
         since = age if age is not None else now - self._started_at
         return "stalled" if since > self.stale_s else "running"
+
+    def _paused(self, now: float) -> bool:
+        """A blackout is silence on purpose (T3.2): the phone sends no frames, events or previews, but
+        it keeps pinging. Paused = effective blackout AND a message (ping or any envelope) within two
+        ping intervals. A blackout phone that went quiet is stalled, like a phone in any other mode."""
+        s = self._session
+        if s is None or self.effective_mode != "blackout" or not hasattr(s, "idle_s"):
+            return False
+        ping_every = float(getattr(s, "ping_every_s", 30.0))
+        return s.idle_s(now) <= 2 * ping_every

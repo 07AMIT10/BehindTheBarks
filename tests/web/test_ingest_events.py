@@ -484,6 +484,64 @@ def test_status_is_stalled_after_camera_silence_and_mirrors_phone_metrics():
     assert p.latest_frame_jpeg() is not None  # the last preview is kept for the dashboard
 
 
+def _phone_at_mode(cap: str, clock: Clock, *, stale_s: float = 2.0):
+    """A pipeline with an attached phone that reported `cap` (and effective == cap) at clock.t."""
+    cfg = stub_cfg()
+    cfg["web"]["remote"] = {"stale_s": stale_s}
+    p = RemotePipeline(cfg, clock=clock)
+    s = RemoteSession(parse_remote_hello(hello_msg()), p, SpyRuntime(), clock=clock)
+    p.attach(s, None)
+    s.handle_text(json.dumps({"type": "mode_state", "data": {"cap": cap, "effective": cap, "reason": "station"}}))
+    s.handle(bytes([KIND_PREVIEW]) + phone_jpeg())
+    return p, s
+
+
+def _ping(s: RemoteSession, clock: Clock, t0: float) -> None:
+    s.handle_text(json.dumps({"type": "ping", "phone_time": PHONE_T + (clock.t - t0)}))
+
+
+def test_blackout_with_a_live_phone_reads_paused_not_stalled():
+    clock = Clock()
+    t0 = clock.t
+    p, s = _phone_at_mode("blackout", clock)
+    assert p.status()["state"] == "paused"  # just attached and alive: no stall grace needed
+    states = set()
+    for _ in range(4):  # 40 s of silence on purpose, with a ping every 10 s (the phone keeps pinging)
+        clock.t += 10.0
+        _ping(s, clock, t0)
+        states.add(p.status()["state"])
+    assert states == {"paused"}
+    st = p.status()
+    assert st["effective_mode"] == "blackout" and st["station_cap"] == "blackout"
+
+
+def test_blackout_phone_that_stopped_pinging_reads_stalled():
+    clock = Clock()
+    p, s = _phone_at_mode("blackout", clock)
+    clock.t += 61.0  # more than 2 x ping_every_s (30 s) since any message
+    assert p.status()["state"] == "stalled"
+
+
+def test_privacy_mode_with_silence_still_reads_stalled():
+    clock = Clock()
+    t0 = clock.t
+    p, s = _phone_at_mode("privacy", clock)
+    clock.t += 1.0
+    _ping(s, clock, t0)  # alive, pinging, but privacy still sends events: silence is a stall
+    clock.t += 2.5
+    _ping(s, clock, t0)
+    assert p.status()["state"] == "stalled"
+
+
+def test_full_mode_with_silence_still_reads_stalled():
+    clock = Clock()
+    t0 = clock.t
+    p, s = _phone_at_mode("full", clock)
+    clock.t += 2.5
+    _ping(s, clock, t0)
+    assert p.status()["state"] == "stalled"
+
+
 def test_bind_pipeline_is_a_no_op_for_pipelines_without_attach():
     s, _ = session()
     assert bind_pipeline(SpyPipeline(), s, None) is False

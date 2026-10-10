@@ -76,6 +76,7 @@ export default function Dashboard() {
   // A mic-only phone stalls the browser source on purpose; the camera-blocked card explains it instead.
   const st = stationState(state.status);
   const idle = st === "idle"; // the phone stopped on purpose, or none has ever connected: not an error
+  const blackoutPaused = st === "paused"; // a deliberate Blackout: neutral card, no reconnecting
   const stalled = st === "stalled" && notice !== "blocked";
   const paused = (!state.connected && state.everConnected) || stalled || st === "dropped";
   const lastSeenEmotion = useMemo(() => [...state.spans].reverse().find((s) => s.emotion !== "unknown")?.emotion ?? null, [state.spans]);
@@ -375,6 +376,7 @@ export default function Dashboard() {
                 location={profile.location}
                 paused={paused}
                 idle={idle}
+                blackoutPaused={blackoutPaused}
                 onPair={() => setIsPairingOpen(true)}
                 lastDogTs={state.lastDogTs}
                 privacyMode={privacyMode}
