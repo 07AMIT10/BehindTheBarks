@@ -1,4 +1,4 @@
-import type { ViewMode } from "./types";
+import type { ModeRequestResult, ViewMode } from "./types";
 
 export const MODE_ORDER: readonly ViewMode[] = ["blackout", "privacy", "limited", "full"] as const;
 
@@ -24,6 +24,18 @@ export const MODE_METADATA: Record<ViewMode, { label: string; desc: string; icon
     icon: "👁️",
   },
 };
+
+/** What the dashboard says once the phone answered a raise prompt (or never did). */
+export function modeResultLabel(result: ModeRequestResult["result"]): string {
+  switch (result) {
+    case "allowed":
+      return "Request approved on the phone";
+    case "denied":
+      return "Request declined on the phone";
+    case "timeout":
+      return "No answer on the phone";
+  }
+}
 
 export function modeRank(mode: ViewMode): number {
   const idx = MODE_ORDER.indexOf(mode);

@@ -52,6 +52,7 @@ EVENT_MODELS: dict[str, type] = {"frame": FrameEvent, "audio": AudioEvent, "rule
 
 AUDIO_OK_S = 2.0  # an AudioEvent within this many seconds means "the mic is alive", as in Pipeline
 from backend.web.modes import ModeError, parse_mode  # T3.1
+MODE_RESULTS = ("allowed", "denied", "timeout")  # T3.2: how a raise prompt ended on the phone
 
 MAX_SKEW_S = 60.0  # an envelope whose rebased ts is further than this from our clock is dropped
 MIN_EPOCH = 1_000_000_000.0   # 2001-09-09: below this the phone sent something other than seconds
@@ -196,6 +197,8 @@ class RemoteSession:
         # T3.1: what the person holding the phone allows, and what it says it is actually doing.
         self.station_cap = "full"          # an un-upgraded station is assumed full until it says otherwise
         self.effective_mode: str | None = None
+        # T3.2: the answer the person on the phone gave to the last raise prompt (None until one happened).
+        self.last_mode_request_result: dict | None = None
         # T6.1: station telemetry (battery, temperature, thermal, inference, RTT)
         self.latest_telemetry: dict | None = None
         self.telemetry_history: deque[dict] = deque(maxlen=360)
@@ -230,6 +233,8 @@ class RemoteSession:
             return self._treat(data, now)
         if kind == "mode_state":
             return self._mode_state(data)
+        if kind == "mode_result":
+            return self._mode_result(data, now)
         if kind == "kick_viewers":
             return self._kick_viewers()
         if kind == "telemetry":
@@ -277,6 +282,28 @@ class RemoteSession:
         if hasattr(self.pipeline, "set_station_cap"):
             self.pipeline.set_station_cap(cap)
         return "mode_state"
+
+    def _mode_result(self, data: object, now: float) -> str | None:
+        """T3.2: the outcome of a raise prompt, `{"type":"mode_result","data":{"mode","result"}}` with result
+        `allowed | denied | timeout`. Exactly these two fields; anything else is counted in `dropped`. A valid
+        result is kept on the phone card (`last_mode_request_result`) and published at once."""
+        if not isinstance(data, dict) or set(data) != {"mode", "result"}:
+            self.dropped += 1
+            return None
+        try:
+            mode = parse_mode(data.get("mode"))
+        except ModeError:
+            self.dropped += 1
+            return None
+        result = data.get("result")
+        if not isinstance(result, str) or result not in MODE_RESULTS:
+            self.dropped += 1
+            return None
+        self.last_mode_request_result = {"mode": mode, "result": result, "ts": now}
+        publish = getattr(self.runtime, "publish_phone", None)
+        if publish is not None:
+            publish()
+        return "mode_result"
 
     def _kick_viewers(self) -> str:
         """T3.4: station requested to disconnect all remote viewers."""
@@ -433,6 +460,7 @@ class RemoteSession:
             "last_event_age_s": self._age(self.last_event_ts, now),
             "last_frame_age_s": self._age(self.last_frame_ts, now),
             "station_cap": self.station_cap, "effective_mode": self.effective_mode,
+            "last_mode_request_result": self.last_mode_request_result,
             "battery_pct": telem.get("battery_pct"),
             "charging": telem.get("charging"),
             "temp_c": telem.get("temp_c"),

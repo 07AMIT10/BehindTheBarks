@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { useDialog } from "@/lib/useDialog";
-import type { ViewMode } from "../lib/types";
-import { MODE_METADATA, MODE_ORDER, isModeAllowed, modeRank } from "../lib/modes";
+import type { ModeRequestResult, ViewMode } from "../lib/types";
+import { MODE_METADATA, MODE_ORDER, isModeAllowed, modeRank, modeResultLabel } from "../lib/modes";
 
 interface ModeSheetProps {
   isOpen: boolean;
@@ -13,6 +13,8 @@ interface ModeSheetProps {
   isOwner?: boolean;
   onSetMode: (mode: ViewMode) => Promise<{ status: "applied" | "pending"; mode: ViewMode } | undefined>;
   onPeek?: () => Promise<boolean>;
+  /** The phone's answer to the last raise prompt (status.phone.last_mode_request_result). */
+  requestResult?: ModeRequestResult | null;
 }
 
 export const ModeSheet: React.FC<ModeSheetProps> = ({
@@ -25,15 +27,21 @@ export const ModeSheet: React.FC<ModeSheetProps> = ({
   isOwner = true,
   onSetMode,
   onPeek,
+  requestResult = null,
 }) => {
   const [pendingMode, setPendingMode] = useState<ViewMode | null>(null);
+  // The result timestamp when this request was sent: only a newer result answers it (an old one for the same mode does not).
+  const [baselineTs, setBaselineTs] = useState<number | null>(null);
   const [countdown, setCountdown] = useState<number>(60);
   const [timedOut, setTimedOut] = useState<boolean>(false);
   const [peekMsg, setPeekMsg] = useState<string | null>(null);
 
-  // Countdown timer for pending approval
+  const answered = pendingMode !== null && requestResult !== null && requestResult.mode === pendingMode && requestResult.ts !== baselineTs;
+  const resultLabel = answered && requestResult ? modeResultLabel(requestResult.result) : null;
+
+  // Countdown timer for pending approval; the phone's answer stops it.
   useEffect(() => {
-    if (!pendingMode || timedOut || modeRank(effectiveMode) >= modeRank(pendingMode)) return;
+    if (!pendingMode || timedOut || answered || modeRank(effectiveMode) >= modeRank(pendingMode)) return;
     const interval = setInterval(() => {
       setCountdown((prev) => {
         if (prev <= 1) {
@@ -45,7 +53,7 @@ export const ModeSheet: React.FC<ModeSheetProps> = ({
       });
     }, 1000);
     return () => clearInterval(interval);
-  }, [pendingMode, timedOut, effectiveMode]);
+  }, [pendingMode, timedOut, effectiveMode, answered]);
 
   const dialogRef = useRef<HTMLDivElement>(null);
   useDialog(dialogRef, isOpen, onClose);
@@ -57,6 +65,7 @@ export const ModeSheet: React.FC<ModeSheetProps> = ({
     if (!isOwner) return;
 
     setTimedOut(false);
+    setBaselineTs(requestResult?.ts ?? null);
     const res = await onSetMode(mode);
     if (res?.status === "pending") {
       setPendingMode(mode);
@@ -78,7 +87,7 @@ export const ModeSheet: React.FC<ModeSheetProps> = ({
     setTimeout(() => setPeekMsg(null), 4000);
   };
 
-  const showPendingNotice = pendingMode !== null && (timedOut || modeRank(effectiveMode) < modeRank(pendingMode));
+  const showPendingNotice = pendingMode !== null && (answered || timedOut || modeRank(effectiveMode) < modeRank(pendingMode));
 
   return (
     <div
@@ -110,9 +119,9 @@ export const ModeSheet: React.FC<ModeSheetProps> = ({
         {/* Pending Approval Notice */}
         {showPendingNotice && (
           <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 text-xs text-amber-200">
-            {timedOut ? (
+            {resultLabel || timedOut ? (
               <div className="flex items-center justify-between">
-                <span>Request timed out or denied on the phone.</span>
+                <span role="status">{resultLabel ?? modeResultLabel("timeout")}</span>
                 <button
                   onClick={() => {
                     setPendingMode(null);
@@ -141,7 +150,7 @@ export const ModeSheet: React.FC<ModeSheetProps> = ({
             const meta = MODE_METADATA[mode];
             const isCurrent = mode === effectiveMode;
             const isAllowed = isModeAllowed(mode, modeCeiling);
-            const isPendingThisMode = pendingMode === mode && !timedOut && modeRank(effectiveMode) < modeRank(pendingMode);
+            const isPendingThisMode = pendingMode === mode && !timedOut && !answered && modeRank(effectiveMode) < modeRank(pendingMode);
             const disabled = !isAllowed || (!isOwner && !isCurrent);
 
             return (

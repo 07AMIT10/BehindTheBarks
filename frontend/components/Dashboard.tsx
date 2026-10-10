@@ -392,6 +392,7 @@ export default function Dashboard() {
                 isOwner={!backend.me || backend.me.role === "owner"}
                 onSetMode={backend.setViewMode}
                 onPeek={backend.peek}
+                modeRequestResult={state.status?.phone?.last_mode_request_result ?? null}
                 station={state.focusedStation !== "default" ? state.focusedStation : undefined}
               />
             </div>

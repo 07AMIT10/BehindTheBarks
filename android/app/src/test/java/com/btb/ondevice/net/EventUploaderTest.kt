@@ -1,5 +1,6 @@
 package com.btb.ondevice.net
 
+import com.btb.ondevice.capture.RaiseResult
 import com.btb.ondevice.contracts.AudioEvent
 import com.btb.ondevice.contracts.AudioLabel
 import com.btb.ondevice.contracts.FrameEvent
@@ -634,6 +635,43 @@ class EventUploaderTest {
         assertThat(sent).contains(""""cap":"privacy"""")
         assertThat(sent).contains(""""effective":"privacy"""")
         assertThat(sent).contains(""""reason":"station"""")
+        uploader.stop()
+    }
+
+    @Test
+    fun `sendModeResult reports how a raise prompt ended upstream`() = runBlocking {
+        val connected = CompletableDeferred<Unit>()
+        val results = java.util.concurrent.LinkedBlockingQueue<String>()
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                when {
+                    text.contains(""""type":"hello"""") ->
+                        webSocket.send("""{"type":"hello_ack","server_time":1700000000.0}""")
+                    text.contains(""""type":"mode_result"""") -> results.add(text)
+                }
+            }
+        }))
+
+        val uploader = EventUploader(
+            serverUrl = server.url("/ingest-events").toString(),
+            deviceName = "test-galaxy",
+            spool = spool,
+            listener = object : EventUploaderListener {
+                override fun onStateChanged(state: ConnectionState) {
+                    if (state == ConnectionState.CONNECTED) connected.complete(Unit)
+                }
+            }
+        )
+        uploader.start()
+        withTimeout(5000) { connected.await() }
+        // The three answers the station can give to a raise prompt (MonitorService.resolveRaise).
+        for (result in listOf(RaiseResult.ALLOWED, RaiseResult.DENIED, RaiseResult.TIMEOUT)) {
+            assertThat(uploader.sendModeResult("full", result.wire)).isTrue()
+        }
+        val sent = List(3) { withTimeout(5000) { results.poll(5, java.util.concurrent.TimeUnit.SECONDS) } }
+        assertThat(sent[0]).isEqualTo("""{"type":"mode_result","data":{"mode":"full","result":"allowed"}}""")
+        assertThat(sent[1]).isEqualTo("""{"type":"mode_result","data":{"mode":"full","result":"denied"}}""")
+        assertThat(sent[2]).isEqualTo("""{"type":"mode_result","data":{"mode":"full","result":"timeout"}}""")
         uploader.stop()
     }
 }

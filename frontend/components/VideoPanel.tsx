@@ -6,7 +6,7 @@ import { durationLabel, hhmmss } from "@/lib/format";
 import { PAUSED_NOTICE } from "@/lib/phone";
 import { drawOverlay, fitContain, type Layers } from "@/lib/overlay";
 import { StreamWatchdog } from "@/lib/watchdog";
-import type { ViewMode } from "@/lib/types";
+import type { ModeRequestResult, ViewMode } from "@/lib/types";
 import { ModeSheet } from "./ModeSheet";
 
 type Props = {
@@ -32,6 +32,7 @@ type Props = {
   isOwner?: boolean;
   onSetMode?: (mode: ViewMode) => Promise<{ status: "applied" | "pending"; mode: ViewMode } | undefined>;
   onPeek?: () => Promise<boolean>;
+  modeRequestResult?: ModeRequestResult | null;
   station?: string;
 };
 
@@ -61,6 +62,7 @@ export default function VideoPanel({
   isOwner = true,
   onSetMode,
   onPeek,
+  modeRequestResult = null,
   station,
 }: Props) {
   const boxRef = useRef<HTMLDivElement>(null);
@@ -609,6 +611,7 @@ export default function VideoPanel({
           isOwner={isOwner}
           onSetMode={onSetMode}
           onPeek={onPeek}
+          requestResult={modeRequestResult}
         />
       )}
     </section>

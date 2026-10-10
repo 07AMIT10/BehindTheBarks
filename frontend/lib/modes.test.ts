@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MODE_METADATA, MODE_ORDER, isModeAllowed, minMode, modeRank } from "./modes";
+import { MODE_METADATA, MODE_ORDER, isModeAllowed, minMode, modeRank, modeResultLabel } from "./modes";
 
 describe("modes library (T3.6)", () => {
   it("enforces strict mode ordering", () => {
@@ -46,5 +46,18 @@ describe("modes library (T3.6)", () => {
     expect(isModeAllowed("full", "blackout")).toBe(false);
     expect(isModeAllowed("privacy", "blackout")).toBe(false);
     expect(isModeAllowed("blackout", "blackout")).toBe(true);
+  });
+});
+
+describe("modeResultLabel (mode_result from the phone)", () => {
+  it("names each outcome the phone can report", () => {
+    expect(modeResultLabel("allowed")).toBe("Request approved on the phone");
+    expect(modeResultLabel("denied")).toBe("Request declined on the phone");
+    expect(modeResultLabel("timeout")).toBe("No answer on the phone");
+  });
+
+  it("gives three distinct labels", () => {
+    const labels = new Set((["allowed", "denied", "timeout"] as const).map(modeResultLabel));
+    expect(labels.size).toBe(3);
   });
 });

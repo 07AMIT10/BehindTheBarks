@@ -30,9 +30,14 @@ export type PipelineStatus = {
   policy_mode?: ViewMode;   // T3.1: what the household owner selected
 };
 
+/** How a raise prompt ended on the phone (`mode_result`). `ts` is the server clock when it arrived. */
+export type ModeRequestResult = { mode: ViewMode; result: "allowed" | "denied" | "timeout"; ts: number };
+
 export type PhoneStatus = {
   connected: boolean;
   device: string | null;
+  /** T3.2: the answer the person on the phone gave to the last raise prompt (null before any). */
+  last_mode_request_result?: ModeRequestResult | null;
   facing: string | null; // "back" | "front" | null
   camera?: boolean; // false: camera permission denied, streaming microphone only
   fps: number; // frames/s received by the backend

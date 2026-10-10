@@ -158,3 +158,52 @@ def test_effective_mode_is_the_minimum_of_cap_and_policy(tmp_path):
     assert p.effective_mode == "blackout", "the station cap always wins over the household policy"
     p._station_cap = "full"
     assert p.effective_mode == "full"
+
+# -- session: mode_result (T3.2 outcome of a raise prompt) ----------------------------------------
+
+class _Runtime:
+    """Fake runtime: the three frame/audio/rules hooks plus the publish the phone card relies on."""
+
+    def __init__(self):
+        self.publishes = 0
+        self.on_frame = self.on_audio = self.on_rules = lambda *a: None
+
+    def publish_phone(self):
+        self.publishes += 1
+
+
+def _session_with_runtime(tmp_path, runtime):
+    from backend.web.ingest_events import RemoteHello
+
+    hello = RemoteHello(device="Phone", proto=2, profile={}, models={}, phone_time=0.0)
+    return RemoteSession(hello, object(), runtime, clock=lambda: 1000.0)
+
+
+@pytest.mark.parametrize("result", ["allowed", "denied", "timeout"])
+def test_mode_result_is_accepted_recorded_and_published(tmp_path, result):
+    rt = _Runtime()
+    s = _session_with_runtime(tmp_path, rt)
+    assert s.last_mode_request_result is None
+    msg = {"type": "mode_result", "data": {"mode": "full", "result": result}}
+    assert s.handle_text(json.dumps(msg)) == "mode_result"
+    assert s.last_mode_request_result == {"mode": "full", "result": result, "ts": 1000.0}
+    assert rt.publishes == 1, "the dashboard must hear the outcome at once, not on the next poll"
+    assert s.snapshot(1000.0)["last_mode_request_result"] == {"mode": "full", "result": result, "ts": 1000.0}
+
+
+@pytest.mark.parametrize("data", [
+    {"mode": "full", "result": "maybe"},        # unknown result
+    {"mode": "ultra", "result": "allowed"},     # unknown mode
+    {"mode": "full"},                           # missing result
+    {"mode": "full", "result": "allowed", "x": 1},  # extra field
+    {"mode": 7, "result": "allowed"},           # wrong type
+    "allowed",                                  # not an object
+])
+def test_bad_mode_result_is_dropped_and_changes_nothing(tmp_path, data):
+    rt = _Runtime()
+    s = _session_with_runtime(tmp_path, rt)
+    before = s.dropped
+    assert s.handle_text(json.dumps({"type": "mode_result", "data": data})) is None
+    assert s.dropped == before + 1
+    assert s.last_mode_request_result is None
+    assert rt.publishes == 0

@@ -509,6 +509,15 @@ class EventUploader(
         return sendEnvelope("mode_state", """{"cap":"$cap","effective":"$effective","reason":"$escaped"}""")
     }
 
+    /**
+     * T3.2 outcome of a raise prompt: `{"type":"mode_result","data":{"mode","result"}}` with result
+     * `allowed | denied | timeout`. Sent once per answered prompt so the dashboard can say what happened.
+     */
+    fun sendModeResult(mode: String, result: String): Boolean {
+        if (connectionState != ConnectionState.CONNECTED) return false
+        return sendEnvelope("mode_result", """{"mode":"$mode","result":"$result"}""")
+    }
+
     /** T3.4: station requests to disconnect all active remote viewers immediately. */
     fun sendKickViewers(): Boolean {
         if (connectionState != ConnectionState.CONNECTED) return false

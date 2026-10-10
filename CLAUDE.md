@@ -203,6 +203,11 @@ are untouched; only the producer of the envelopes moves. (Plan:
      * phone → server `{"type": "mode_state", "data": {"cap", "effective", "reason"}}`, sent on
        connect and after any cap change. An unknown mode string is counted in `dropped` and the
        previous cap stands — a bad message never guesses a mode.
+     * phone → server `{"type": "mode_result", "data": {"mode": "full", "result": "allowed|denied|timeout"}}`,
+       sent once when a raise prompt is answered on the phone (Allow, Keep private, or the 60 s timeout).
+       Exactly those two fields; anything else is counted in `dropped`. The server keeps the last one as
+       `status.phone.last_mode_request_result` = `{mode, result, ts}` and publishes a status update at once, so
+       the dashboard mode sheet can say "approved", "declined" or "no answer" instead of just ending its countdown.
      * server → phone `{"type": "policy", "data": {"mode", "preview": {"fps", "max_edge", "quality"},
        "audio", "viewers": {"video", "audio"}}}`. The legacy `{"type": "privacy", "data": {"enabled"}}`
        is still sent immediately after it so old APKs keep muting; new APKs ignore `privacy` once
