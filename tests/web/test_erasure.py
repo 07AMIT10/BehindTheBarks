@@ -53,10 +53,11 @@ def test_deleting_a_household_with_a_paired_station_keeps_everything_else(tmp_pa
         hid_dir.mkdir()
         (hid_dir / "session-2.jsonl").write_text("{}")
 
-        # A station channel can become the household's runtime (registry.py: the first channel), and its
-        # config carries the shared log root, not the household's directory. Erasure must not follow it.
-        app = owner.app
-        app.state.registry.peek(created["household_id"]).runtime.cfg["web"]["log_dir"] = str(root)
+        # A station that connects with its own id replaces the idle "default" channel (registry.py), and
+        # the station's runtime, whose config carries the shared log root, becomes the household runtime.
+        lr = owner.app.state.registry.peek(created["household_id"])
+        owner.portal.call(lr.channel, "station-live")
+        assert lr.runtime.cfg["web"]["log_dir"] == str(root)
 
         r = owner.request("DELETE", "/households/me", json={"recovery_key": key})
         assert r.status_code == 200
