@@ -70,6 +70,29 @@ If you are running the backend behind a Cloudflare Tunnel or Tailscale:
 2. Enter your tunnel domain (e.g. `your-tunnel.trycloudflare.com`).
 3. Tap **Set URL**. The app will configure `wss://your-tunnel.trycloudflare.com/ingest-events`.
 
+### Method D: Multi-Household Pairing (v2 — one phone, several dashboards)
+
+A tester build ships **with the dashboard address already baked in**. You do not type any URL:
+
+1. Open the dashboard and click **📱 Pair Phone**. A QR code appears. This QR carries the
+   household id, so the same app can pair with *different* dashboards from the same install.
+2. In the app, tap the green **📷 Scan QR** button (the standalone scanner works even before you
+   have ever paired a station).
+3. Scan the code. The app shows **Household: <name>** so you can confirm you are joining the right
+   household before you accept.
+4. Tap **Pair**. The app generates an ECDSA key in the Android Keystore, signs the server's
+   challenge, and is bound to that household. The private key never leaves the phone.
+5. Tap **Start Monitoring**.
+
+Because the key lives in the Keystore, the dashboard shows the station as `SM-E075F` (or similar
+model name) — not `Phone` — and a *reinstall of the app* creates a new station, while a re-scan
+re-uses the existing one.
+
+To move the phone to a different household, open **Settings → Household → Move to another
+household**, scan that household's QR, and confirm. To stop a household losing access, the owner
+removes the station in **Members & access → Stations → Revoke**; the phone gets a clear
+"removed by owner" message instead of silently reconnecting.
+
 ---
 
 ## 🌙 Step 4: Station Mode & "Station Dim" (CRITICAL)

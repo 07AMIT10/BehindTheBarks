@@ -1,3 +1,4 @@
+import java.io.File as PlainFile
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -31,14 +32,22 @@ android {
         buildConfigField("String", "DEFAULT_INGEST_URL", "\"$defaultIngestUrl\"")
     }
 
+    // Resolved once at the top level so both the signingConfig and the release buildType can name
+    // the same path in error messages (T2.8).
+    val releaseKeystorePath = System.getenv("BTB_KEYSTORE_PATH")
+        ?: project.findProperty("btbKeystorePath") as? String
+        ?: "release.jks"
+    // NOTE: Project.file() always returns an absolute path, so the isAbsolute test below must run
+    // on the *raw* argument, otherwise "release.jks" would silently resolve to app/release.jks and
+    // the release build would quietly fall back to the debug key.
+    val releaseKeystoreFile = PlainFile(releaseKeystorePath).let {
+        if (it.isAbsolute) it else rootProject.file(releaseKeystorePath)
+    }
+
     signingConfigs {
         create("release") {
-            val keystorePath = System.getenv("BTB_KEYSTORE_PATH")
-                ?: project.findProperty("btbKeystorePath") as? String
-                ?: "release.jks"
-            val keystoreFile = file(keystorePath).let { if (it.isAbsolute) it else rootProject.file(keystorePath) }
-            if (keystoreFile.exists()) {
-                storeFile = keystoreFile
+            if (releaseKeystoreFile.exists()) {
+                storeFile = releaseKeystoreFile
                 storePassword = System.getenv("BTB_KEYSTORE_PASSWORD")
                     ?: project.findProperty("btbKeystorePassword") as? String
                     ?: "behindthebarks"
@@ -59,7 +68,13 @@ android {
             signingConfig = if (releaseSigning?.storeFile?.exists() == true) {
                 releaseSigning
             } else {
-                signingConfigs.getByName("debug")
+                // Never ship a tester build signed with the debug key by accident: a silent fallback
+                // means the APK cannot be updated in place and looks "broken" for no visible reason.
+                throw GradleException(
+                    "release signing key not found (BTB_KEYSTORE_PATH=$releaseKeystorePath). " +
+                        "Run scripts/generate_release_keystore.sh, or pass -PbtbKeystorePath, " +
+                        "or build the debug APK instead.",
+                )
             }
         }
         debug {

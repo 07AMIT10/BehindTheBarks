@@ -11,8 +11,8 @@ Google Play and F-Droid require release builds signed with a 4096-bit RSA produc
 ### Generate a New Keystore
 Run the automated generation script:
 ```bash
-export JAVA_HOME=/tmp/opencode/jdk
-export PATH="/tmp/opencode/jdk/bin:$PATH"
+export JAVA_HOME=$HOME/jdk17/jdk-17.0.20.1+1
+export PATH="$JAVA_HOME/bin:$PATH"
 
 ./scripts/generate_release_keystore.sh android/release.jks
 ```
@@ -31,11 +31,39 @@ export BTB_KEY_PASSWORD="behindthebarks"
 
 ## 2. Building Release Packages
 
+### A0. Tester APK with the dashboard address baked in (multi-household)
+
+A tester build must point phones at *your* dashboard out of the box, so the ingest URL is compiled
+into the APK. There is no separate "server config" step for the tester: `BuildConfig.DEFAULT_INGEST_URL`
+is baked from `-PbtbDefaultIngestUrl`.
+
+```bash
+export JAVA_HOME=$HOME/jdk17/jdk-17.0.20.1+1
+export PATH="$JAVA_HOME/bin:$PATH"
+export ANDROID_HOME=$HOME/Android/Sdk
+
+# The keystore is REQUIRED. If it is missing the release build FAILS on purpose (it will never
+# quietly sign a tester APK with the debug key, which would break in-place updates).
+./gradlew :app:assembleRelease \
+  -PbtbDefaultIngestUrl=wss://ingest.example.render.com/ingest-events
+```
+
+Verify before distributing:
+```bash
+$ANDROID_HOME/build-tools/35.0.0/zipalign -c -P 16 4 app/build/outputs/apk/release/app-release.apk
+# -> zipalign OK  (Android 15+ 16 KiB page-size requirement)
+sha256sum app/build/outputs/apk/release/app-release.apk
+```
+
+Record the SHA-256 and size in your release notes so a tester can confirm they have the exact build.
+
+### A. Android App Bundle (`.aab`) for Google Play Store
+
 ### A. Android App Bundle (`.aab`) for Google Play Store
 Google Play requires `.aab` format for all new app submissions:
 ```bash
-export JAVA_HOME=/tmp/opencode/jdk
-export PATH="/tmp/opencode/jdk/bin:$PATH"
+export JAVA_HOME=$HOME/jdk17/jdk-17.0.20.1+1
+export PATH="$JAVA_HOME/bin:$PATH"
 export ANDROID_HOME=$HOME/Android/Sdk
 
 cd android && ./gradlew bundleRelease
