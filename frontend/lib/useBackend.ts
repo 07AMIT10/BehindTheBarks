@@ -124,13 +124,24 @@ export function useBackend() {
 
     const bootstrap = async () => {
       try {
-        const [ev, st] = await Promise.all([
-          getJson<{ events: Envelope[]; timeline: Span[] }>("/events"),
-          getJson<Status>("/status"),
-        ]);
+        const st = await getJson<Status>("/status");
         if (stopped) return;
-        dispatch({ kind: "bootstrap", events: ev.events, timeline: ev.timeline, at: Date.now() });
         dispatch({ kind: "status", status: st });
+
+        const stations = st.stations && st.stations.length > 0 ? st.stations : [{ id: "default" }];
+        await Promise.all(
+          stations.map(async (s) => {
+            const evPath = s.id === "default" ? "/events" : `/events?station=${encodeURIComponent(s.id)}`;
+            try {
+              const ev = await getJson<{ events: Envelope[]; timeline: Span[] }>(evPath);
+              if (!stopped) {
+                dispatch({ kind: "bootstrap", stationId: s.id, events: ev.events, timeline: ev.timeline, at: Date.now() });
+              }
+            } catch {
+              /* ignore per-station events failure */
+            }
+          })
+        );
       } catch {
         /* backend unreachable: the socket retry loop covers it */
       }
@@ -435,6 +446,7 @@ export function useBackend() {
 
   const readAll = useCallback(() => dispatch({ kind: "readAll" }), []);
   const dismissToast = useCallback((id: string) => dispatch({ kind: "dismissToast", id }), []);
+  const focusStation = useCallback((stationId: string) => dispatch({ kind: "focusStation", stationId }), []);
 
   return {
     state,
@@ -442,6 +454,7 @@ export function useBackend() {
     readAll,
     setMode,
     dismissToast,
+    focusStation,
     http: base.http,
     token,
     authRequired,

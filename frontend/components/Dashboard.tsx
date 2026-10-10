@@ -29,6 +29,7 @@ import MembersModal from "./MembersModal";
 import WelcomeScreen from "./WelcomeScreen";
 import DeleteHouseholdModal from "./DeleteHouseholdModal";
 import ProfileModal from "./ProfileModal";
+import StationGrid from "./StationGrid";
 
 export default function Dashboard() {
   const backend = useBackend(); // backend.readAll / backend.http are used by Tasks 6 and 8
@@ -63,6 +64,9 @@ export default function Dashboard() {
   const nowSec = serverNow(state, nowMs);
   const isMobile = useIsMobile();
   const [timelineOpen, setTimelineOpen] = useState(false);
+  const [showGrid, setShowGrid] = useState(false);
+  const stations = state.status?.stations ?? [];
+  const hasMultipleStations = stations.length > 1;
   const projector = useMemo(() => new URLSearchParams(window.location.search).get("size") === "projector", []);
   const profile = state.status?.profile ?? { dog_name: "Your dog", location: "", zone_label: "feeding area" };
   const notice = phoneNotice(state.status);
@@ -223,8 +227,56 @@ export default function Dashboard() {
               <div className="text-small text-muted">Pick a clip to replay it through the full pipeline.</div>
             )}
           </>
+        ) : hasMultipleStations && showGrid ? (
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-body font-bold text-text">Household Cameras</span>
+                <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-semibold text-muted">
+                  {stations.length}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowGrid(false)}
+                className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-small font-semibold text-text hover:bg-surface-2 transition-colors"
+              >
+                Back to {state.stations[state.focusedStation]?.name || "Camera"}
+              </button>
+            </div>
+            <StationGrid
+              http={backend.http}
+              token={token}
+              stations={stations}
+              stationViews={state.stations}
+              focusedStation={state.focusedStation}
+              onFocus={(id) => {
+                backend.focusStation(id);
+                setShowGrid(false);
+              }}
+            />
+          </div>
         ) : (
           <>
+          {hasMultipleStations && (
+            <div className="mb-2 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-small font-semibold text-text">
+                  Viewing: {state.stations[state.focusedStation]?.name || "Camera"}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowGrid(true)}
+                className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1 text-small font-semibold text-text hover:bg-surface-2 transition-colors"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" />
+                </svg>
+                Camera Grid ({stations.length})
+              </button>
+            </div>
+          )}
           <div className="grid gap-3 sm:gap-4 [grid-template-areas:'video'_'card'_'signals'] lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:grid-rows-[auto_auto_1fr] lg:gap-6 lg:[grid-template-areas:'video_card'_'video_treat'_'video_signals']">
             <div className="aspect-video sm:aspect-auto sm:min-h-[340px] lg:min-h-[480px] [grid-area:video]">
               <VideoPanel
@@ -247,6 +299,7 @@ export default function Dashboard() {
                 isOwner={!backend.me || backend.me.role === "owner"}
                 onSetMode={backend.setViewMode}
                 onPeek={backend.peek}
+                station={state.focusedStation !== "default" ? state.focusedStation : undefined}
               />
             </div>
             <div className="[grid-area:card]">

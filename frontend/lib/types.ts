@@ -13,6 +13,7 @@ export type Envelope = {
   ts: number; // server clock, seconds
   data: any; // eslint-disable-line @typescript-eslint/no-explicit-any -- narrowed per type in store.ts
   meta?: Record<string, unknown>;
+  station?: string; // T4.1 / T4.2
 };
 
 export type PipelineStatus = {
@@ -38,6 +39,19 @@ export type PhoneStatus = {
   height?: number;
   sample_rate?: number;
   last_frame_age_s?: number | null;
+  battery_pct?: number | null; // T6.1
+  charging?: boolean; // T6.1
+  temp_c?: number | null; // T6.1
+};
+
+export type StationSummary = {
+  id: string;
+  name: string;
+  dog_name: string;
+  phone: PhoneStatus | null;
+  pipeline_status: PipelineStatus | null;
+  effective_mode: ViewMode;
+  battery: number | null;
 };
 
 export type Status = {
@@ -65,6 +79,7 @@ export type Status = {
   mode_info?: { household_mode: ViewMode; station_cap: ViewMode; effective: ViewMode };
   max_idle_s?: number; // T3.4: video inactivity timeout in seconds
   viewers?: { video: number; audio: number }; // T3.4: viewer count breakdown
+  stations?: StationSummary[]; // T4.1 / T4.2
 };
 
 export type Span = {
@@ -87,6 +102,25 @@ export type NotificationItem = {
 
 export type AudioMark = { ts: number; label: AudioLabel; score: number };
 
+export type StationView = {
+  id: string;
+  name: string;
+  dog_name: string;
+  status: Status | null;
+  current: EmotionState | null;
+  currentSince: number | null;
+  lastEmotionAt: number | null;
+  frame: FrameEvent | null;
+  lastDogTs: number | null;
+  history: Features[];
+  lastHistoryTs: number | null;
+  audio: AudioMark[];
+  spans: Span[];
+  treats: number[];
+  notifications: NotificationItem[];
+  lastSeq: number;
+};
+
 export type DashboardState = {
   connected: boolean;
   everConnected: boolean;
@@ -106,12 +140,15 @@ export type DashboardState = {
   toasts: Toast[];
   lastSeq: number;
   clockOffset: number | null; // server seconds - client seconds
+  stations: Record<string, StationView>; // T4.2
+  focusedStation: string; // T4.2
 };
 
 export type Action =
   | { kind: "connected"; value: boolean }
   | { kind: "envelope"; env: Envelope; at: number }
-  | { kind: "bootstrap"; events: Envelope[]; timeline: Span[]; at: number }
+  | { kind: "bootstrap"; events: Envelope[]; timeline: Span[]; at: number; stationId?: string }
+  | { kind: "focusStation"; stationId: string }
   | { kind: "status"; status: Status }
   | { kind: "readAll" }
   | { kind: "tick"; at: number }

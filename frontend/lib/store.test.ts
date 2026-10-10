@@ -115,6 +115,74 @@ describe("reduce", () => {
     const s = apply([{ kind: "envelope", env: emotion("happy", 1000, true), at: 990_000 }]);
     expect(serverNow(s, 995_000)).toBeCloseTo(1005);
   });
+
+  it("multi-station: envelopes route to their station view and untagged route to default", () => {
+    const eDefault = emotion("relaxed", 10, true);
+    const eSt1 = { ...emotion("excited", 12, true), station: "st1" };
+    const eSt2 = { ...emotion("anxious", 14, true), station: "st2" };
+
+    const s = apply([
+      { kind: "envelope", env: eDefault, at: 1_000 },
+      { kind: "envelope", env: eSt1, at: 2_000 },
+      { kind: "envelope", env: eSt2, at: 3_000 },
+    ]);
+
+    expect(s.stations["default"].current?.emotion).toBe("relaxed");
+    expect(s.stations["st1"].current?.emotion).toBe("excited");
+    expect(s.stations["st2"].current?.emotion).toBe("anxious");
+
+    // Default station is focused by default
+    expect(s.current?.emotion).toBe("relaxed");
+
+    // Switching focus to st1 updates top-level selectors
+    const focused1 = reduce(s, { kind: "focusStation", stationId: "st1" });
+    expect(focused1.focusedStation).toBe("st1");
+    expect(focused1.current?.emotion).toBe("excited");
+
+    // Switching focus to st2 updates top-level selectors
+    const focused2 = reduce(focused1, { kind: "focusStation", stationId: "st2" });
+    expect(focused2.focusedStation).toBe("st2");
+    expect(focused2.current?.emotion).toBe("anxious");
+  });
+
+  it("multi-station: bootstrap per station populates that station view", () => {
+    const timeline1: Span[] = [{ emotion: "happy", start: 1, end: 5, confidence: 0.9, reason: "r", source: "rules" }];
+    const timeline2: Span[] = [{ emotion: "relaxed", start: 2, end: 8, confidence: 0.8, reason: "r", source: "rules" }];
+
+    let s = reduce(initialState, {
+      kind: "bootstrap",
+      stationId: "roomA",
+      events: [{ ...emotion("happy", 5, false), station: "roomA" }],
+      timeline: timeline1,
+      at: 10_000,
+    });
+    s = reduce(s, {
+      kind: "bootstrap",
+      stationId: "roomB",
+      events: [{ ...emotion("relaxed", 8, false), station: "roomB" }],
+      timeline: timeline2,
+      at: 10_000,
+    });
+
+    expect(s.stations["roomA"].spans).toEqual(timeline1);
+    expect(s.stations["roomB"].spans).toEqual(timeline2);
+    expect(s.stations["roomA"].current?.emotion).toBe("happy");
+    expect(s.stations["roomB"].current?.emotion).toBe("relaxed");
+  });
+
+  it("multi-station: status with stations list initializes station views", () => {
+    const statusWithStations = {
+      pipeline: "remote",
+      stations: [
+        { id: "stA", name: "Kitchen", dog_name: "Rex", phone: null, pipeline_status: null, effective_mode: "full" as const, battery: 92 },
+        { id: "stB", name: "Garden", dog_name: "Rex", phone: null, pipeline_status: null, effective_mode: "full" as const, battery: 45 },
+      ],
+    };
+    const s = reduce(initialState, { kind: "status", status: statusWithStations });
+    expect(s.stations["stA"].name).toBe("Kitchen");
+    expect(s.stations["stB"].name).toBe("Garden");
+    expect(s.focusedStation).toBe("stA");
+  });
 });
 
 describe("toasts in the reducer", () => {

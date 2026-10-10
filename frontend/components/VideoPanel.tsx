@@ -28,6 +28,7 @@ type Props = {
   isOwner?: boolean;
   onSetMode?: (mode: ViewMode) => Promise<{ status: "applied" | "pending"; mode: ViewMode } | undefined>;
   onPeek?: () => Promise<boolean>;
+  station?: string;
 };
 
 const chip = "flex h-[30px] items-center rounded-lg px-3 text-[12px]";
@@ -53,6 +54,7 @@ export default function VideoPanel({
   isOwner = true,
   onSetMode,
   onPeek,
+  station,
 }: Props) {
   const boxRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -245,8 +247,9 @@ export default function VideoPanel({
   // When the backend restarts, Chrome ends the MJPEG stream without an error event, so the <img> would
   // freeze on its last frame. Keying the stream on `paused` opens a fresh stream once we're live again.
   const tokenParam = token ? `&token=${encodeURIComponent(token)}` : "";
+  const stationParam = station ? `&station=${encodeURIComponent(station)}` : "";
   const streamId = `${retryKey}${paused ? "p" : ""}${idle ? "i" : ""}${watchdogPaused ? "w" : ""}${resumeKey}`;
-  const videoSrc = `${http}/video?k=${streamId}${tokenParam}`;
+  const videoSrc = `${http}/video?k=${streamId}${stationParam}${tokenParam}`;
 
   // Monitoring is stopped on purpose (or has never started): no /video request at all, and a plain
   // card instead of a spinner — "Reconnecting…" is only for a phone that dropped mid-session.
