@@ -113,6 +113,11 @@ class MonitorService : Service(), LifecycleOwner {
     private var currentStatusText: String = "Monitoring room with camera & audio..."
     private val approvalHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val approvalTimeout = Runnable { resolveRaise(allow = false) }
+    /** An approved raise lapses after 15 minutes: the phone then reports its own cap again. */
+    private val raiseExpiry = Runnable {
+        publishModeState(ModeReason.EXPIRED_RAISE.wire)
+        listener?.onModeStateChanged(modeController.effectiveMode().wire)
+    }
 
     /** T3.4: station requests to disconnect all active remote viewers immediately. */
     fun disconnectViewers(): Boolean = uploader?.sendKickViewers() ?: false
@@ -158,6 +163,7 @@ class MonitorService : Service(), LifecycleOwner {
 
     /** T3.2: the device UI chooses a mode outright (the 4-segment control). */
     fun setStationCapFromDevice(mode: ViewMode) {
+        approvalHandler.removeCallbacks(raiseExpiry)
         modeController.setStationCapFromDevice(mode)
         persistStationCap(mode)
         if (mode == ViewMode.BLACKOUT) cameraSource?.setTorch(false)
@@ -170,7 +176,7 @@ class MonitorService : Service(), LifecycleOwner {
     /** T3.1: tell the server what we allow and what we are doing, after any change. */
     private fun publishModeState(reason: String) {
         uploader?.sendModeState(
-            modeController.cap.wire,
+            modeController.reportedCap().wire,
             modeController.effectiveMode().wire,
             reason,
         )
@@ -266,6 +272,8 @@ class MonitorService : Service(), LifecycleOwner {
         if (wasPending && allow) {
             publishModeState(ModeReason.APPROVED_RAISE.wire)
             listener?.onModeStateChanged(modeController.effectiveMode().wire)
+            approvalHandler.removeCallbacks(raiseExpiry)
+            approvalHandler.postDelayed(raiseExpiry, modeController.raiseDurationMs)
         }
         cancelApprovalNotification()
         listener?.onModeApprovalResolved()
@@ -790,6 +798,7 @@ class MonitorService : Service(), LifecycleOwner {
     private fun stopMonitoring() {
         if (!isRunning.compareAndSet(true, false)) return
         approvalHandler.removeCallbacks(approvalTimeout)
+        approvalHandler.removeCallbacks(raiseExpiry)
         if (modeController.denyPendingRaise()) listener?.onModeApprovalResolved()
         cancelApprovalNotification()
 

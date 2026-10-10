@@ -110,6 +110,13 @@ class ModeController(
     val cap: ViewMode
         get() = stationCap
 
+    /** The cap the server should see: an approved raise is reported as the raised cap while it lasts,
+     *  so the dashboard's effective mode follows the approval. It falls back on expiry (see effectiveMode). */
+    fun reportedCap(): ViewMode {
+        effectiveMode() // lapses an expired raise first
+        return if (raiseApproved) approvedMode else stationCap
+    }
+
     private var raisedUntil: Long = 0L
     private var raiseApproved = false
     private var approvedMode: ViewMode = ViewMode.FULL

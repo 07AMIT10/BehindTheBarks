@@ -243,6 +243,19 @@ class ViewModeTest {
     }
 
     @Test
+    fun `an approved raise is reported as the raised cap until it lapses`() {
+        var now = 0L
+        val c = controller(cap = ViewMode.PRIVACY, now = { now })
+        c.onPolicy(Policy(mode = ViewMode.FULL))
+        assertThat(c.reportedCap()).isEqualTo(ViewMode.PRIVACY)
+        c.approveRaise(ViewMode.FULL)
+        assertThat(c.reportedCap()).isEqualTo(ViewMode.FULL)
+        assertThat(c.cap).isEqualTo(ViewMode.PRIVACY) // the device's own setting is untouched
+        now += 15 * 60_000
+        assertThat(c.reportedCap()).isEqualTo(ViewMode.PRIVACY)
+    }
+
+    @Test
     fun `the approval question names the requested mode`() {
         assertThat(approvalQuestion(ViewMode.FULL))
             .isEqualTo("A remote viewer asks to raise sharing to Full. Allow for 15 minutes?")
