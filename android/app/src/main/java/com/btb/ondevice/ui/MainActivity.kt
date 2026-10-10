@@ -552,22 +552,23 @@ class MainActivity : Activity() {
                 val host = runCatching { android.net.Uri.parse(linkUrl).host }.getOrNull() ?: linkUrl
                 // A deep link is attacker-controllable (any web page can fire one): confirm before it
                 // touches the stored configuration, and never take a token for a different host.
+                // The host check reads the stored URL BEFORE the link overwrites it.
                 AlertDialog.Builder(this)
                     .setTitle("Connect this station to $host?")
                     .setMessage("A link asked to point WagWatch at $host${
-                        if (!linkToken.isNullOrBlank() && host != prefs.getString(KEY_URL, "")?.let { runCatching { android.net.Uri.parse(it).host }.getOrNull() })
+                        if (!linkToken.isNullOrBlank() && !DeepLinkPolicy.mayApplyToken(prefs.getString(KEY_URL, ""), linkUrl))
                             "\n\nIts access token was ignored because it does not match your current server." else ""
                     }")
                     .setPositiveButton("Connect") { _, _ ->
+                        val applyToken = !linkToken.isNullOrBlank() &&
+                            DeepLinkPolicy.mayApplyToken(prefs.getString(KEY_URL, ""), linkUrl)
                         urlEditText.setText(linkUrl)
                         prefs.edit().putString(KEY_URL, linkUrl).apply()
                         if (!linkDevice.isNullOrBlank()) {
                             deviceEditText.setText(linkDevice)
                             prefs.edit().putString(KEY_DEVICE, linkDevice).apply()
                         }
-                        if (!linkToken.isNullOrBlank() && host == runCatching { android.net.Uri.parse(prefs.getString(KEY_URL, "") ?: "").host }.getOrNull()) {
-                            prefs.edit().putString(KEY_TOKEN, linkToken).apply()
-                        }
+                        if (applyToken) prefs.edit().putString(KEY_TOKEN, linkToken).apply()
                     }
                     .setNegativeButton("Ignore", null)
                     .show()
