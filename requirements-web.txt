@@ -13,3 +13,7 @@ numpy==2.4.6
 opencv-python-headless==5.0.0.93
 pytest==9.1.1
 pytest-asyncio==1.4.0
+sqlalchemy==2.1.4          # T2.1 household/viewer/station store (sqlite by default)
+cryptography==50.0.2       # T2.4 station pubkey verification (ECDSA P-256)
+pillow==12.3.0             # remote_pipeline privacy slate (was locally-only: prod fell back to the blank JPEG)
+# psycopg[binary]==3.x    # uncomment when BTB_DATABASE_URL points at Postgres

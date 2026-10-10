@@ -1,0 +1,73 @@
+"""Engine/session plumbing and secret hashing for the household store."""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import secrets
+import uuid
+from typing import Any
+
+from sqlalchemy import Engine, create_engine, event, text
+from sqlalchemy.orm import DeclarativeBase
+
+SCHEMA_VERSION = 1
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+def new_id() -> str:
+    """UUID4 hex: opaque, unguessable, and safe as a primary key across sqlite and Postgres."""
+    return uuid.uuid4().hex
+
+
+def sha256_hex(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def equal_digest(a: str, b: str) -> bool:
+    return hmac.compare_digest(a, b)
+
+
+def new_token() -> str:
+    """A viewer session credential: 256 bits, url-safe."""
+    return secrets.token_urlsafe(32)
+
+
+def new_pairing_code() -> str:
+    """A pairing code is one-time and short-lived: 128 bits is plenty (brute force loses to the TTL)."""
+    return secrets.token_urlsafe(16)
+
+
+def make_engine(url: str, **kwargs: Any) -> Engine:
+    """An engine configured per dialect: SQLite needs foreign keys and WAL, Postgres just works."""
+    if url.startswith("sqlite"):
+        kwargs.setdefault("connect_args", {})
+        kwargs["connect_args"].setdefault("check_same_thread", False)
+        engine = create_engine(url, **kwargs)
+
+        @event.listens_for(engine, "connect")
+        def _sqlite_pragma(dbapi_conn, _record):  # noqa: ANN001 - sqlalchemy event signature
+            cur = dbapi_conn.cursor()
+            cur.execute("PRAGMA foreign_keys=ON")
+            if ":memory:" not in url:
+                cur.execute("PRAGMA journal_mode=WAL")  # concurrent readers while a writer works
+            cur.close()
+
+        return engine
+    return create_engine(url, **kwargs)
+
+
+def init_db(engine: Engine) -> None:
+    """Create tables (no Alembic in v1) and stamp the schema version.
+
+    To migrate later: add a step that compares `schema_version` in `meta` against the code's
+    SCHEMA_VERSION and applies an ordered list of `ALTER TABLE` statements, then re-stamps it.
+    """
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)"))
+        conn.execute(text("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', :v)"),
+                     {"v": str(SCHEMA_VERSION)})

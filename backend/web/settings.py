@@ -14,6 +14,9 @@ import yaml
 WEB_DEFAULTS: dict[str, Any] = {
     "pipeline": "mock",
     "log_dir": "out",
+    # Household/store DB (T2.1): SQLite next to the event log by default; set BTB_DATABASE_URL to a
+    # Postgres URL in production. Render's free disk is ephemeral, so state there is re-paired.
+    "database_url": "sqlite:///out/btb.db",
     "ws": {"frame_fps": 8, "client_queue": 64, "history": 2000},
     "video": {"fps": 8},
     "state": {
@@ -69,6 +72,8 @@ def load_config(path: str | Path = "config.yaml", env: Mapping[str, str] | None 
     notify = cfg["web"].setdefault("notify", {})
     if env.get("NOTIFY_MODE"):
         notify["mode"] = env["NOTIFY_MODE"]
+    if env.get("BTB_DATABASE_URL"):
+        cfg["web"]["database_url"] = env["BTB_DATABASE_URL"].strip()
     profile = cfg["web"].setdefault("profile", {})
     # The deployer names the dog without editing YAML; the saved profile file (PUT /profile) wins later.
     if env.get("BTB_DOG_NAME"):

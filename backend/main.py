@@ -18,10 +18,12 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from sqlalchemy.orm import sessionmaker
 
 from backend.fusion.llm_interpreter import LLMInterpreter
 from backend.demo.clips import load_demo_clips
 from backend.notify import build_notifier
+from backend.store import db as store_db
 from backend.web.event_log import EventLog
 from backend.web.hub import Hub
 from backend.web.ingest import CLOSE_BAD_HELLO, CLOSE_BUSY, CLOSE_REPLACED, HelloError, parse_hello
@@ -64,6 +66,11 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         profile_store = ProfileStore(web["log_dir"], defaults=cfg["web"].get("profile") or {})
         app.state.profile_store = profile_store
         cfg["web"]["profile"] = profile_store.load()
+        # The household store (T2.1): tables are created here so a fresh deploy self-initialises.
+        engine = store_db.make_engine(web.get("database_url", "sqlite:///out/btb.db"))
+        store_db.init_db(engine)
+        app.state.db_engine = engine
+        app.state.db_session = sessionmaker(bind=engine, future=True)
         rt = Runtime(cfg, pipeline or build_pipeline(cfg),
                      interpreter or LLMInterpreter(LLMSettings.from_config(cfg)),
                      notifier or build_notifier(cfg), hub, demo_clips=demo)
