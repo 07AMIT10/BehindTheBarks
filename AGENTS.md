@@ -111,7 +111,7 @@ See detailed specification in `docs/privacy_architecture_and_threat_model.md`.
 2. **Kinematic-First Modality Separation**:
    - Remote access defaults to behavioral telemetry (emotion state, tail wag frequency, meal events, and skeletal wireframe). Raw optical room video is a privileged secondary tier requiring explicit time-bounded access. (Implemented viewing modes: `blackout`, `privacy`, `limited`, `full`).
 3. **Session Inactivity Watchdog**:
-   - All active video streams automatically pause after 180 seconds of continuous viewing (`StreamWatchdog`) or immediately when the tab is hidden, requiring explicit tap to resume.
+   - All active video streams automatically pause after 180 seconds of continuous viewing (`frontend/lib/watchdog.ts`, used by `VideoPanel.tsx`) or immediately when the tab is hidden, requiring explicit tap to resume.
 4. **Local Hardware Shutter**:
    - The station phone possesses absolute sovereignty over media delivery. Setting "Family Privacy" / Blackout immediately mutes camera and audio buffers at the local hardware level, returning a privacy slate to remote viewers.
 

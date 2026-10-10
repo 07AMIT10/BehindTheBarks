@@ -122,7 +122,7 @@ flowchart TD
 | :--- | :--- | :--- |
 | `backend/web/modes.py` | Mode hierarchy, order ranking, and ceiling arithmetic. | Implemented (T3.1) |
 | `android/.../capture/ViewMode.kt` | Android view mode enum, ceiling logic, and preference persistence. | Implemented (T3.2) |
-| `android/.../capture/ModeController.kt` | Station sovereignty, 15-min owner raise expiry, prompt approval flow. | Implemented (T3.2) |
+| `android/.../capture/ViewMode.kt` (class `ModeController`) | Station sovereignty, 15-min owner raise expiry, prompt approval flow. | Implemented (T3.2) |
 | `backend/web/policy.py` | Household policy engine, caller ceiling computation, slates generation. | Implemented (T3.3) |
 | `backend/main.py` | Endpoints (`/mode`, `/peek`, `/privacy`), active viewer tracking, kick cooldown. | Implemented (T3.3, T3.4, T3.5) |
 | `backend/web/tracker.py` | Active viewer session tracker with 300 ms debounced downlinks. | Implemented (T3.4) |
