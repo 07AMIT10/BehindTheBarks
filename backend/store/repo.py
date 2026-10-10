@@ -53,8 +53,7 @@ def delete_household(session: Session, household_id: str) -> bool:
     h = get_household(session, household_id)
     if h is None:
         return False
-    for row in list(h.viewers) + list(h.stations):
-        session.delete(row)
+    # viewers and stations go with the household via the ORM cascade (works without FK pragmas)
     session.query(PairingCode).filter(PairingCode.household_id == household_id).delete()
     session.delete(h)
     session.commit()  # an erase is durable the moment it is requested

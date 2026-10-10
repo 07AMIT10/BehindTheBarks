@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import type { AuthStatus } from "./household";
 import { backendBase } from "./config";
 import { initialState, reduce } from "./store";
 import type { Envelope, Span, Status } from "./types";
@@ -30,6 +31,7 @@ export function useBackend() {
 
   const [token, setToken] = useState<string | null>(getStoredToken());
   const [authRequired, setAuthRequired] = useState(false);
+  const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [authenticated, setAuthenticated] = useState(true);
   const [privacyOverride, setPrivacyOverride] = useState<boolean | null>(null);
 
@@ -38,11 +40,26 @@ export function useBackend() {
   );
   const privacyMode = privacyOverride !== null ? privacyOverride : statusPrivacy;
 
-  // Check auth requirement from server
+  // Check auth requirement from server. In pin mode the localStorage token decides (Bearer, and the
+  // localStorage token is still written by AuthModal). In households mode the HttpOnly cookie decides:
+  // no localStorage token is involved, and a 401 on any request means "show the Welcome screen".
   useEffect(() => {
-    fetch(`${base.http}/auth/status`)
+    fetch(`${base.http}/auth/status`, { credentials: "include" })
       .then((r) => r.json())
-      .then((data) => {
+      .then((data: AuthStatus) => {
+        setAuthStatus(data);
+        if (data.mode === "households") {
+          setAuthRequired(Boolean(data.auth_required));
+          if (!data.auth_required) {
+            setAuthenticated(true);
+            return;
+          }
+          // The session cookie is HttpOnly: probe /me once to learn whether we have one.
+          void fetch(`${base.http}/me`, { credentials: "include" })
+            .then((r) => setAuthenticated(r.ok))
+            .catch(() => setAuthenticated(false));
+          return;
+        }
         if (data.auth_required) {
           setAuthRequired(true);
           const current = getStoredToken();
@@ -198,8 +215,63 @@ export function useBackend() {
     }).catch(() => undefined);
   }, [base, token]);
 
+  const authMode = authStatus?.mode ?? "pin";
+
+  const createHousehold = useCallback(async (v: { dog_name: string; location: string }) => {
+    const res = await fetch(`${base.http}/households`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(v),
+    });
+    if (!res.ok) throw new Error(`create household: HTTP ${res.status}`);
+    const data = await res.json();
+    // Deliberately NOT flipping `authenticated` here: the Welcome screen must stay mounted to show
+    // the recovery key. Its "Continue" button reloads the page, and the /me probe then adopts the
+    // cookie the create response just set.
+    return data as { household_id: string; recovery_key: string };
+  }, [base]);
+
+  const recoverHousehold = useCallback(async (recovery_key: string) => {
+    const res = await fetch(`${base.http}/auth/recover`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ recovery_key }),
+    });
+    if (!res.ok) throw new Error("That recovery key did not work");
+    setAuthenticated(true);
+  }, [base]);
+
+  const logoutHousehold = useCallback(async () => {
+    await fetch(`${base.http}/auth/logout`, { method: "POST", credentials: "include" }).catch(() => undefined);
+    setAuthenticated(false);
+    clearStoredToken();
+  }, [base]);
+
+  const deleteHousehold = useCallback(async (recovery_key: string) => {
+    const res = await fetch(`${base.http}/households/me`, {
+      method: "DELETE",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ recovery_key }),
+    });
+    if (!res.ok) throw new Error(`delete household: HTTP ${res.status}`);
+    setAuthenticated(false);
+  }, [base]);
+
   const saveProfile = useCallback(async (patch: { dog_name: string; location: string; zone_label: string }) => {
     const tok = token ?? getStoredToken();
+    if (authMode === "households") {
+      const res = await fetch(`${base.http}/households/me/profile`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ dog_name: patch.dog_name, location: patch.location }),
+      });
+      if (!res.ok) throw new Error(`profile: HTTP ${res.status}`);
+      return res.json();
+    }
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (tok) headers["Authorization"] = `Bearer ${tok}`;
     const url = `${base.http}/profile${tok ? `?token=${encodeURIComponent(tok)}` : ""}`;
@@ -211,7 +283,7 @@ export function useBackend() {
     }
     if (!res.ok) throw new Error(`profile: HTTP ${res.status}`);
     return res.json();
-  }, [base, token]);
+  }, [base, token, authMode]);
 
   const setPrivacy = useCallback(async (enabled?: boolean) => {
     const tok = token ?? getStoredToken();
@@ -255,5 +327,11 @@ export function useBackend() {
     privacyMode,
     setPrivacy,
     saveProfile,
+    authStatus,
+    authMode,
+    createHousehold,
+    recoverHousehold,
+    logoutHousehold,
+    deleteHousehold,
   };
 }

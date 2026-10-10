@@ -42,6 +42,10 @@ WEB_DEFAULTS: dict[str, Any] = {
     "profile": {"dog_name": "Your dog", "location": "", "zone_label": "feeding area"},
     "auth": {
         "enabled": False,
+        # "pin" (default): one shared PIN/token set, all traffic is the single legacy household —
+        # today's behaviour, unchanged. "households": anonymous households with recovery keys,
+        # viewer sessions in an HttpOnly cookie, per-household isolation (T2.3).
+        "mode": "pin",
         "dashboard_pin": "",
         "ingest_token": "",
         "api_token": "",
@@ -74,6 +78,8 @@ def load_config(path: str | Path = "config.yaml", env: Mapping[str, str] | None 
         notify["mode"] = env["NOTIFY_MODE"]
     if env.get("BTB_DATABASE_URL"):
         cfg["web"]["database_url"] = env["BTB_DATABASE_URL"].strip()
+    if env.get("BTB_AUTH_MODE"):
+        cfg["web"].setdefault("auth", {})["mode"] = env["BTB_AUTH_MODE"].strip().lower()
     profile = cfg["web"].setdefault("profile", {})
     # The deployer names the dog without editing YAML; the saved profile file (PUT /profile) wins later.
     if env.get("BTB_DOG_NAME"):

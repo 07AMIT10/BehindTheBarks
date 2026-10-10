@@ -138,3 +138,12 @@ class HouseholdRegistry:
                 await lr.runtime.stop()
                 lr.hub.close()
                 del self._households[hid]
+
+    async def forget(self, hid: str) -> bool:
+        """Stop and remove one household now (deleted by its owner), legacy included-safe no-op."""
+        lr = self._households.pop(hid, None)
+        if lr is None:
+            return False
+        await lr.runtime.stop()
+        lr.hub.close()
+        return True

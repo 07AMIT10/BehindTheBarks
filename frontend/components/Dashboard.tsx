@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ClipMeta } from "@/lib/demo";
 import { phoneNotice, stationState } from "@/lib/phone";
+import { welcomeVisible } from "@/lib/household";
 import { serverNow } from "@/lib/store";
 import { spanAt } from "@/lib/timeline";
 import { useBackend } from "@/lib/useBackend";
@@ -24,6 +25,8 @@ import ToastStack from "./ToastStack";
 import TreatButton from "./TreatButton";
 import VideoPanel from "./VideoPanel";
 import PairingModal from "./PairingModal";
+import WelcomeScreen from "./WelcomeScreen";
+import DeleteHouseholdModal from "./DeleteHouseholdModal";
 import ProfileModal from "./ProfileModal";
 
 export default function Dashboard() {
@@ -40,6 +43,12 @@ export default function Dashboard() {
     privacyMode,
     setPrivacy,
     saveProfile,
+    authStatus,
+    authMode,
+    createHousehold,
+    recoverHousehold,
+    logoutHousehold,
+    deleteHousehold,
   } = backend;
   const nowMs = useNow(1000);
   const nowSec = serverNow(state, nowMs);
@@ -61,6 +70,7 @@ export default function Dashboard() {
   const [isPairingOpen, setIsPairingOpen] = useState(false);
   // A fresh key per open re-seeds the form with the live profile (no effect, no reset on broadcasts).
   const [profileOpen, setProfileOpen] = useState<number | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const mode = state.status?.mode ?? "live";
   const demo = mode === "demo";
   const viewMoment = useCallback((ts: number) => {
@@ -89,6 +99,10 @@ export default function Dashboard() {
     return () => window.removeEventListener("keydown", onKey);
   }, [onTreat, demo, setMode]);
 
+  if (welcomeVisible(authStatus, authenticated)) {
+    return <WelcomeScreen onCreate={createHousehold} onRecover={recoverHousehold} />;
+  }
+
   return (
     <div className={projector ? "projector" : undefined}>
       <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-3 px-3 pb-28 pt-2 sm:gap-4 sm:px-4 lg:gap-5 lg:p-8">
@@ -113,6 +127,28 @@ export default function Dashboard() {
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
           </button>
+          {authMode === "households" && authenticated && (
+            <>
+              <button
+                type="button"
+                onClick={() => setDeleteOpen(true)}
+                title="Delete household"
+                aria-label="Delete household"
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-red-500/40 text-red-300 hover:text-white transition-colors"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => void logoutHousehold()}
+                title="Sign out"
+                aria-label="Sign out"
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></svg>
+              </button>
+            </>
+          )}
           {token && (
             <button
               type="button"
@@ -192,6 +228,7 @@ export default function Dashboard() {
         )}
       </div>
       <AuthModal isOpen={authRequired && !authenticated} onVerify={verifyPin} />
+      <DeleteHouseholdModal isOpen={deleteOpen} onClose={() => setDeleteOpen(false)} onDelete={deleteHousehold} />
       {profileOpen !== null && (
         <ProfileModal
           key={profileOpen}

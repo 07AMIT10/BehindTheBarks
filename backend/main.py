@@ -17,15 +17,21 @@ from typing import Any
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy.orm import sessionmaker
 
 from backend.fusion.llm_interpreter import LLMInterpreter
 from backend.demo.clips import load_demo_clips
 from backend.notify import build_notifier
 from backend.store import db as store_db
+from backend.store import repo as store_repo
+from backend.store.models import KIND_VIEWER, ROLE_OWNER, ROLE_VIEWER
 from backend.web.auth import Ctx
 from backend.web.registry import LEGACY, HouseholdRegistry
+
+VIEWER_COOKIE = "btb_session"
+SESSION_MAX_AGE_S = 31_536_000  # a year: the recovery key, not a password reset, is the escape hatch
+HOUSEHOLD_CREATES_PER_HOUR = 5
 from backend.web.event_log import EventLog
 from backend.web.hub import Hub
 from backend.web.ingest import CLOSE_BAD_HELLO, CLOSE_BUSY, CLOSE_REPLACED, HelloError, parse_hello
@@ -97,6 +103,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
 
     auth_cfg = web.get("auth") or {}
     auth_enabled = bool(auth_cfg.get("enabled", False))
+    auth_mode = str(auth_cfg.get("mode", "pin"))
+    households_mode = auth_mode == "households"
     dashboard_pin = str(auth_cfg.get("dashboard_pin", "")).strip()
     api_token = str(auth_cfg.get("api_token", "")).strip()
     ingest_token = str(auth_cfg.get("ingest_token", "")).strip()
@@ -140,10 +148,175 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             return True
         return False
 
+    # -- households mode (T2.3): cookies, recovery keys, per-household runtimes -------------------
+    def _is_https(req: Request) -> bool:
+        return req.url.scheme == "https" or req.headers.get("x-forwarded-proto", "").startswith("https")
+
+    def _set_session_cookie(resp, token: str, req: Request) -> None:
+        resp.set_cookie(VIEWER_COOKIE, token, httponly=True, samesite="lax", path="/",
+                        max_age=SESSION_MAX_AGE_S, secure=_is_https(req))
+
+    def _clear_session_cookie(resp) -> None:
+        resp.delete_cookie(VIEWER_COOKIE, path="/")
+
+    def _viewer_token(req: Request) -> str | None:
+        """The cookie first (same-origin dashboards); a Bearer token covers the cross-origin dev
+        case (?backend=), where browsers refuse to send cookies. URL tokens are gone in this mode."""
+        tok = req.cookies.get(VIEWER_COOKIE)
+        if tok:
+            return tok.strip()
+        hdr = req.headers.get("Authorization", "")
+        return hdr[len("Bearer "):].strip() if hdr.startswith("Bearer ") else None
+
+    async def households_ctx(req: Request) -> Ctx:
+        token = _viewer_token(req)
+        if not token:
+            raise HTTPException(status_code=401, detail="no session: create a household or use a recovery key")
+        with app.state.db_session() as s:
+            viewer = store_repo.viewer_by_token(s, token)
+            if viewer is None or viewer is None and viewer is None:
+                raise HTTPException(status_code=401, detail="session revoked or expired")
+            lr = await app.state.registry.get(viewer.household_id)
+            store_repo.touch_viewer(s, viewer)
+            s.commit()
+            return Ctx(household_id=viewer.household_id, role=viewer.role, viewer_id=viewer.id,
+                       runtime=lr.runtime, hub=lr.hub, pipeline=lr.pipeline)
+
+    async def auth_ctx(req: Request) -> Ctx:
+        """The per-request context (T2.2/T2.3): pin mode keeps today's auth and serves the legacy
+        household; households mode derives the household from the session cookie. FastAPI awaits
+        this dependency, so route bodies never verify auth themselves."""
+        if households_mode:
+            return await households_ctx(req)
+        verify_request_auth(req)
+        lr = app.state.registry.peek(LEGACY)
+        return Ctx(household_id=LEGACY, role="owner", viewer_id=None,
+                   runtime=lr.runtime, hub=lr.hub, pipeline=lr.pipeline)
+
+    def _pin_only_404():
+        raise HTTPException(status_code=404, detail="households auth mode is disabled (web.auth.mode: pin)")
+
+    def _rate_limit_household_creates(req: Request) -> None:
+        now = time.time()
+        ip = req.client.host if req.client else "unknown"
+        recent = [t for t in household_creates.get(ip, []) if now - t < 3600]
+        if len(recent) >= HOUSEHOLD_CREATES_PER_HOUR:
+            raise HTTPException(status_code=429, detail="too many households from this address; try again later")
+        recent.append(now)
+        household_creates[ip] = recent
+
+    @app.post("/households")
+    async def create_household(req: Request, body: dict | None = None) -> dict:
+        if not households_mode:
+            _pin_only_404()
+        _rate_limit_household_creates(req)
+        payload = body or {}
+        dog_name = str(payload.get("dog_name") or "Your dog")[:48].strip()
+        location = str(payload.get("location") or "")[:48].strip()
+        name = str(payload.get("name") or "")[:64].strip()
+        with app.state.db_session() as s:
+            household, recovery_key = store_repo.create_household(
+                s, name=name or "My household", dog_name=dog_name, location=location)
+            owner, token = store_repo.create_viewer(s, household_id=household.id, role=ROLE_OWNER, label="owner")
+            s.commit()
+            household_id = household.id
+        resp = JSONResponse({"household_id": household_id, "recovery_key": recovery_key})
+        _set_session_cookie(resp, token, req)
+        return resp
+
+    @app.post("/auth/recover")
+    async def recover(req: Request, body: dict | None = None) -> dict:
+        if not households_mode:
+            _pin_only_404()
+        check_rate_limit("recover", 5.0)
+        key = str((body or {}).get("recovery_key") or "").strip()
+        with app.state.db_session() as s:
+            found = store_repo.recover_household(s, key)
+            if found is None:
+                raise HTTPException(status_code=401, detail="unknown recovery key")
+            viewer, token = found
+            s.commit()
+        resp = JSONResponse({"ok": True})
+        _set_session_cookie(resp, token, req)
+        return resp
+
+    @app.post("/auth/logout")
+    async def logout(req: Request) -> dict:
+        if not households_mode:
+            _pin_only_404()
+        token = _viewer_token(req)
+        with app.state.db_session() as s:
+            if token:
+                viewer = store_repo.viewer_by_token(s, token)
+                if viewer is not None and viewer.role == ROLE_VIEWER:
+                    store_repo.revoke_viewer(s, viewer.id)  # a viewer's logout also ends their access
+                    s.commit()
+        resp = JSONResponse({"ok": True})
+        _clear_session_cookie(resp)
+        return resp
+
+    @app.get("/me")
+    async def me(ctx: Ctx = Depends(auth_ctx)) -> dict:
+        if not households_mode:
+            _pin_only_404()
+        profile = dict(ctx.runtime.cfg["web"].get("profile") or {})
+        with app.state.db_session() as s:
+            household = store_repo.get_household(s, ctx.household_id)
+            name = household.name if household else ""
+            from backend.store.models import Viewer
+
+            viewer = s.get(Viewer, ctx.viewer_id) if ctx.viewer_id else None
+            ceiling = viewer.mode_ceiling if viewer is not None else "full"
+        return {"household_id": ctx.household_id, "role": ctx.role, "name": name, "profile": profile,
+                "mode_ceiling": ceiling}
+
+    @app.put("/households/me/profile")
+    async def put_household_profile(ctx: Ctx = Depends(auth_ctx), body: dict | None = None) -> dict:
+        if not households_mode:
+            _pin_only_404()
+        payload = body or {}
+        dog_name = str(payload.get("dog_name") or "Your dog").strip()
+        location = str(payload.get("location") or "").strip()
+        if len(dog_name) > 48 or len(location) > 48:
+            raise HTTPException(status_code=400, detail="dog_name and location must be 48 characters or fewer")
+        with app.state.db_session() as s:
+            household = store_repo.update_household_profile(s, ctx.household_id, dog_name=dog_name,
+                                                            location=location)
+            if household is None:
+                raise HTTPException(status_code=404, detail="unknown household")
+            s.commit()
+        profile = dict(ctx.runtime.cfg["web"].get("profile") or {})
+        profile.update({"dog_name": dog_name, "location": location})
+        ctx.runtime.cfg["web"]["profile"] = profile
+        ctx.hub.publish("status", {"profile": profile})
+        return profile
+
+    @app.delete("/households/me")
+    async def delete_household_endpoint(ctx: Ctx = Depends(auth_ctx), body: dict | None = None) -> dict:
+        if not households_mode:
+            _pin_only_404()
+        if ctx.role != ROLE_OWNER:
+            raise HTTPException(status_code=403, detail="only the owner can delete the household")
+        key = str((body or {}).get("recovery_key") or "").strip()
+        with app.state.db_session() as s:
+            household = store_repo.get_household(s, ctx.household_id)
+            if household is None or not store_db.equal_digest(household.recovery_hash, store_db.sha256_hex(key)):
+                raise HTTPException(status_code=400, detail="recovery key does not match")
+            store_repo.delete_household(s, ctx.household_id)
+            s.commit()
+        await app.state.registry.forget(ctx.household_id)
+        log_dir = Path(str(ctx.runtime.cfg["web"]["log_dir"]))
+        if log_dir.is_dir():  # the household's event-log directory goes with it (data erasure)
+            import shutil
+
+            shutil.rmtree(log_dir, ignore_errors=True)
+        return {"deleted": True}
+
     rate_limit_cfg = web.get("rate_limits") or {}
     rate_limits_enabled = bool(rate_limit_cfg.get("enabled", auth_enabled))
 
     rate_limits: dict[str, float] = {}
+    household_creates: dict[str, list[float]] = {}  # per-IP hourly buckets (households mode)
 
     def check_rate_limit(action: str, min_interval_s: float, hid: str = LEGACY) -> None:
         if not rate_limits_enabled:
@@ -161,18 +334,10 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             )
         rate_limits[key] = now
 
-    def auth_ctx(req: Request) -> Ctx:
-        """The pin-mode context: today's auth check, then the legacy household (T2.2).
-
-        FastAPI calls this as a dependency, so the route bodies never verify auth themselves."""
-        verify_request_auth(req)
-        lr = app.state.registry.peek(LEGACY)
-        return Ctx(household_id=LEGACY, role="owner", viewer_id=None,
-                   runtime=lr.runtime, hub=lr.hub, pipeline=lr.pipeline)
-
     @app.get("/auth/status")
     async def auth_status() -> dict:
-        return {"enabled": auth_enabled, "auth_required": auth_enabled}
+        required = auth_enabled or households_mode
+        return {"enabled": auth_enabled, "auth_required": required, "mode": auth_mode}
 
     @app.post("/auth/verify")
     async def auth_verify(body: dict | None = None) -> dict:
@@ -342,6 +507,9 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
 
     @app.websocket("/ws")
     async def ws(sock: WebSocket) -> None:
+        if households_mode:
+            await _ws_households(sock)
+            return
         if not verify_ws_auth(sock):
             await sock.close(code=4401, reason="Unauthorized")
             return
@@ -355,6 +523,33 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             pass
         finally:
             app.state.hub.unsubscribe(q)
+
+    async def _ws_households(sock: WebSocket) -> None:
+        """Households mode: the cookie is the credential, and the subscriber only ever reaches its
+        own household's hub (T2.3). A Bearer token also works for the cross-origin dev case."""
+        token = (sock.cookies.get(VIEWER_COOKIE) or "").strip()
+        if not token:
+            hdr = sock.headers.get("Authorization", "")
+            token = hdr[len("Bearer "):].strip() if hdr.startswith("Bearer ") else ""
+        await sock.accept()
+        if not token:
+            await sock.close(code=4401, reason="Unauthorized: no session")
+            return
+        with app.state.db_session() as s:
+            viewer = store_repo.viewer_by_token(s, token)
+        if viewer is None:
+            await sock.close(code=4401, reason="Unauthorized: session revoked or expired")
+            return
+        lr = await app.state.registry.get(viewer.household_id)
+        q = lr.hub.subscribe()
+        try:
+            await sock.send_json({"type": "status", "seq": 0, "data": lr.runtime.status()})
+            while True:
+                await sock.send_json(await q.get())
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            lr.hub.unsubscribe(q)
 
     @app.websocket("/ingest")
     async def ingest(sock: WebSocket) -> None:
