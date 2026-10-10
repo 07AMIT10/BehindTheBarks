@@ -533,10 +533,10 @@ async def test_remote_pipeline_idle_wins_over_the_privacy_slate():
     p = RemotePipeline(cfg)
     s = RemoteSession(parse_remote_hello(hello_msg()), p, SpyRuntime())
     p.attach(s, None)
-    p.set_privacy(True)
+    p.set_policy("blackout")
     assert p.latest_frame_jpeg() == p._privacy_jpeg
     p.mark_stopped()
-    assert p._privacy_mode is True  # untouched
+    assert p.effective_mode == "blackout"  # the policy is untouched by stopping
     assert p.latest_frame_jpeg() is None  # no slate while idle: nothing is streaming
 
 

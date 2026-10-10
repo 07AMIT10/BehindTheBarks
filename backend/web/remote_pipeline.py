@@ -97,7 +97,6 @@ class RemotePipeline:
         # the household owner chose. The effective mode is the lower of the two -- the phone always wins.
         self._station_cap = "full"
         self._policy_mode = "full"
-        self._privacy_mode = False
         self._privacy_jpeg: bytes = _build_privacy_slate()
 
     # -- Pipeline interface -------------------------------------------------------------------
@@ -123,7 +122,7 @@ class RemotePipeline:
         """The newest preview JPEG the phone sent, or privacy slate in privacy mode, or None before the first one."""
         if self._idle:
             return None  # nothing is streaming: no stale frame and no privacy slate either
-        if self._privacy_mode:
+        if self.effective_mode == "blackout":  # the policy engine decides, never a legacy flag
             return self._privacy_jpeg
         return self._jpeg
 
@@ -204,13 +203,6 @@ class RemotePipeline:
         if self._idle:
             return None
         return self._jpeg
-
-    def set_privacy(self, enabled: bool) -> bool:
-        """Enable or disable family privacy mode remotely (mutes mic & replaces video with privacy slate)."""
-        self._privacy_mode = bool(enabled)
-        sent = self._post({"type": "privacy", "data": {"enabled": self._privacy_mode}})
-        log.info("remote: sent privacy=%s to phone (%s)", self._privacy_mode, "sent" if sent else "no phone")
-        return sent
 
     def get_privacy(self) -> bool:
         """Legacy boolean view: True only when the effective mode is the total mute."""
@@ -355,7 +347,7 @@ class RemotePipeline:
             "downlinks_dropped": self.downlinks_dropped,
             "treats": len(self._treats),
             "torch": self._torch_enabled,
-            "privacy_mode": self._privacy_mode,
+            "privacy_mode": self.effective_mode == "blackout",
             "station_cap": self._station_cap,
             "effective_mode": self.effective_mode,
             "policy_mode": self._policy_mode,
