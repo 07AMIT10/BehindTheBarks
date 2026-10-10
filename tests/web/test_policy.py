@@ -452,3 +452,33 @@ def test_per_station_isolation_of_demand(tmp_path):
             # Station 2 has demand "none" and 0 viewers
             assert ch2.tracker.effective_demand == "none"
             assert ch2.tracker.viewer_counts["video"] == 0
+
+
+def test_a_mode_change_keeps_the_viewers_and_preview_the_tracker_pushed():
+    """POST /mode calls set_policy(mode) with no viewers or preview. The phone must keep the viewer count
+    and focus preview last pushed by the policy tracker, or a watched phone stops sending previews."""
+    import asyncio
+
+    from backend.web.modes import FOCUS_PREVIEW
+    from backend.web.remote_pipeline import RemotePipeline
+
+    cfg = load_config("none.yaml", env={})
+    cfg["web"]["pipeline"] = "remote"
+    sent: list[dict] = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    async def run():
+        p = RemotePipeline(cfg)
+        p.attach(None, send)
+        p.set_policy("full", preview=dict(FOCUS_PREVIEW), viewers={"video": 1, "audio": 0})
+        p.set_policy("privacy")  # what /mode does on a mode change
+        p.set_policy("full")
+        await asyncio.sleep(0.05)
+
+    asyncio.run(run())
+    policies = [m["data"] for m in sent if m["type"] == "policy"]
+    assert [d["mode"] for d in policies] == ["full", "privacy", "full"]
+    assert policies[-1]["viewers"] == {"video": 1, "audio": 0}
+    assert policies[-1]["preview"] == FOCUS_PREVIEW

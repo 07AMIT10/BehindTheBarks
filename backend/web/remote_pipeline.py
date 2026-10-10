@@ -97,6 +97,11 @@ class RemotePipeline:
         # the household owner chose. The effective mode is the lower of the two -- the phone always wins.
         self._station_cap = "full"
         self._policy_mode = "full"
+        # The last preview/audio/viewer values the policy tracker pushed. A mode change (POST /mode)
+        # calls set_policy(mode) without them and must not reset viewers or preview on the phone.
+        self._policy_preview: dict = dict(DEFAULT_PREVIEW)
+        self._policy_audio = False
+        self._policy_viewers: dict = {"video": 0, "audio": 0}
         self._privacy_jpeg: bytes = _build_privacy_slate()
 
     # -- Pipeline interface -------------------------------------------------------------------
@@ -181,8 +186,14 @@ class RemotePipeline:
         `mode` is validated here: an unknown mode raises rather than reaching the phone."""
         mode = parse_mode(mode)  # ModeError propagates: a bad mode must never be sent
         self._policy_mode = mode
-        data = {"mode": mode, "preview": dict(preview or DEFAULT_PREVIEW),
-                "audio": bool(audio), "viewers": dict(viewers or {"video": 0, "audio": 0})}
+        if preview is not None:
+            self._policy_preview = dict(preview)
+        if audio is not None:
+            self._policy_audio = bool(audio)
+        if viewers is not None:
+            self._policy_viewers = dict(viewers)
+        data = {"mode": mode, "preview": dict(self._policy_preview),
+                "audio": self._policy_audio, "viewers": dict(self._policy_viewers)}
         sent = self._post({"type": "policy", "data": data})
         # Legacy compatibility: old APKs only understand `privacy`. New APKs act on `policy` and
         # ignore `privacy` once they have seen a `policy`, so sending both is safe.
