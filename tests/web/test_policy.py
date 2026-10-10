@@ -264,3 +264,164 @@ def test_invalid_modes_rejected(tmp_path):
         c.post("/households", json={"dog_name": "Rover"})
         assert c.post("/mode", json={}).status_code == 400
         assert c.post("/mode", json={"mode": "ultra_hd"}).status_code == 400
+
+
+def test_post_focus_validation(tmp_path):
+    app_ = app(tmp_path)
+    with TestClient(app_) as c:
+        c.post("/households", json={"dog_name": "Rover"})
+        # 400 on bad views or missing body
+        assert c.post("/focus").status_code == 400
+        assert c.post("/focus", json={"view": "invalid"}).status_code == 400
+        # 404 on unknown station
+        assert c.post("/focus", json={"station": "nonexistent", "view": "focus"}).status_code == 404
+
+
+def test_demand_driven_preview_policy_resolution(tmp_path):
+    """Viewer A focusing station 1 and viewer B grid-viewing station 1 -> policy is focus policy;
+    both leave -> viewers.video == 0.
+    """
+    app_ = app(tmp_path)
+    with TestClient(app_) as c:
+        c.post("/households", json={"dog_name": "Rover"})
+        owner_cookie = c.cookies[VIEWER_COOKIE]
+
+        station = StationClient(c)
+        with connect_station(c, station) as ws:
+            # Drain initial policy messages from station connection
+            time.sleep(0.05)
+
+            # Retrieve household runtime & set debounce to 0 for instant push
+            household_id = c.get("/me").json()["household_id"]
+            import asyncio
+            loop = asyncio.new_event_loop()
+            lr = loop.run_until_complete(app_.state.registry.get(household_id))
+            loop.close()
+            ch = lr.channels[station.station_id]
+            ch.tracker.debounce_s = 0.0
+
+            def next_policy_msg():
+                while True:
+                    m = ws.receive_json()
+                    if m.get("type") == "policy":
+                        return m
+
+            # 1. Viewer A (owner) sets focus on station
+            r = c.post("/focus", json={"station": station.station_id, "view": "focus"})
+            assert r.status_code == 200
+            assert ch.tracker.effective_demand == "focus"
+            assert ch.tracker.viewer_counts["video"] == 1
+
+            # Read downlink from station ws
+            msg1 = next_policy_msg()
+            assert msg1["data"]["preview"]["fps"] == 3
+            assert msg1["data"]["preview"]["max_edge"] == 640
+            assert msg1["data"]["preview"]["quality"] == 70
+            assert msg1["data"]["viewers"]["video"] == 1
+
+            # 2. Viewer B pairs and joins
+            c.cookies.set(VIEWER_COOKIE, owner_cookie)
+            code = c.post("/households/me/pairing", json={"kind": "viewer", "label": "ViewerB"}).json()["code"]
+            c.cookies.clear()
+            c.post("/join", json={"code": code})
+            viewer_b_cookie = c.cookies[VIEWER_COOKIE]
+
+            # Viewer B sets view="grid" on same station
+            r2 = c.post("/focus", json={"station": station.station_id, "view": "grid"})
+            assert r2.status_code == 200
+            # Effective demand is max("focus", "grid") == "focus"
+            assert ch.tracker.effective_demand == "focus"
+            assert ch.tracker.viewer_counts["video"] == 2
+
+            msg2 = next_policy_msg()
+            assert msg2["data"]["preview"]["fps"] == 3
+            assert msg2["data"]["viewers"]["video"] == 2
+
+            # 3. Viewer A leaves (view="none")
+            c.cookies.clear()
+            c.cookies.set(VIEWER_COOKIE, owner_cookie)
+            r3 = c.post("/focus", json={"station": station.station_id, "view": "none"})
+            assert r3.status_code == 200
+            # Only Viewer B (grid) remains: effective demand becomes grid
+            assert ch.tracker.effective_demand == "grid"
+            assert ch.tracker.viewer_counts["video"] == 1
+
+            msg3 = next_policy_msg()
+            assert msg3["data"]["preview"]["fps"] == 0.5
+            assert msg3["data"]["preview"]["max_edge"] == 240
+            assert msg3["data"]["preview"]["quality"] == 50
+            assert msg3["data"]["viewers"]["video"] == 1
+
+            # 4. Viewer B leaves (view="none")
+            c.cookies.clear()
+            c.cookies.set(VIEWER_COOKIE, viewer_b_cookie)
+            r4 = c.post("/focus", json={"station": station.station_id, "view": "none"})
+            assert r4.status_code == 200
+
+            assert ch.tracker.effective_demand == "none"
+            assert ch.tracker.viewer_counts["video"] == 0
+
+            msg4 = next_policy_msg()
+            assert msg4["data"]["viewers"]["video"] == 0
+
+
+def test_demand_expires_after_30s_injected_clock(tmp_path):
+    """Demand expires after 30s without refresh with injected clock."""
+    from backend.web.policy import Policy
+    from backend.web.tracker import ViewerTracker
+
+    now = [1000.0]
+
+    def mock_clock():
+        return now[0]
+
+    policy = Policy(household_mode="full")
+    tracker = ViewerTracker("h1", policy=policy, pipeline=None, clock=mock_clock, debounce_s=0.0)
+
+    # Viewer sets focus
+    tracker.set_demand("v1", "focus", ttl_s=30.0)
+    assert tracker.effective_demand == "focus"
+    assert tracker.viewer_counts["video"] == 1
+
+    # Advance clock by 20s: still active
+    now[0] += 20.0
+    assert tracker.effective_demand == "focus"
+    assert tracker.viewer_counts["video"] == 1
+
+    # Advance clock past 30s: expired!
+    now[0] += 11.0
+    assert tracker.effective_demand == "none"
+    assert tracker.viewer_counts["video"] == 0
+
+
+def test_per_station_isolation_of_demand(tmp_path):
+    """Per-station demand isolation: demand on station 1 does not activate video on station 2."""
+    app_ = app(tmp_path)
+    with TestClient(app_) as c:
+        c.post("/households", json={"dog_name": "Rover"})
+        st1 = StationClient(c, device="Phone1")
+        st2 = StationClient(c, device="Phone2")
+
+        with connect_station(c, st1) as ws1, connect_station(c, st2) as ws2:
+            household_id = c.get("/me").json()["household_id"]
+            import asyncio
+            loop = asyncio.new_event_loop()
+            lr = loop.run_until_complete(app_.state.registry.get(household_id))
+            loop.close()
+
+            ch1 = lr.channels[st1.station_id]
+            ch2 = lr.channels[st2.station_id]
+            ch1.tracker.debounce_s = 0.0
+            ch2.tracker.debounce_s = 0.0
+
+            # Set focus ONLY on station 1
+            res = c.post("/focus", json={"station": st1.station_id, "view": "focus"})
+            assert res.status_code == 200
+
+            # Station 1 has demand "focus" and 1 viewer
+            assert ch1.tracker.effective_demand == "focus"
+            assert ch1.tracker.viewer_counts["video"] == 1
+
+            # Station 2 has demand "none" and 0 viewers
+            assert ch2.tracker.effective_demand == "none"
+            assert ch2.tracker.viewer_counts["video"] == 0

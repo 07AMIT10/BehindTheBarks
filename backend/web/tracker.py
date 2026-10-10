@@ -7,6 +7,8 @@ import asyncio
 import time
 from typing import Any, Callable
 
+from backend.web.modes import DEFAULT_PREVIEW, FOCUS_PREVIEW, GRID_PREVIEW
+
 CLOSE_VIEWERS_KICKED = 4411
 
 
@@ -70,9 +72,11 @@ class ViewerTracker:
         self.debounce_s = debounce_s
         self._video_streams: dict[str, dict[str, Any]] = {}
         self._ws_streams: dict[Any, dict[str, Any]] = {}
+        self._demands: dict[str, dict[str, Any]] = {}  # viewer_id -> {"view": str, "expires_at": float}
         self._kicked_until: float = 0.0
         self._debounce_task: asyncio.Task | None = None
         self._on_kick: list[Callable[[], Any]] = []
+        self._last_pushed_key: tuple | None = None
 
     def is_kicked(self) -> bool:
         return self.clock() < self._kicked_until
@@ -84,13 +88,14 @@ class ViewerTracker:
     def register_kick_callback(self, cb: Callable[[], Any]) -> None:
         self._on_kick.append(cb)
 
-    def enter_video(self, stream_id: str, viewer_id: str | None = None, label: str = "") -> None:
+    def enter_video(self, stream_id: str, viewer_id: str | None = None, label: str = "", view: str = "focus") -> None:
         if self.is_kicked():
             raise ViewersKickedError("viewers temporarily disconnected by station")
         lbl = (label or "Viewer").strip()[:24]
         self._video_streams[stream_id] = {
             "viewer_id": viewer_id or stream_id,
             "label": lbl,
+            "view": view if view in ("grid", "focus") else "focus",
             "started_at": self.clock(),
         }
         self._on_change()
@@ -114,9 +119,62 @@ class ViewerTracker:
             del self._ws_streams[q]
             self._on_change()
 
+    def _clean_expired_demands(self) -> bool:
+        now = self.clock()
+        expired = [vid for vid, d in self._demands.items() if d.get("expires_at", 0) <= now]
+        if expired:
+            for vid in expired:
+                del self._demands[vid]
+            return True
+        return False
+
+    def check_expired_demands(self) -> bool:
+        if self._clean_expired_demands():
+            self._on_change()
+            return True
+        return False
+
+    def set_demand(self, viewer_id: str, view: str, ttl_s: float = 30.0) -> None:
+        if view not in ("grid", "focus", "none"):
+            raise ValueError(f"Invalid view demand: {view!r}")
+        now = self.clock()
+        if view == "none":
+            self._demands.pop(viewer_id, None)
+        else:
+            self._demands[viewer_id] = {
+                "view": view,
+                "expires_at": now + ttl_s,
+            }
+            try:
+                loop = asyncio.get_running_loop()
+
+                async def _expire():
+                    await asyncio.sleep(ttl_s + 0.05)
+                    self.check_expired_demands()
+
+                loop.create_task(_expire())
+            except RuntimeError:
+                pass
+        self._on_change()
+
+    @property
+    def effective_demand(self) -> str:
+        self._clean_expired_demands()
+        views = {d["view"] for d in self._demands.values()} | {v.get("view", "focus") for v in self._video_streams.values()}
+        if "focus" in views:
+            return "focus"
+        if "grid" in views:
+            return "grid"
+        return "none"
+
     @property
     def viewer_counts(self) -> dict[str, int]:
-        return {"video": len(self._video_streams), "audio": 0}
+        self._clean_expired_demands()
+        eff = self.effective_demand
+        if eff == "none":
+            return {"video": 0, "audio": 0}
+        active_vids = set(self._demands.keys()) | {v["viewer_id"] for v in self._video_streams.values()}
+        return {"video": len(active_vids), "audio": 0}
 
     @property
     def labels(self) -> list[str]:
@@ -130,8 +188,9 @@ class ViewerTracker:
     def kick_all(self, cooldown_s: float = 60.0) -> int:
         """Disconnect all viewers: triggers callbacks and imposes cooldown."""
         self._kicked_until = self.clock() + cooldown_s
-        count = len(self._video_streams) + len(self._ws_streams)
+        count = len(self._video_streams) + len(self._ws_streams) + len(self._demands)
         self._video_streams.clear()
+        self._demands.clear()
 
         # Fire registered kick callbacks (disconnecting WebSocket subscribers)
         for cb in list(self._on_kick):
@@ -144,6 +203,18 @@ class ViewerTracker:
         return count
 
     def _on_change(self) -> None:
+        self._clean_expired_demands()
+        eff = self.effective_demand
+        if eff == "focus":
+            target_preview = dict(FOCUS_PREVIEW)
+        elif eff == "grid":
+            target_preview = dict(GRID_PREVIEW)
+        else:
+            target_preview = getattr(self.policy, "preview", DEFAULT_PREVIEW)
+
+        if hasattr(self.policy, "preview") and eff != "none":
+            self.policy.preview = dict(target_preview)
+
         counts = self.viewer_counts
         if hasattr(self.policy, "viewers"):
             self.policy.viewers = dict(counts)
@@ -175,15 +246,31 @@ class ViewerTracker:
         self._push_policy_now()
 
     def _push_policy_now(self) -> None:
+        self._clean_expired_demands()
+        eff = self.effective_demand
+        if eff == "focus":
+            target_preview = dict(FOCUS_PREVIEW)
+        elif eff == "grid":
+            target_preview = dict(GRID_PREVIEW)
+        else:
+            target_preview = getattr(self.policy, "preview", DEFAULT_PREVIEW)
+
+        if hasattr(self.policy, "preview") and eff != "none":
+            self.policy.preview = dict(target_preview)
+
         counts = self.viewer_counts
         if hasattr(self.policy, "viewers"):
             self.policy.viewers = dict(counts)
+
         set_policy_fn = getattr(self.pipeline, "set_policy", None)
         if set_policy_fn:
             mode = getattr(self.policy, "household_mode", "full")
-            preview = getattr(self.policy, "preview", None)
-            try:
-                set_policy_fn(mode, preview=preview, viewers=counts)
-            except Exception:
-                pass
+            preview = dict(target_preview)
+            key = (mode, tuple(sorted(preview.items())), tuple(sorted(counts.items())))
+            if key != self._last_pushed_key:
+                self._last_pushed_key = key
+                try:
+                    set_policy_fn(mode, preview=preview, viewers=counts)
+                except Exception:
+                    pass
 

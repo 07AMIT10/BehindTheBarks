@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import Body, Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy.orm import sessionmaker
@@ -1179,8 +1179,40 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         count = tracker.kick_all(cooldown_s=60.0) if tracker else 0
         return {"ok": True, "disconnected": count, "cooldown_s": 60}
 
+    @app.post("/focus")
+    async def focus(ctx: Ctx = Depends(auth_ctx), body: dict | None = Body(None), station: str | None = None) -> dict:
+        """T4.3: Demand-driven preview bandwidth policy: viewers report their active view mode
+        ('focus' | 'grid' | 'none') per station or household.
+        """
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="view must be 'grid', 'focus', or 'none'")
+        view = body.get("view")
+        if view not in ("grid", "focus", "none"):
+            raise HTTPException(status_code=400, detail="view must be 'grid', 'focus', or 'none'")
+        target_station = station or body.get("station")
+        viewer_id = ctx.viewer_id or _viewer_token(ctx.request) or "viewer"
+
+        lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
+        if target_station:
+            ch = _resolve_channel(lr, target_station, ctx.household_id)
+            if ch is None:
+                raise HTTPException(status_code=404, detail=f"station {target_station!r} is not active")
+            if ch.tracker:
+                ch.tracker.set_demand(viewer_id, view)
+            eff = ch.tracker.effective_demand if ch.tracker else view
+        else:
+            if lr and lr.channels:
+                for s_ch in lr.channels.values():
+                    if s_ch.tracker:
+                        s_ch.tracker.set_demand(viewer_id, view)
+            elif ctx.tracker:
+                ctx.tracker.set_demand(viewer_id, view)
+            eff = ctx.tracker.effective_demand if ctx.tracker else view
+
+        return {"status": "ok", "station": target_station, "view": view, "effective": eff}
+
     @app.get("/video")
-    async def video(ctx: Ctx = Depends(auth_ctx), station: str | None = None, max_frames: int = 0) -> StreamingResponse:
+    async def video(ctx: Ctx = Depends(auth_ctx), station: str | None = None, view: str | None = None, max_frames: int = 0) -> StreamingResponse:
         lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
         if station:
             ch = _resolve_channel(lr, station, ctx.household_id)
@@ -1207,7 +1239,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         label = parse_ua_label(ua)
         if tracker:
             try:
-                tracker.enter_video(stream_id, viewer_id=ctx.viewer_id, label=label)
+                tracker.enter_video(stream_id, viewer_id=ctx.viewer_id, label=label, view=view or "focus")
             except Exception:
                 raise HTTPException(status_code=403, detail="Viewers disconnected by station")
 

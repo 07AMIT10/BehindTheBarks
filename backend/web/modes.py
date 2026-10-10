@@ -4,12 +4,21 @@ Ordering is `blackout < privacy < limited < full`. The effective exposure for a 
 minimum of what the station allows (its cap), what the household chose, and what that viewer is
 allowed to see. Lowering is always immediate; raising can need the phone's approval.
 """
+from __future__ import annotations
+
+from typing import Any
 
 MODE_ORDER: tuple[str, ...] = ("blackout", "privacy", "limited", "full")
 """Ascending exposure. Index == how much is allowed to leave the phone."""
 
-DEFAULT_PREVIEW: dict[str, int] = {"fps": 2, "max_edge": 320, "quality": 60}
+DEFAULT_PREVIEW: dict[str, Any] = {"fps": 2, "max_edge": 320, "quality": 60}
 """Preview encoding defaults for the `policy` downlink (T3.1/T3.4)."""
+
+FOCUS_PREVIEW: dict[str, Any] = {"fps": 3, "max_edge": 640, "quality": 70}
+"""High-fidelity preview preset when a viewer is actively focusing on a station (T4.3)."""
+
+GRID_PREVIEW: dict[str, Any] = {"fps": 0.5, "max_edge": 240, "quality": 50}
+"""Low-bandwidth preview preset when station is in a multi-camera grid tile (T4.3)."""
 
 
 class ModeError(ValueError):

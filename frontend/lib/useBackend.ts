@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { AuthStatus } from "./household";
 import { backendBase } from "./config";
 import { initialState, reduce } from "./store";
@@ -448,6 +448,59 @@ export function useBackend() {
   const dismissToast = useCallback((id: string) => dispatch({ kind: "dismissToast", id }), []);
   const focusStation = useCallback((stationId: string) => dispatch({ kind: "focusStation", stationId }), []);
 
+  const focusRef = useRef<{ station?: string; view: "grid" | "focus" | "none" }>({ view: "focus" });
+
+  const reportFocus = useCallback(
+    async (station?: string, view: "grid" | "focus" | "none" = "focus") => {
+      focusRef.current = { station, view };
+      const tok = token ?? getStoredToken();
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (tok) headers["Authorization"] = `Bearer ${tok}`;
+      const url = `${base.http}/focus${tok ? `?token=${encodeURIComponent(tok)}` : ""}`;
+      try {
+        await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ station, view }),
+        });
+      } catch {
+        /* ignore */
+      }
+    },
+    [base, token]
+  );
+
+  useEffect(() => {
+    if (authRequired) return;
+
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      const cur = focusRef.current;
+      reportFocus(cur.station, cur.view);
+    }, 15000);
+
+    const onVisibilityChange = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        reportFocus(undefined, "none");
+      } else {
+        const cur = focusRef.current;
+        reportFocus(cur.station, cur.view);
+      }
+    };
+
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibilityChange);
+    }
+    return () => {
+      clearInterval(interval);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibilityChange);
+      }
+    };
+  }, [authRequired, reportFocus]);
+
   return {
     state,
     treat,
@@ -455,6 +508,7 @@ export function useBackend() {
     setMode,
     dismissToast,
     focusStation,
+    reportFocus,
     http: base.http,
     token,
     authRequired,

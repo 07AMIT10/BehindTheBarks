@@ -238,7 +238,10 @@ export default function Dashboard() {
               </div>
               <button
                 type="button"
-                onClick={() => setShowGrid(false)}
+                onClick={() => {
+                  setShowGrid(false);
+                  backend.reportFocus(state.focusedStation !== "default" ? state.focusedStation : undefined, "focus");
+                }}
                 className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-small font-semibold text-text hover:bg-surface-2 transition-colors"
               >
                 Back to {state.stations[state.focusedStation]?.name || "Camera"}
@@ -253,6 +256,7 @@ export default function Dashboard() {
               onFocus={(id) => {
                 backend.focusStation(id);
                 setShowGrid(false);
+                backend.reportFocus(id, "focus");
               }}
             />
           </div>
@@ -267,7 +271,10 @@ export default function Dashboard() {
               </div>
               <button
                 type="button"
-                onClick={() => setShowGrid(true)}
+                onClick={() => {
+                  setShowGrid(true);
+                  backend.reportFocus(undefined, "grid");
+                }}
                 className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1 text-small font-semibold text-text hover:bg-surface-2 transition-colors"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
