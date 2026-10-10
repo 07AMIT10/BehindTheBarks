@@ -1,7 +1,6 @@
 package com.btb.ondevice.capture
 
 import android.content.Context
-import android.os.Build
 import android.os.SystemClock
 import android.util.Size
 import android.view.OrientationEventListener
@@ -23,6 +22,21 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 typealias FrameCallback = (rgbaBytes: ByteArray, width: Int, height: Int, rotationDegrees: Int, timestampS: Double) -> Unit
+
+/**
+ * Current display rotation for the initial target rotation. Works from any context: `Context.getDisplay()`
+ * throws on a Service or Application context (the MonitorService start crashed on it), while the
+ * WindowManager's default display is always available.
+ */
+@Suppress("DEPRECATION")
+internal fun initialDisplayRotation(context: Context): Int {
+    val wm = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+    return try {
+        wm?.defaultDisplay?.rotation ?: Surface.ROTATION_0
+    } catch (e: RuntimeException) {
+        Surface.ROTATION_0
+    }
+}
 
 class CameraSource(
     private val context: Context,
@@ -50,14 +64,7 @@ class CameraSource(
     private val bootToEpochOffsetS = (System.currentTimeMillis() / 1000.0) - (SystemClock.elapsedRealtimeNanos() / 1e9)
 
     fun start(surfaceProvider: Preview.SurfaceProvider? = null) {
-        val wm = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
-        @Suppress("DEPRECATION")
-        val initialRotation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            context.display?.rotation ?: Surface.ROTATION_0
-        } else {
-            wm?.defaultDisplay?.rotation ?: Surface.ROTATION_0
-        }
-        currentTargetRotation = initialRotation
+        currentTargetRotation = initialDisplayRotation(context)
 
         setupOrientationListener()
 
