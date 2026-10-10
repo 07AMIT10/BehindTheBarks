@@ -25,6 +25,7 @@ KIND_AUDIO = 0x02
 CLOSE_BAD_HELLO = 4400  # first message missing or not a valid hello
 CLOSE_REPLACED = 4408   # this phone went quiet and a new phone took over
 CLOSE_BUSY = 4409       # another phone is already streaming
+CLOSE_REVOKED = 4410    # the station/viewer was removed from its household (T2.4)
 
 MAX_DEVICE_LEN = 64
 

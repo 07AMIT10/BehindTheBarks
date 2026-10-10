@@ -22,6 +22,12 @@ and echoed back down as the treat downlink (idempotent on the phone: it must not
 received).
 
 server -> phone: {"type": "treat", "ts": ...} and {"type": "config", "data": {"rules": {...}}}.
+
+Households mode (web.auth.mode: households, proto 2) adds the station handshake: the hello carries
+`station_id`, the server replies {"type":"challenge","nonce":...,"server_time":...} and the phone must
+answer {"type":"auth","sig":"<b64 DER ECDSA P-256 signature>"} within 10 s. The signed message is
+b"btb-auth-v1|" + nonce_bytes + b"|" + station_id + b"|" + device. Failure or a revoked station closes
+the socket with 4401 (or 4410 when the owner revokes a live session).
 """
 
 from __future__ import annotations
@@ -38,6 +44,7 @@ from backend.contracts import AudioEvent, FrameEvent, RulesLabel
 from backend.web.ingest import CLOSE_BAD_HELLO, CLOSE_BUSY, CLOSE_REPLACED, FpsMeter, HelloError, MAX_DEVICE_LEN
 
 PROTO = 1
+PROTO_STATION = 2  # households mode: the hello carries a paired station_id and signs a challenge
 KIND_PREVIEW = 0x01
 
 EVENT_MODELS: dict[str, type] = {"frame": FrameEvent, "audio": AudioEvent, "rules": RulesLabel}
@@ -58,6 +65,7 @@ class RemoteHello:
     profile: str = "mobile"
     proto: int = PROTO
     token: str | None = None
+    station_id: str | None = None  # households mode (proto 2): paired in advance, no token needed
 
 
 def _num(msg: dict, key: str, lo: float, hi: float) -> float:
@@ -97,8 +105,11 @@ def parse_remote_hello(text: str | None) -> RemoteHello:
     if not isinstance(msg, dict) or msg.get("type") != "hello":
         raise HelloError('first message must be {"type": "hello", "proto": %d, ...}' % PROTO)
     proto = msg.get("proto", PROTO)
-    if isinstance(proto, bool) or not isinstance(proto, int) or proto != PROTO:
-        raise HelloError(f"hello.proto must be {PROTO}")
+    if isinstance(proto, bool) or not isinstance(proto, int) or proto not in (PROTO, PROTO_STATION):
+        raise HelloError(f"hello.proto must be {PROTO} or {PROTO_STATION}")
+    station_id = msg.get("station_id")
+    if station_id is not None and (not isinstance(station_id, str) or not 1 <= len(station_id) <= 64):
+        raise HelloError("hello.station_id must be a string of 1-64 characters")
     tok = msg.get("token")
     token_str = str(tok).strip() if tok is not None and isinstance(tok, str) else None
     return RemoteHello(
@@ -108,6 +119,7 @@ def parse_remote_hello(text: str | None) -> RemoteHello:
         profile=_name(msg, "profile", MAX_NAME_LEN, "mobile"),
         proto=proto,
         token=token_str,
+        station_id=station_id,
     )
 
 

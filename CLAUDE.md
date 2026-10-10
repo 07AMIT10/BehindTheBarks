@@ -220,9 +220,16 @@ are untouched; only the producer of the envelopes moves. (Plan:
   a half-open socket is counted in `pipeline_status.downlinks_dropped` and the queue drains, so one
   dead connection cannot silently swallow later treats and config pushes.
 - **/ingest-events close codes:** same as `/ingest` — `4400` bad hello, `4408` replaced by a newer
-  phone after `web.ingest.stale_s` of silence, `4409` another phone is already streaming. Close code
-  `1000` (the app's own Stop) **or a `bye` envelope** forgets the phone and idles the pipeline;
-  anything else leaves a disconnected card.
+  phone after `web.ingest.stale_s` of silence, `4409` another phone is already streaming, `4410` the
+  station was revoked by its owner. Close code `1000` (the app's own Stop) **or a `bye` envelope**
+  forgets the phone and idles the pipeline; anything else leaves a disconnected card.
+- **Station pairing v2** (`web.auth.mode: households`): the owner mints a one-time, 300 s code
+  (`POST /households/me/pairing`); the app registers its ECDSA P-256 public key with it
+  (`POST /pair`, unauthenticated — the code is the credential) and then sends a `proto: 2` hello with
+  its `station_id`. The server replies `{"type":"challenge","nonce":...,"server_time":...}` and the app
+  answers `{"type":"auth","sig":"<b64 DER ECDSA-SHA256>"}` over
+  `b"btb-auth-v1|" + nonce + b"|" + station_id + b"|" + device`. Only then comes `hello_ack`. In `pin`
+  mode the `proto: 1` hello and the shared-token check apply exactly as before.
 - **Stalling:** no FrameEvent or preview for `web.remote.stale_s` (2 s) → `pipeline.status().state`
   is `stalled`. There is no watchdog to inject "no dog" frames, so the Runtime's own no-dog path takes
   the label to `unknown` after `web.state.no_dog_unknown_s` and recovers by itself when events resume.

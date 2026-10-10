@@ -8,7 +8,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
+import secrets
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -25,17 +27,20 @@ from backend.demo.clips import load_demo_clips
 from backend.notify import build_notifier
 from backend.store import db as store_db
 from backend.store import repo as store_repo
-from backend.store.models import KIND_VIEWER, ROLE_OWNER, ROLE_VIEWER
+from backend.store.models import KIND_STATION, KIND_VIEWER, ROLE_OWNER, ROLE_VIEWER
+from backend.web.ingest import CLOSE_REVOKED
 from backend.web.auth import Ctx
 from backend.web.registry import LEGACY, HouseholdRegistry
 
 VIEWER_COOKIE = "btb_session"
+STATION_AUTH_PREFIX = b"btb-auth-v1|"  # the signed challenge message: nonce | station_id | device
 SESSION_MAX_AGE_S = 31_536_000  # a year: the recovery key, not a password reset, is the escape hatch
 HOUSEHOLD_CREATES_PER_HOUR = 5
 from backend.web.event_log import EventLog
 from backend.web.hub import Hub
 from backend.web.ingest import CLOSE_BAD_HELLO, CLOSE_BUSY, CLOSE_REPLACED, HelloError, parse_hello
-from backend.web.ingest_events import MAX_SKEW_S, RemoteSession, bind_pipeline, parse_remote_hello
+from backend.web.ingest_events import (MAX_SKEW_S, PROTO_STATION, RemoteSession, bind_pipeline,
+                                       parse_remote_hello)
 from backend.web.profile_store import ProfileStore, validate_profile
 from backend.web.runtime import Runtime
 from backend.web.settings import LLMSettings, load_config
@@ -149,6 +154,9 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         return False
 
     # -- households mode (T2.3): cookies, recovery keys, per-household runtimes -------------------
+    def rt_clock() -> float:
+        return float(getattr(getattr(app.state, "rt", None), "clock", time.time)())
+
     def _is_https(req: Request) -> bool:
         return req.url.scheme == "https" or req.headers.get("x-forwarded-proto", "").startswith("https")
 
@@ -174,13 +182,15 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             raise HTTPException(status_code=401, detail="no session: create a household or use a recovery key")
         with app.state.db_session() as s:
             viewer = store_repo.viewer_by_token(s, token)
-            if viewer is None or viewer is None and viewer is None:
+            if viewer is None:
                 raise HTTPException(status_code=401, detail="session revoked or expired")
             lr = await app.state.registry.get(viewer.household_id)
             store_repo.touch_viewer(s, viewer)
             s.commit()
             return Ctx(household_id=viewer.household_id, role=viewer.role, viewer_id=viewer.id,
-                       runtime=lr.runtime, hub=lr.hub, pipeline=lr.pipeline)
+                       runtime=lr.runtime, hub=lr.hub, pipeline=lr.pipeline, request=req)
+
+
 
     async def auth_ctx(req: Request) -> Ctx:
         """The per-request context (T2.2/T2.3): pin mode keeps today's auth and serves the legacy
@@ -191,7 +201,207 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         verify_request_auth(req)
         lr = app.state.registry.peek(LEGACY)
         return Ctx(household_id=LEGACY, role="owner", viewer_id=None,
-                   runtime=lr.runtime, hub=lr.hub, pipeline=lr.pipeline)
+                   runtime=lr.runtime, hub=lr.hub, pipeline=lr.pipeline, request=req)
+
+    class _BadPair(Exception):
+        """An otherwise-invalid /pair attempt: counted, then answered with the same 400 body."""
+
+    # -- station pairing (T2.4): a one-time code buys a station, a signature buys the socket -------
+    def _pair_qr(req: Request, code: str) -> dict:
+        base = str(req.base_url).rstrip("/")
+        ws = base.replace("http://", "ws://").replace("https://", "wss://")
+        return {"v": 2, "url": f"{ws}/ingest-events", "pair_url": f"{base}/pair", "code": code}
+
+    def _load_pubkey(spki_b64: str):
+        """base64 -> an ECDSA P-256 public key, or None for anything else (no oracle beyond 400)."""
+        import base64 as _b64
+
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        try:
+            der = _b64.b64decode(spki_b64, validate=True)
+        except Exception:
+            return None
+        if len(der) > 200:
+            return None
+        try:
+            key = serialization.load_der_public_key(der)
+        except Exception:
+            return None
+        return key if isinstance(key, ec.EllipticCurvePublicKey) and key.curve.name == "secp256r1" else None
+
+    def _pair_attempt(req: Request) -> None:
+        """10/min per IP and 100/hour globally: every /pair attempt counts, valid or not."""
+        now = time.time()
+        ip = req.client.host if req.client else "unknown"
+        recent = [t for t in pair_failures.get(ip, []) if now - t < 60]
+        recent.append(now)
+        pair_failures[ip] = recent
+        hourly = [t for t in pair_failures_global if now - t < 3600]
+        hourly.append(now)
+        pair_failures_global[:] = hourly
+        if len(recent) > 10 or len(hourly) > 100:
+            raise HTTPException(status_code=429, detail="too many pairing attempts; try again later")
+
+    @app.post("/households/me/pairing")
+    async def create_pairing(ctx: Ctx = Depends(auth_ctx), body: dict | None = None) -> dict:
+        """Owner-only: mint a one-time code for a station (or, T2.6, a viewer) and the QR payload."""
+        if not households_mode:
+            _pin_only_404()
+        if ctx.role != ROLE_OWNER:
+            raise HTTPException(status_code=403, detail="only the owner can pair devices")
+        kind = str((body or {}).get("kind") or KIND_STATION)
+        if kind not in (KIND_STATION, KIND_VIEWER):
+            raise HTTPException(status_code=400, detail="kind must be 'station' or 'viewer'")
+        with app.state.db_session() as s:
+            code = store_repo.create_pairing_code(s, household_id=ctx.household_id, kind=kind,
+                                                  created_by_viewer=ctx.viewer_id,
+                                                  mode_ceiling=(body or {}).get("mode_ceiling"),
+                                                  viewer_label=(body or {}).get("label"))
+            s.commit()
+        return {"code": code, "expires_in": int(store_repo.PAIRING_TTL_S), "qr": _pair_qr(ctx.request, code)}
+
+    @app.post("/pair")
+    async def pair(req: Request, body: dict | None = None) -> dict:
+        """Unauthenticated on purpose: the one-time code is the credential. Always the same 400 on
+        failure, so a caller cannot tell a used code from a wrong one."""
+        if not households_mode:
+            _pin_only_404()
+        _pair_attempt(req)
+        payload = body or {}
+        code = str(payload.get("code") or "").strip()
+        spki_b64 = str(payload.get("pubkey_spki_b64") or "")
+        device_name = str(payload.get("device_name") or "").strip()
+        key = _load_pubkey(spki_b64)
+        def _bad_code():
+            return JSONResponse(status_code=400, content={"error": "invalid_or_expired_code"})
+
+        try:
+            if not code or key is None or not 1 <= len(device_name) <= 64:
+                raise _BadPair()
+            from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+            with app.state.db_session() as s:
+                consumed = store_repo.consume_pairing_code(s, code, kind=KIND_STATION)
+                if consumed is None:
+                    raise _BadPair()
+                station = store_repo.create_station(s, household_id=consumed.household_id, name=device_name,
+                                                   pubkey_spki=key.public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo))
+                s.commit()
+                return {"station_id": station.id, "household_id": station.household_id,
+                        "server_time": rt_clock()}
+        except _BadPair:
+            return _bad_code()
+
+    @app.delete("/stations/{station_id}")
+    async def delete_station(ctx: Ctx = Depends(auth_ctx), station_id: str = "") -> dict:
+        """Owner unpairs a station: revoked in the DB and its live socket closed with 4410."""
+        if not households_mode:
+            _pin_only_404()
+        if ctx.role != ROLE_OWNER:
+            raise HTTPException(status_code=403, detail="only the owner can unpair")
+        with app.state.db_session() as s:
+            station = store_repo.station_by_id(s, station_id)
+            if station is None or station.household_id != ctx.household_id:
+                raise HTTPException(status_code=404, detail="unknown station")
+            store_repo.revoke_station(s, station_id)
+            s.commit()
+        lr = app.state.registry.peek(ctx.household_id)
+        session = lr.runtime.phone if lr is not None else None
+        if session is not None and getattr(getattr(session, "hello", None), "station_id", None) == station_id:
+            closer = getattr(session, "closer", None)
+            code_holder = getattr(session, "close_code", None)  # the shared dict the closer reads
+            if isinstance(code_holder, dict):
+                code_holder["code"] = CLOSE_REVOKED
+            if closer is not None:
+                await closer()
+                lr.runtime.phone_close(session, CLOSE_REVOKED)
+        return {"ok": True}
+
+    async def _ingest_station_households(sock: WebSocket, hello) -> None:
+        """The households-mode handshake: paired station_id, then one signed challenge."""
+        import json
+
+        if hello.proto != PROTO_STATION or not hello.station_id:
+            await sock.close(code=4401, reason="proto 2 with a paired station_id is required")
+            return
+        with app.state.db_session() as s:
+            station = store_repo.station_by_id(s, hello.station_id)
+        if station is None or station.revoked_at is not None:
+            await sock.close(code=4401, reason="unknown or revoked station")
+            return
+
+        from cryptography.hazmat.primitives import hashes as _hashes
+        from cryptography.hazmat.primitives import serialization as _ser
+        from cryptography.hazmat.primitives.asymmetric import ec as _ec
+
+        nonce = secrets.token_bytes(32)
+        await sock.send_json({"type": "challenge", "nonce": base64.b64encode(nonce).decode(),
+                              "server_time": rt_clock()})
+        try:
+            reply = json.loads(await asyncio.wait_for(sock.receive_text(), timeout=10.0))
+        except (asyncio.TimeoutError, TypeError, ValueError):
+            await sock.close(code=4401, reason="auth timeout")
+            return
+        sig_b64 = str(reply.get("sig") or "") if isinstance(reply, dict) else ""
+        message = STATION_AUTH_PREFIX + nonce + b"|" + hello.station_id.encode() + b"|" + hello.device.encode()
+        try:
+            key = _ser.load_der_public_key(station.pubkey_spki)
+            key.verify(base64.b64decode(sig_b64, validate=True), message, _ec.ECDSA(_hashes.SHA256()))
+        except Exception:
+            await sock.close(code=4401, reason="bad signature")
+            return
+
+        lr = await app.state.registry.get(station.household_id)
+        rt, hub = lr.runtime, lr.hub
+        with app.state.db_session() as s:
+            store_repo.touch_station(s, station)
+
+        async def send_downlink(msg: dict) -> None:
+            await sock.send_json(msg)
+
+        close_code = {"code": CLOSE_REPLACED}
+
+        async def closer() -> None:
+            try:
+                await sock.close(code=close_code["code"], reason="station removed")
+            except RuntimeError:
+                pass
+
+        rem = cfg["web"].get("remote") or {}
+        session = RemoteSession(hello, lr.pipeline, rt, clock=rt.clock,
+                                max_message_bytes=web["ingest"]["max_message_bytes"],
+                                fps_window_s=web["ingest"]["fps_window_s"],
+                                offset_samples=int(rem.get("clock_samples", 5)),
+                                ping_every_s=float(rem.get("ping_every_s", 30.0)),
+                                max_skew_s=float(rem.get("max_skew_s", MAX_SKEW_S)))
+        session.closer, session.close_code = closer, close_code  # the dict, not a snapshot
+        session = rt.phone_open(hello, closer=closer, session=session)
+        if session is None:
+            await sock.close(code=CLOSE_BUSY, reason="Another phone is already streaming")
+            return
+        bind_pipeline(lr.pipeline, session, send_downlink)
+        code: int | None = None
+        try:
+            await sock.send_json({"type": "hello_ack", "server_time": session.server_time_at_hello})
+            while True:
+                msg = await sock.receive()
+                if msg["type"] == "websocket.disconnect":
+                    code = msg.get("code")
+                    break
+                data = msg.get("bytes")
+                if data is not None:
+                    session.handle(data)
+                elif msg.get("text") is not None and session.handle_text(msg["text"]) == "ping":
+                    await sock.send_json({"type": "pong", "server_time": rt.clock()})
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            detach = getattr(lr.pipeline, "detach", None)
+            if detach is not None:
+                detach(session)
+            rt.phone_close(session, code)
 
     def _pin_only_404():
         raise HTTPException(status_code=404, detail="households auth mode is disabled (web.auth.mode: pin)")
@@ -317,6 +527,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
 
     rate_limits: dict[str, float] = {}
     household_creates: dict[str, list[float]] = {}  # per-IP hourly buckets (households mode)
+    pair_failures: dict[str, list[float]] = {}  # per-minute /pair attempts
+    pair_failures_global: list[float] = []  # per-hour /pair attempts
 
     def check_rate_limit(action: str, min_interval_s: float, hid: str = LEGACY) -> None:
         if not rate_limits_enabled:
@@ -601,6 +813,18 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         """Phone that runs the perception itself: JSON hello, then JSON envelopes plus binary
         0x01 preview JPEGs (backend/web/ingest_events.py). Same close codes and one-phone-at-a-time
         rules as /ingest."""
+        if households_mode:
+            await sock.accept()  # receive() before accept() only yields the connect event
+            first0 = await sock.receive()
+            if first0["type"] == "websocket.disconnect":
+                return
+            try:
+                hello0 = parse_remote_hello(first0.get("text"))
+            except HelloError as err:
+                await sock.close(code=CLOSE_BAD_HELLO, reason=str(err))
+                return
+            await _ingest_station_households(sock, hello0)
+            return
         await sock.accept()
         rt = app.state.rt
         if rt.cfg["web"]["pipeline"] != "remote":
