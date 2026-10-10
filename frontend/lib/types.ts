@@ -62,6 +62,7 @@ export type Status = {
   privacy_mode?: boolean;
   station_cap?: ViewMode;
   effective_mode?: ViewMode;
+  mode_info?: { household_mode: ViewMode; station_cap: ViewMode; effective: ViewMode };
   max_idle_s?: number; // T3.4: video inactivity timeout in seconds
   viewers?: { video: number; audio: number }; // T3.4: viewer count breakdown
 };

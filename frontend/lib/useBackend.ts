@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import type { AuthStatus } from "./household";
 import { backendBase } from "./config";
 import { initialState, reduce } from "./store";
-import type { Envelope, Span, Status } from "./types";
+import type { Envelope, Span, Status, ViewMode } from "./types";
 
 const STATUS_POLL_MS = 2000;
 const MAX_BACKOFF_MS = 5000;
@@ -32,7 +32,7 @@ export function useBackend() {
   const [token, setToken] = useState<string | null>(getStoredToken());
   const [authRequired, setAuthRequired] = useState(false);
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
-  const [me, setMe] = useState<{ household_id: string; role: string } | null>(null);
+  const [me, setMe] = useState<{ household_id: string; role: string; mode_ceiling?: ViewMode } | null>(null);
   const [authenticated, setAuthenticated] = useState(true);
   const [privacyOverride, setPrivacyOverride] = useState<boolean | null>(null);
 
@@ -40,6 +40,23 @@ export function useBackend() {
     state.status?.pipeline_status?.privacy_mode ?? state.status?.privacy_mode ?? false
   );
   const privacyMode = privacyOverride !== null ? privacyOverride : statusPrivacy;
+
+  const effectiveMode: ViewMode =
+    state.status?.mode_info?.effective ??
+    state.status?.effective_mode ??
+    state.status?.pipeline_status?.effective_mode ??
+    (privacyMode ? "blackout" : "full");
+
+  const stationCap: ViewMode =
+    state.status?.mode_info?.station_cap ??
+    state.status?.station_cap ??
+    state.status?.pipeline_status?.station_cap ??
+    "full";
+
+  const householdMode: ViewMode =
+    state.status?.mode_info?.household_mode ??
+    state.status?.pipeline_status?.policy_mode ??
+    "full";
 
   // Check auth requirement from server. In pin mode the localStorage token decides (Bearer, and the
   // localStorage token is still written by AuthModal). In households mode the HttpOnly cookie decides:
@@ -217,6 +234,42 @@ export function useBackend() {
       headers,
       body: JSON.stringify({ mode }),
     }).catch(() => undefined);
+  }, [base, token]);
+
+  const setViewMode = useCallback(
+    async (mode: ViewMode): Promise<{ status: "applied" | "pending"; mode: ViewMode } | undefined> => {
+      const tok = token ?? getStoredToken();
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (tok) headers["Authorization"] = `Bearer ${tok}`;
+      const url = `${base.http}/mode${tok ? `?token=${encodeURIComponent(tok)}` : ""}`;
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ mode }),
+        });
+        if (res.ok) {
+          return await res.json();
+        }
+      } catch {
+        // ignore
+      }
+      return undefined;
+    },
+    [base, token]
+  );
+
+  const peek = useCallback(async (): Promise<boolean> => {
+    const tok = token ?? getStoredToken();
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (tok) headers["Authorization"] = `Bearer ${tok}`;
+    const url = `${base.http}/peek${tok ? `?token=${encodeURIComponent(tok)}` : ""}`;
+    try {
+      const res = await fetch(url, { method: "POST", headers });
+      return res.ok;
+    } catch {
+      return false;
+    }
   }, [base, token]);
 
   const authMode = authStatus?.mode ?? "pin";
@@ -397,6 +450,11 @@ export function useBackend() {
     logout,
     privacyMode,
     setPrivacy,
+    effectiveMode,
+    stationCap,
+    householdMode,
+    setViewMode,
+    peek,
     saveProfile,
     authStatus,
     authMode,

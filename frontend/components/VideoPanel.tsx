@@ -5,6 +5,8 @@ import type { FrameEvent } from "@/lib/contracts";
 import { durationLabel, hhmmss } from "@/lib/format";
 import { drawOverlay, fitContain, type Layers } from "@/lib/overlay";
 import { StreamWatchdog } from "@/lib/watchdog";
+import type { ViewMode } from "@/lib/types";
+import { ModeSheet } from "./ModeSheet";
 
 type Props = {
   http: string;
@@ -19,6 +21,13 @@ type Props = {
   onTogglePrivacy?: () => void;
   token?: string | null;
   maxIdleSec?: number;
+  effectiveMode?: ViewMode;
+  stationCap?: ViewMode;
+  householdMode?: ViewMode;
+  modeCeiling?: ViewMode;
+  isOwner?: boolean;
+  onSetMode?: (mode: ViewMode) => Promise<{ status: "applied" | "pending"; mode: ViewMode } | undefined>;
+  onPeek?: () => Promise<boolean>;
 };
 
 const chip = "flex h-[30px] items-center rounded-lg px-3 text-[12px]";
@@ -37,11 +46,19 @@ export default function VideoPanel({
   onTogglePrivacy,
   token,
   maxIdleSec = 180,
+  effectiveMode,
+  stationCap = "full",
+  householdMode = "full",
+  modeCeiling = "full",
+  isOwner = true,
+  onSetMode,
+  onPeek,
 }: Props) {
   const boxRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [layers, setLayers] = useState<Layers>({ box: true, skeleton: true, face: true });
+  const [modeSheetOpen, setModeSheetOpen] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   const [videoOk, setVideoOk] = useState(false);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -50,7 +67,8 @@ export default function VideoPanel({
   const watchdogRef = useRef<StreamWatchdog | null>(null);
 
   useEffect(() => {
-    if (idle || paused || privacyMode) {
+    const isMuted = idle || paused || privacyMode || effectiveMode === "blackout" || effectiveMode === "privacy";
+    if (isMuted) {
       watchdogRef.current?.stop();
       return;
     }
@@ -84,7 +102,7 @@ export default function VideoPanel({
       window.removeEventListener("scroll", onActivity);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [idle, paused, privacyMode, maxIdleSec]);
+  }, [idle, paused, privacyMode, effectiveMode, maxIdleSec]);
 
   const handleResumeWatchdog = useCallback(() => {
     setWatchdogPaused(false);
@@ -287,21 +305,50 @@ export default function VideoPanel({
         <div className="pointer-events-none absolute inset-0 z-20 bg-white/40 transition-opacity duration-300" />
       )}
 
-      {privacyMode && (
+      {effectiveMode === "limited" && !watchdogPaused && !idle && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 rounded-full border border-amber-500/30 bg-neutral-900/90 px-3.5 py-1 text-xs text-amber-300 backdrop-blur shadow-lg">
+          <span>🖼️ Limited (Blurred stills)</span>
+          {onPeek && (
+            <button
+              type="button"
+              onClick={onPeek}
+              className="rounded-full bg-amber-500/20 px-2 py-0.5 font-medium text-amber-200 hover:bg-amber-500/30 transition-colors active:scale-95"
+            >
+              Peek 15s
+            </button>
+          )}
+        </div>
+      )}
+
+      {(effectiveMode === "blackout" || (privacyMode && !effectiveMode)) && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 p-6 text-center text-[#D6D8DB]" style={{ background: "rgba(18, 20, 26, 0.9)", backdropFilter: "blur(12px)" }}>
           <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-red-500/10 text-red-400 ring-1 ring-red-500/30">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           </div>
-          <div className="text-lg font-bold text-white">Family Privacy Active</div>
+          <div className="text-lg font-bold text-white">Blackout Active</div>
           <p className="max-w-xs text-xs text-[#9CA3AF]">
-            Live camera preview & microphone are muted. Tap Privacy below to resume monitoring.
+            Live camera preview & microphone are muted at the station. Tap below to adjust.
           </p>
-          {onTogglePrivacy && (
-            <button type="button" onClick={onTogglePrivacy}
-              className="mt-1 rounded-lg bg-red-600/80 px-4 py-1.5 text-xs font-semibold text-white shadow-lg hover:bg-red-500 transition-colors active:scale-95">
-              Resume Monitoring
-            </button>
-          )}
+          <button type="button" onClick={() => (onSetMode ? setModeSheetOpen(true) : onTogglePrivacy?.())}
+            className="mt-1 rounded-lg bg-red-600/80 px-4 py-1.5 text-xs font-semibold text-white shadow-lg hover:bg-red-500 transition-colors active:scale-95">
+            {onSetMode ? "Change Mode" : "Resume Monitoring"}
+          </button>
+        </div>
+      )}
+
+      {effectiveMode === "privacy" && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 p-6 text-center text-[#D6D8DB]" style={{ background: "rgba(18, 20, 26, 0.9)", backdropFilter: "blur(12px)" }}>
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-400 ring-1 ring-amber-500/30">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24M1 1l22 22"/></svg>
+          </div>
+          <div className="text-lg font-bold text-white">Privacy Mode Active</div>
+          <p className="max-w-xs text-xs text-[#9CA3AF]">
+            Telemetry, barks, and behavior analysis active. Optical room video is disabled.
+          </p>
+          <button type="button" onClick={() => (onSetMode ? setModeSheetOpen(true) : onTogglePrivacy?.())}
+            className="mt-1 rounded-lg bg-amber-600/80 px-4 py-1.5 text-xs font-semibold text-white shadow-lg hover:bg-amber-500 transition-colors active:scale-95">
+            Change Mode
+          </button>
         </div>
       )}
 
@@ -396,7 +443,26 @@ export default function VideoPanel({
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.0 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.0 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
               <span className="hidden sm:inline">Flip</span>
             </button>
-            {onTogglePrivacy && (
+            {onSetMode ? (
+              <button
+                type="button"
+                onClick={() => setModeSheetOpen(true)}
+                title={`Viewing mode: ${effectiveMode ?? "full"}. Click to change.`}
+                className="flex h-[28px] sm:h-[30px] items-center gap-1.5 rounded-sm px-2 sm:px-2.5 text-[11px] sm:text-[12px] font-semibold transition-all active:scale-95"
+                style={
+                  effectiveMode === "blackout"
+                    ? { background: "rgba(239, 68, 68, 0.25)", color: "#FCA5A5", border: "1px solid rgba(239, 68, 68, 0.5)" }
+                    : effectiveMode === "privacy"
+                    ? { background: "rgba(245, 158, 11, 0.25)", color: "#FCD34D", border: "1px solid rgba(245, 158, 11, 0.5)" }
+                    : effectiveMode === "limited"
+                    ? { background: "rgba(245, 158, 11, 0.15)", color: "#FDE68A" }
+                    : { color: "#A0A5AD" }
+                }
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                <span className="capitalize">{effectiveMode ?? "Mode"}</span>
+              </button>
+            ) : onTogglePrivacy ? (
               <button type="button" aria-pressed={privacyMode} onClick={onTogglePrivacy}
                 title={privacyMode ? "Disable Privacy Mode (Resume monitoring)" : "Enable Privacy Mode (Mute camera & mic)"}
                 className="flex h-[28px] sm:h-[30px] items-center gap-1 rounded-sm px-2 sm:px-2.5 text-[11px] sm:text-[12px] font-semibold transition-all active:scale-95"
@@ -404,7 +470,7 @@ export default function VideoPanel({
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                 <span>{privacyMode ? "Privacy ON" : "Privacy"}</span>
               </button>
-            )}
+            ) : null}
           </div>
 
           <div role="group" aria-label="Overlay layers" className="hidden gap-0.5 rounded-md p-1 sm:flex" style={scrim}>
@@ -463,14 +529,33 @@ export default function VideoPanel({
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
                 Rotate{rotation !== 0 ? ` ${rotation}°` : ""}
               </button>
-              {onTogglePrivacy && (
+              {onSetMode ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setControlsOpen(false);
+                    setModeSheetOpen(true);
+                  }}
+                  className="flex h-11 items-center justify-center gap-2 rounded-xl px-3 text-[14px] font-semibold ring-1 active:scale-95"
+                  style={
+                    effectiveMode === "blackout"
+                      ? { background: "rgba(239, 68, 68, 0.25)", color: "#FCA5A5", borderColor: "rgba(239, 68, 68, 0.5)" }
+                      : effectiveMode === "privacy"
+                      ? { background: "rgba(245, 158, 11, 0.25)", color: "#FCD34D", borderColor: "rgba(245, 158, 11, 0.5)" }
+                      : { color: "#D6D8DB" }
+                  }
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                  <span className="capitalize">Mode: {effectiveMode ?? "full"}</span>
+                </button>
+              ) : onTogglePrivacy ? (
                 <button type="button" aria-pressed={privacyMode} onClick={onTogglePrivacy}
                   className="flex h-11 items-center justify-center gap-2 rounded-xl px-3 text-[14px] font-semibold ring-1 active:scale-95"
                   style={privacyMode ? { background: "rgba(239, 68, 68, 0.25)", color: "#FCA5A5", borderColor: "rgba(239, 68, 68, 0.5)" } : { color: "#D6D8DB" }}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                   {privacyMode ? "Privacy ON" : "Privacy"}
                 </button>
-              )}
+              ) : null}
             </div>
             <div className="mt-3 flex gap-2">
               {(["box", "skeleton", "face"] as const).map((k) => (
@@ -483,6 +568,20 @@ export default function VideoPanel({
             </div>
           </div>
         </div>
+      )}
+
+      {onSetMode && (
+        <ModeSheet
+          isOpen={modeSheetOpen}
+          onClose={() => setModeSheetOpen(false)}
+          effectiveMode={effectiveMode ?? "full"}
+          stationCap={stationCap}
+          householdMode={householdMode}
+          modeCeiling={modeCeiling}
+          isOwner={isOwner}
+          onSetMode={onSetMode}
+          onPeek={onPeek}
+        />
       )}
     </section>
   );

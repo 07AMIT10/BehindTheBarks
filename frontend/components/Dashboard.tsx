@@ -240,6 +240,13 @@ export default function Dashboard() {
                 onTogglePrivacy={() => void setPrivacy()}
                 token={token}
                 maxIdleSec={state.status?.max_idle_s}
+                effectiveMode={backend.effectiveMode}
+                stationCap={backend.stationCap}
+                householdMode={backend.householdMode}
+                modeCeiling={backend.me?.mode_ceiling}
+                isOwner={!backend.me || backend.me.role === "owner"}
+                onSetMode={backend.setViewMode}
+                onPeek={backend.peek}
               />
             </div>
             <div className="[grid-area:card]">
