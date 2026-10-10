@@ -210,7 +210,12 @@ are untouched; only the producer of the envelopes moves. (Plan:
      * server → phone `{"type": "mode_request", "data": {"mode", "from": "owner"}}` when the owner asks
        for **more** exposure than the station allows. Raising always needs an on-device decision
        (T3.2); lowering applies immediately from anywhere.
-  5. binary `0x01` + JPEG preview (≤ 2 fps, ~320 px long side, quality ~0.6). Stamped at server receipt
+  5. binary `0x01` + JPEG preview. Its rate and size are policy-driven (`backend/web/modes.py`,
+     `tracker.py`): a viewer focusing a station gets `FOCUS_PREVIEW` (3 fps, 640 px long side, quality 70),
+     a grid tile gets `GRID_PREVIEW` (0.5 fps, 240 px, quality 50), and with no viewer the phone sends
+     nothing (`viewers.video == 0`) and the stored default `DEFAULT_PREVIEW` (2 fps, 320 px, quality 60)
+     applies. The phone's `PreviewLadder` only lowers these under thermal pressure or upload backpressure
+     (5 fps/640 px/q75 at the top rung down to 1 fps/320 px/q60), never raises them. Stamped at server receipt
      like `/ingest`; it feeds `pipeline.latest_frame_jpeg()`, not the rules.
 - **Clocks:** `data.ts` is the phone's clock and every other timer (`no_dog_unknown_s`, `llm_stale_s`,
   cooldowns) compares against the server's. The server rebases `ts` by
