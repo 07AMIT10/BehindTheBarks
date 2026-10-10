@@ -82,7 +82,7 @@ class HouseholdRegistry:
         cfg = copy.deepcopy(self.cfg)
         log_dir = str(Path(str(cfg["web"]["log_dir"])) / hid)
         cfg["web"]["log_dir"] = log_dir
-        profile, log_enabled = self._household_settings(hid, cfg)
+        profile, log_enabled, llm_enabled = self._household_settings(hid, cfg)
         cfg["web"]["profile"] = profile
         hub = Hub(client_queue=cfg["web"]["ws"]["client_queue"], history=cfg["web"]["ws"]["history"],
                   frame_fps=cfg["web"]["ws"]["frame_fps"], clock=self.clock,
@@ -93,30 +93,40 @@ class HouseholdRegistry:
 
             pipeline = build_pipeline(cfg)
         # Tester households must never inherit the operator's LLM keys or Telegram/WhatsApp tokens
-        # (T2.9): a disabled interpreter and a dashboard-only notifier unless the caller injected
-        # factories on purpose (the legacy household's own objects are injected by create_app).
-        interpreter = self.make_interpreter(cfg) if self.make_interpreter else DisabledInterpreter()
+        # (T2.9): a disabled interpreter and a dashboard-only notifier unless the owner opted in
+        # (or the caller injected factories on purpose for the legacy household).
+        if self.make_interpreter is not None:
+            interpreter = self.make_interpreter(cfg)
+        elif llm_enabled and cfg["web"].get("llm", {}).get("enabled"):
+            from backend.fusion.llm_interpreter import LLMInterpreter
+            from backend.web.settings import LLMSettings
+
+            interpreter = LLMInterpreter(LLMSettings.from_config(cfg))
+        else:
+            interpreter = DisabledInterpreter()
         notifier = self.make_notifier(cfg) if self.make_notifier else DashboardOnlyNotifier()
         rt = Runtime(cfg, pipeline, interpreter, notifier, hub, clock=self.clock)
         await rt.start()
         return HouseholdRuntime(household_id=hid, runtime=rt, hub=hub, pipeline=pipeline,
                                 used_at=self.clock())
 
-    def _household_settings(self, hid: str, cfg: dict) -> tuple[dict, bool]:
-        """The profile and log flag from the DB row when a sessionmaker is wired (T2.3); else the cfg."""
+    def _household_settings(self, hid: str, cfg: dict) -> tuple[dict, bool, bool]:
+        """The profile, log flag and LLM opt-in from the DB row (T2.9); else the cfg."""
         if self.sessionmaker is None or hid == LEGACY:
-            return dict(cfg["web"].get("profile") or {}), bool(cfg["web"].get("log_enabled", True))
+            return (dict(cfg["web"].get("profile") or {}), bool(cfg["web"].get("log_enabled", True)),
+                    bool(cfg["web"].get("llm", {}).get("enabled", False)))
         from backend.store import repo  # T2.3 owns the DB household; absent in the refactor-only tests
 
         try:
             with self.sessionmaker() as s:
                 h = repo.get_household(s, hid)
                 if h is None:
-                    return dict(cfg["web"].get("profile") or {}), False
-                return {"dog_name": h.dog_name, "location": h.location,
-                        "zone_label": cfg["web"]["profile"].get("zone_label", "feeding area")}, bool(h.log_enabled)
+                    return dict(cfg["web"].get("profile") or {}), False, False
+                return ({"dog_name": h.dog_name, "location": h.location,
+                         "zone_label": cfg["web"]["profile"].get("zone_label", "feeding area")},
+                        bool(h.log_enabled), bool(h.llm_enabled))
         except Exception:  # noqa: BLE001 - a missing table in pin mode must not break get()
-            return dict(cfg["web"].get("profile") or {}), False
+            return dict(cfg["web"].get("profile") or {}), False, False
 
     # -- lifecycle ------------------------------------------------------------------------------
     async def evict_idle(self, now: float | None = None) -> list[str]:

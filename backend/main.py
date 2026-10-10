@@ -497,7 +497,10 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             owner, token = store_repo.create_viewer(s, household_id=household.id, role=ROLE_OWNER, label="owner")
             s.commit()
             household_id = household.id
-        resp = JSONResponse({"household_id": household_id, "recovery_key": recovery_key})
+        resp = JSONResponse({"household_id": household_id, "recovery_key": recovery_key,
+                             # T2.9: a new household starts private; the owner opts in explicitly.
+                             "llm_enabled": bool(household.llm_enabled),
+                             "log_enabled": bool(household.log_enabled)})
         _set_session_cookie(resp, token, req)
         return resp
 
@@ -567,6 +570,54 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         ctx.runtime.cfg["web"]["profile"] = profile
         ctx.hub.publish("status", {"profile": profile})
         return profile
+
+    @app.get("/households/me/settings")
+    async def get_household_settings(ctx: Ctx = Depends(auth_ctx)) -> dict:
+        """A tester household's opt-in flags (T2.9). Defaults are private; the owner opts in."""
+        if not households_mode:
+            _pin_only_404()
+        if ctx.role != ROLE_OWNER:
+            raise HTTPException(status_code=403, detail="only the owner can change household settings")
+        with app.state.db_session() as s:
+            household = store_repo.get_household(s, ctx.household_id)
+            if household is None:
+                raise HTTPException(status_code=404, detail="unknown household")
+            return {"llm_enabled": bool(household.llm_enabled),
+                    "log_enabled": bool(household.log_enabled)}
+
+    @app.patch("/households/me/settings")
+    async def patch_household_settings(ctx: Ctx = Depends(auth_ctx), body: dict | None = None) -> dict:
+        """Owner-only opt-in for the operator's LLM and for on-disk event logs (T2.9).
+
+        The flags are per household and default to off, so a tester's frames never reach the
+        operator's LLM keys or Telegram/WhatsApp tokens unless that tester asked for it.
+        """
+        if not households_mode:
+            _pin_only_404()
+        if ctx.role != ROLE_OWNER:
+            raise HTTPException(status_code=403, detail="only the owner can change household settings")
+        payload = body or {}
+        llm_enabled = payload.get("llm_enabled")
+        log_enabled = payload.get("log_enabled")
+        if llm_enabled is not None and not isinstance(llm_enabled, bool):
+            raise HTTPException(status_code=400, detail="llm_enabled must be a boolean")
+        if log_enabled is not None and not isinstance(log_enabled, bool):
+            raise HTTPException(status_code=400, detail="log_enabled must be a boolean")
+        with app.state.db_session() as s:
+            household = store_repo.update_household_settings(
+                s, ctx.household_id,
+                llm_enabled=llm_enabled if llm_enabled is not None else None,
+                log_enabled=log_enabled if log_enabled is not None else None)
+            if household is None:
+                raise HTTPException(status_code=404, detail="unknown household")
+            s.commit()
+            flags = {"llm_enabled": bool(household.llm_enabled),
+                     "log_enabled": bool(household.log_enabled)}
+        # The running runtime was built with the old flags; drop it so the next request rebuilds
+        # the interpreter/notifier from the household's row.
+        await app.state.registry.forget(ctx.household_id)
+        ctx.hub.publish("status", {"settings": flags})
+        return flags
 
     @app.delete("/households/me")
     async def delete_household_endpoint(ctx: Ctx = Depends(auth_ctx), body: dict | None = None) -> dict:

@@ -284,6 +284,26 @@ export function useBackend() {
                                    viewers: { id: string; label: string; role: string; mode_ceiling: string; last_seen: number | null; revoked: boolean }[] }>;
   }, [base, token]);
 
+  const fetchSettings = useCallback(async () => {
+    const tok = token ?? getStoredToken();
+    const headers: Record<string, string> = {};
+    if (tok) headers["Authorization"] = `Bearer ${tok}`;
+    const res = await fetch(`${base.http}/households/me/settings`, { credentials: "include", headers });
+    if (!res.ok) throw new Error(`settings: HTTP ${res.status}`);
+    return res.json() as Promise<{ llm_enabled: boolean; log_enabled: boolean }>;
+  }, [base, token]);
+
+  const saveSettings = useCallback(async (next: { llm_enabled: boolean; log_enabled: boolean }) => {
+    const tok = token ?? getStoredToken();
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (tok) headers["Authorization"] = `Bearer ${tok}`;
+    const res = await fetch(`${base.http}/households/me/settings`, {
+      method: "PATCH", credentials: "include", headers, body: JSON.stringify(next),
+    });
+    if (!res.ok) throw new Error(`save settings: HTTP ${res.status}`);
+    return res.json() as Promise<{ llm_enabled: boolean; log_enabled: boolean }>;
+  }, [base, token]);
+
   const revokeViewer = useCallback(async (viewerId: string) => {
     const tok = token ?? getStoredToken();
     const headers: Record<string, string> = {};
@@ -388,6 +408,8 @@ export function useBackend() {
     createPairing,
     joinHousehold,
     fetchMembers,
+    fetchSettings,
+    saveSettings,
     revokeViewer,
     revokeStation,
   };

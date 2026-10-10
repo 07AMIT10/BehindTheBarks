@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 
+import { toggleSetting } from "../lib/household";
+
 export type Member = {
   stations: { id: string; name: string; last_seen: number | null; revoked: boolean }[];
   viewers: { id: string; label: string; role: string; mode_ceiling: string; last_seen: number | null; revoked: boolean }[];
@@ -14,18 +16,38 @@ type Props = {
   fetchMembers: () => Promise<Member>;
   revokeViewer: (id: string) => Promise<void>;
   revokeStation: (id: string) => Promise<void>;
+  fetchSettings?: () => Promise<Settings>;
+  saveSettings?: (next: Settings) => Promise<unknown>;
 };
 
+/** T2.9: a household's opt-in flags. Both default to off, so nothing leaves the host by surprise. */
+export type Settings = { llm_enabled: boolean; log_enabled: boolean };
+
+
 /** Who can see this household (T2.6): stations and viewers, with owner-only revoke. */
-export default function MembersModal({ isOpen, onClose, isOwner, fetchMembers, revokeViewer, revokeStation }: Props) {
+export default function MembersModal({ isOpen, onClose, isOwner, fetchMembers, revokeViewer, revokeStation, fetchSettings, saveSettings }: Props) {
   const [members, setMembers] = useState<Member | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [settings, setSettings] = useState<Settings | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
     void fetchMembers().then(setMembers).catch((err) => setError(String(err)));
-  }, [isOpen, fetchMembers]);
+    void fetchSettings?.().then(setSettings).catch(() => setSettings(null));
+  }, [isOpen, fetchMembers, fetchSettings]);
+
+  const toggle = async (key: keyof Settings) => {
+    const next = toggleSetting(settings, key);
+    if (!next || !settings) return;
+    setSettings(next);
+    try {
+      await saveSettings?.(next);
+    } catch (err) {
+      setSettings(settings); // revert on failure so the toggle never lies
+      setError(err instanceof Error ? err.message : "could not save");
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -92,6 +114,24 @@ export default function MembersModal({ isOpen, onClose, isOwner, fetchMembers, r
                 </div>
               ))}
             </section>
+            {isOwner && settings && (
+              <section>
+                <h3 className="mb-2 text-[13px] font-semibold uppercase tracking-wide text-muted">Privacy</h3>
+                <p className="mb-3 text-[13px] text-muted">
+                  Both are off unless you turn them on. Your phone&rsquo;s video never leaves this host on its own.
+                </p>
+                <label className="flex items-center justify-between gap-3 py-1.5 text-sm text-white">
+                  <span>Use AI interpretation for this household</span>
+                  <input type="checkbox" checked={settings.llm_enabled} onChange={() => toggle("llm_enabled")}
+                         aria-label="Use AI interpretation" />
+                </label>
+                <label className="flex items-center justify-between gap-3 py-1.5 text-sm text-white">
+                  <span>Save session logs in this household&rsquo;s folder</span>
+                  <input type="checkbox" checked={settings.log_enabled} onChange={() => toggle("log_enabled")}
+                         aria-label="Save session logs" />
+                </label>
+              </section>
+            )}
           </div>
         )}
       </div>

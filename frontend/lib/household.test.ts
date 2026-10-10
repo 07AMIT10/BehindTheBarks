@@ -39,3 +39,20 @@ describe("canLeaveRecoveryStep", () => {
     expect(canLeaveRecoveryStep(true)).toBe(true);
   });
 });
+
+import { toggleSetting } from "./household";
+
+describe("toggleSetting (T2.9 privacy opt-in)", () => {
+  it("flips one flag and leaves the other alone", () => {
+    const cur = { llm_enabled: false, log_enabled: false };
+    expect(toggleSetting(cur, "llm_enabled")).toEqual({ llm_enabled: true, log_enabled: false });
+    expect(toggleSetting(cur, "log_enabled")).toEqual({ llm_enabled: false, log_enabled: true });
+  });
+  it("turns a flag back off", () => {
+    expect(toggleSetting({ llm_enabled: true, log_enabled: true }, "llm_enabled"))
+      .toEqual({ llm_enabled: false, log_enabled: true });
+  });
+  it("is a no-op when there is no row yet", () => {
+    expect(toggleSetting(null, "llm_enabled")).toBeNull();
+  });
+});

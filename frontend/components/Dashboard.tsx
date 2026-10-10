@@ -54,6 +54,8 @@ export default function Dashboard() {
     createPairing,
     joinHousehold,
     fetchMembers,
+    fetchSettings,
+    saveSettings,
     revokeViewer,
     revokeStation,
   } = backend;
@@ -301,6 +303,8 @@ export default function Dashboard() {
         fetchMembers={fetchMembers}
         revokeViewer={revokeViewer}
         revokeStation={revokeStation}
+        fetchSettings={fetchSettings}
+        saveSettings={saveSettings}
       />
       {!demo && (
         <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-bg/90 p-3 backdrop-blur lg:hidden"

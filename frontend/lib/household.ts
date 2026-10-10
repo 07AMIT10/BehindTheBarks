@@ -30,3 +30,12 @@ export function validateRecoveryKey(v: string): Record<string, string> {
 export function canLeaveRecoveryStep(saved: boolean): boolean {
   return saved;
 }
+
+/** T2.9: a household's opt-in flags. */
+export type HouseholdSettings = { llm_enabled: boolean; log_enabled: boolean };
+
+/** Optimistic toggle for a privacy flag: returns the next value, or null when the row is absent. */
+export function toggleSetting(current: HouseholdSettings | null, key: keyof HouseholdSettings): HouseholdSettings | null {
+  if (!current) return null;
+  return { ...current, [key]: !current[key] };
+}
