@@ -24,7 +24,6 @@ import io
 import json
 import os
 import re
-import shutil
 import signal
 import socket
 import subprocess
@@ -53,7 +52,6 @@ CHROME = os.environ.get("BTB_CHROME", "/home/amit/.local/bin/google-chrome")
 PY = str(REPO / ".venv" / "bin" / "python")
 DEFAULT_REPORT = REPO / "docs" / "ACCEPTANCE_2026-10-10.md"
 MODE_SEQUENCE = ["privacy", "limited", "blackout", "full"]
-SCRIPT_RE = re.compile(r"<script\b.*?</script>", re.S | re.I)
 
 
 # ----------------------------------------------------------------------------- adb / phone helpers
@@ -271,26 +269,24 @@ def find_key(obj, key: str):
     return None
 
 
-def dom(url: str = BASE + "/") -> str:
-    """Dashboard text as rendered by headless Chrome, with <script> blocks removed."""
-    for attempt in range(3):  # headless Chrome occasionally hangs: a fresh profile and a killed process group per try
-        profile = tempfile.mkdtemp(prefix="btb-chrome-")
-        proc = subprocess.Popen(
-            [CHROME, "--headless=new", "--no-sandbox", "--window-size=390,844", f"--user-data-dir={profile}",
-             "--virtual-time-budget=8000", "--dump-dom", url],
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, start_new_session=True,
-        )
-        try:
-            out, _ = proc.communicate(timeout=45)
-            return SCRIPT_RE.sub("", out or "")
-        except subprocess.TimeoutExpired:
-            os.killpg(proc.pid, signal.SIGKILL)
-            proc.communicate()
-            if attempt == 2:
-                raise
-        finally:
-            shutil.rmtree(profile, ignore_errors=True)
-    return ""
+def dom(url: str = BASE + "/", wait_for: str | None = None) -> str:
+    """Dashboard text (document.body.innerText) from scripts/dom.mjs: playwright-core on the system Chrome,
+    waiting for `load`, then for the dashboard to render and for `wait_for` text (its status arrives over the
+    WebSocket after load, so a check that reads a state must name the text that state shows). Headless `--dump-dom` hangs while the dashboard keeps the /video MJPEG <img>
+    open for a dropped phone, so it is not used. The helper caps itself at 12 s; this wrapper adds a margin."""
+    cmd = ["node", str(REPO / "scripts" / "dom.mjs"), url]
+    if wait_for:
+        cmd += ["--wait-for", wait_for]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    try:
+        out, err = proc.communicate(timeout=15)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
+        raise RuntimeError("scripts/dom.mjs did not return within 15 s")
+    if proc.returncode != 0:
+        raise RuntimeError(f"scripts/dom.mjs exit {proc.returncode}: {(err or '').strip()[:200]}")
+    return out
 
 
 def poll(fn, timeout: float, interval: float = 0.5):
@@ -480,7 +476,7 @@ def c1_fresh_server_idle(ctx: Ctx) -> tuple[str, str]:
     time.sleep(1)
     st = status()
     state = pipe_state(st)
-    page = dom()
+    page = dom(wait_for="Monitoring stopped")
     reconnecting = "Reconnecting" in page
     ok = state == "idle" and not is_connected(st) and not reconnecting
     ev = (f"pipeline_status.state={state!r}, phone={'null' if not phone_of(st) else 'present'}, "
@@ -786,7 +782,7 @@ def c9_stop_is_clean(ctx: Ctx) -> tuple[str, str]:
         if clean and first_clean is None:
             first_clean = time.monotonic() - t0
         time.sleep(0.5)
-    page = dom()
+    page = dom(wait_for="Monitoring stopped")
     new_log = ctx.backend.log()[log_before:]
     stop_lines = [ln for ln in new_log.splitlines() if "phone stopped" in ln or "phone disconnected" in ln]
     code_1005 = any("1005" in ln for ln in stop_lines)
@@ -813,7 +809,7 @@ def c10_abrupt_drop(ctx: Ctx) -> tuple[str, str]:
         st = status()
         return not is_connected(st), st
     ok_d, took, st = poll(dropped, 10.0)
-    page = dom()
+    page = dom(wait_for="Reconnecting")
     reconnecting = "Reconnecting" in page
     close_lines = [ln for ln in ctx.backend.log().splitlines() if "phone disconnected" in ln][-1:]
     ok = ok_d and reconnecting
@@ -842,7 +838,7 @@ def c11_raise_approval(ctx: Ctx) -> tuple[str, str]:
         if seen:
             parts.append(tap_dialog_button("Allow"))
         eff_ok, took2, _ = poll(lambda: (status().get("effective_mode") == "full", None), 8.0)
-        gone, _ = poll(lambda: (not raise_prompt_visible("Full"), None), 5.0, interval=0.7)
+        gone, _, _ = poll(lambda: (not raise_prompt_visible("Full"), None), 5.0, interval=0.7)
         parts.append(f"allow: effective full={eff_ok} after {took2:.1f} s; prompt dismissed={gone}")
         verdicts.append(PASS if (pending and seen and eff_ok and gone) else FAIL)
 
@@ -856,7 +852,7 @@ def c11_raise_approval(ctx: Ctx) -> tuple[str, str]:
             parts.append(tap_dialog_button("Keep private"))
         time.sleep(3.0)
         eff2 = status().get("effective_mode")
-        gone2, _ = poll(lambda: (not raise_prompt_visible("Full"), None), 5.0, interval=0.7)
+        gone2, _, _ = poll(lambda: (not raise_prompt_visible("Full"), None), 5.0, interval=0.7)
         parts.append(f"keep: effective after 3 s={eff2}; prompt dismissed={gone2}")
         verdicts.append(PASS if (pending2 and seen2 and eff2 == "privacy" and gone2) else FAIL)
     except LookupError as exc:
@@ -892,7 +888,7 @@ def c12_blackout_not_stalled(ctx: Ctx) -> tuple[str, str]:
         time.sleep(0.5)
     seen_states = sorted({str(s) for s in states})
     all_paused = bool(states) and set(states) == {"paused"}
-    page = dom()
+    page = dom(wait_for="Sharing is paused")
     reconnecting = "Reconnecting" in page
     paused_card = "Sharing is paused" in page
     rcode, rbody = http("POST", "/mode", {"mode": "full"})
@@ -959,24 +955,28 @@ def _cell(text: str) -> str:
 
 # Findings that the checks do not fix (kept here so every regenerated report carries them).
 FINDINGS = [
-    "Medium (harness, phone): while monitoring is running, uiautomator cannot dump the WagWatch screen "
-    "('could not get idle state', intermittent). It blocks checks 9 and 11, which need the Stop and mode "
-    "controls. The same dump failure happens with the pre-session APK, so it is not from the raise work. "
-    "Root cause not isolated (the preview surface and per-frame text updates are the suspects).",
-    "Medium (dashboard or harness): headless Chrome --dump-dom hangs while the dashboard renders the /video "
-    "MJPEG <img> for a dropped phone (check 10). Idle and paused dashboards dump in about 2 s. Real browsers "
-    "are not affected; the product question is whether a dropped phone should keep a /video request open.",
-    "Medium (not exercised by the checks): the on-device prompt's notification path (app not in front) is "
-    "not driven here. Only the dialog path ran.",
-    "Low: the phone's status line showed 'Connecting to ws://...' while the backend reported the phone "
-    "connected (screenshots during this run). Not investigated.",
-    "Low: the server never learns that the person on the phone chose Keep private or let the prompt time out; "
-    "the dashboard's 60 s countdown ends on its own.",
-    "Low: ModeController is read on the network thread and mutated on the main thread (approval timeout) "
-    "without synchronisation. Same pattern as the existing mode code; not observed to fail.",
-    "Low: the viewer badge row is missing from the uiautomator dump (check 5 reads it from a screenshot).",
-    "Low: the phone-side effect of a dashboard treat (chime, rules) is not observable over the API or logcat; "
-    "check 7 covers the server side only.",
+    "Resolved (commit d15fb0a, android): uiautomator could not reach an idle state while monitoring ('could not get "
+    "idle state'). Every camera result posted a UI update and a full-screen invalidation. The overlay is now throttled "
+    "to 4 Hz and only sent on change, and the Stop, mode, viewers and Disconnect controls are in the dump while monitoring.",
+    "Resolved (harness): headless --dump-dom hung while the dashboard held the /video MJPEG <img> for a dropped phone. "
+    "scripts/dom.mjs (playwright-core on the system Chrome) waits for load, then for the page to render, then for the "
+    "expected text, with a 12 s cap.",
+    "Medium (dashboard, not changed here): after the phone drops, the backend reports connected=false at once, but the "
+    "dashboard shows 'Reconnecting to camera' only about 3-4 s later (it still shows 'Connected' at 2 s). Check 10 waits "
+    "up to 6 s for that text.",
+    "Low (dashboard, harness): the dashboard fills its state from the WebSocket after load. Until then it shows its "
+    "default 'Connected / LIVE' card, so a DOM read taken at load can be wrong. Checks 1, 9, 10 and 12 wait for the text "
+    "their state shows.",
+    "Medium (not exercised by the checks): the on-device prompt's notification path (app not in front) is not driven "
+    "here. Only the dialog path ran.",
+    "Low: the phone's status line showed 'Connecting to ws://...' while the backend reported the phone connected "
+    "(screenshots during an earlier run). Not investigated.",
+    "Low: the server never learns that the person on the phone chose Keep private or let the prompt time out; the "
+    "dashboard's 60 s countdown ends on its own.",
+    "Low: ModeController is read on the network thread and mutated on the main thread (approval timeout) without "
+    "synchronisation. Same pattern as the existing mode code; not observed to fail.",
+    "Low: the phone-side effect of a dashboard treat (chime, rules) is not observable over the API or logcat; check 7 "
+    "covers the server side only.",
 ]
 
 
