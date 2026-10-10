@@ -236,6 +236,24 @@ async def test_phone_stop_button_forgets_the_phone(tmp_path):
     assert [m["data"]["phone"] for m in drain(q) if m["type"] == "status"] == [None]
 
 
+async def test_revoked_station_close_4410_forgets_the_phone(tmp_path):
+    """The owner removed the station: it is no longer in the household, so the dashboard must not keep a
+    disconnected card ("Reconnecting to camera") for it. Same as a deliberate stop."""
+    rt, mp, hub, q, clock = make(tmp_path)
+    s = rt.phone_open(HELLO)
+    drain(q)
+    rt.phone_close(s, 4410)
+    assert rt.status()["phone"] is None
+    assert [m["data"]["phone"] for m in drain(q) if m["type"] == "status"] == [None]
+
+
+async def test_unexpected_close_still_keeps_a_disconnected_card(tmp_path):
+    rt, mp, hub, q, clock = make(tmp_path)
+    s = rt.phone_open(HELLO)
+    rt.phone_close(s, 1005)  # a dropped socket, not a stop: the dashboard says Reconnecting
+    assert rt.status()["phone"]["connected"] is False
+
+
 # -- deliberate stop with bye, and the idle pipeline ------------------------------------------
 def _remote_runtime(tmp_path):
     """A Runtime whose pipeline is a RemotePipeline: it has mark_stopped(), MockPipeline does not."""

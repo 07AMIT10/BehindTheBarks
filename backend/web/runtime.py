@@ -21,7 +21,7 @@ from backend.demo.clips import DemoClips
 from backend.fusion.llm_triggers import TriggerPolicy
 from backend.fusion.state import FusionState, StateConfig
 from backend.web.hub import Hub
-from backend.web.ingest import Hello, IngestSession
+from backend.web.ingest import CLOSE_REVOKED, Hello, IngestSession
 from backend.web.ingest_events import RemoteHello, RemoteSession
 from backend.web.modes import min_mode
 from backend.web.policy import Policy
@@ -232,7 +232,9 @@ class Runtime:
         session.connected = False
         if self.phone is not session:
             return
-        stopped = code == 1000 or bool(getattr(session, "stopped", False))
+        # 4410: the owner removed this station, so it is forgotten like a stop (no "Reconnecting" for a station
+        # that is no longer in the household).
+        stopped = code in (1000, CLOSE_REVOKED) or bool(getattr(session, "stopped", False))
         self.phone, self._phone_closer = None, None
         self._phone_prev = None if stopped else session
         if stopped:
