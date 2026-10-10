@@ -28,6 +28,7 @@ from backend.notify import build_notifier
 from backend.store import db as store_db
 from backend.store import repo as store_repo
 from backend.store.models import KIND_STATION, KIND_VIEWER, ROLE_OWNER, ROLE_VIEWER
+from backend.store.models import Viewer as _ViewerRow
 from backend.web.ingest import CLOSE_REVOKED
 from backend.web.auth import Ctx
 from backend.web.registry import LEGACY, HouseholdRegistry
@@ -35,9 +36,9 @@ from backend.web.registry import LEGACY, HouseholdRegistry
 VIEWER_COOKIE = "btb_session"
 STATION_AUTH_PREFIX = b"btb-auth-v1|"  # the signed challenge message: nonce | station_id | device
 SESSION_MAX_AGE_S = 31_536_000  # a year: the recovery key, not a password reset, is the escape hatch
-HOUSEHOLD_CREATES_PER_HOUR = 5
+HOUSEHOLD_CREATES_PER_HOUR = 5  # web.auth.household_creates_per_hour overrides it
 from backend.web.event_log import EventLog
-from backend.web.hub import Hub
+from backend.web.hub import KICKED, Hub
 from backend.web.ingest import CLOSE_BAD_HELLO, CLOSE_BUSY, CLOSE_REPLACED, HelloError, parse_hello
 from backend.web.ingest_events import (MAX_SKEW_S, PROTO_STATION, RemoteSession, bind_pipeline,
                                        parse_remote_hello)
@@ -319,6 +320,64 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 lr.runtime.phone_close(session, CLOSE_REVOKED)
         return {"ok": True}
 
+    # -- viewer invites (T2.6): a code joins a viewer, the owner lists and revokes ------------------
+    @app.post("/join")
+    async def join(req: Request, body: dict | None = None) -> dict:
+        """Unauthenticated: the one-time viewer code is the credential. A viewer never sees owner
+        endpoints, but it may watch within its household."""
+        if not households_mode:
+            _pin_only_404()
+        check_rate_limit("join", 2.0)
+        code = str((body or {}).get("code") or "").strip()
+        label = str((body or {}).get("label") or "viewer")[:64].strip()
+        with app.state.db_session() as s:
+            consumed = store_repo.consume_pairing_code(s, code, kind=KIND_VIEWER)
+            if consumed is None:
+                raise HTTPException(status_code=400, detail="invalid_or_expired_code")
+            household_id, ceiling = consumed.household_id, (consumed.mode_ceiling or "full")
+            viewer, token = store_repo.create_viewer(
+                s, household_id=household_id, role=ROLE_VIEWER, label=label, mode_ceiling=ceiling)
+            s.commit()
+        resp = JSONResponse({"ok": True, "household_id": household_id})
+        _set_session_cookie(resp, token, req)
+        return resp
+
+    @app.get("/households/me/members")
+    async def members(ctx: Ctx = Depends(auth_ctx)) -> dict:
+        """Every member of this household: stations and viewers. Open to any authenticated member."""
+        if not households_mode:
+            _pin_only_404()
+        with app.state.db_session() as s:
+            stations = [{"id": st.id, "name": st.name, "last_seen": st.last_seen,
+                         "revoked": st.revoked_at is not None}
+                        for st in store_repo.stations_of_household(s, ctx.household_id)]
+            viewers = [{"id": v.id, "label": v.label, "role": v.role, "mode_ceiling": v.mode_ceiling,
+                        "last_seen": v.last_seen, "revoked": v.revoked_at is not None}
+                       for v in store_repo.viewers_of_household(s, ctx.household_id)]
+        return {"stations": stations, "viewers": viewers}
+
+    @app.delete("/viewers/{viewer_id}")
+    async def delete_viewer(ctx: Ctx = Depends(auth_ctx), viewer_id: str = "") -> dict:
+        """Owner-only: revoke one viewer (never themselves) and close their live sockets with 4410."""
+        if not households_mode:
+            _pin_only_404()
+        if ctx.role != ROLE_OWNER:
+            raise HTTPException(status_code=403, detail="only the owner can remove viewers")
+        if viewer_id == ctx.viewer_id:
+            raise HTTPException(status_code=400, detail="you cannot remove yourself")
+        with app.state.db_session() as s:
+            viewer = s.get(_ViewerRow, viewer_id)
+            if viewer is None or viewer.household_id != ctx.household_id:
+                raise HTTPException(status_code=404, detail="unknown viewer")
+            if viewer.role == ROLE_OWNER:
+                raise HTTPException(status_code=400, detail="the owner cannot be removed")
+            store_repo.revoke_viewer(s, viewer_id)
+            s.commit()
+        lr = app.state.registry.peek(ctx.household_id)
+        if lr is not None:
+            lr.hub.kick(viewer_id)  # their /ws loop ends; the browser shows the welcome screen again
+        return {"ok": True}
+
     async def _ingest_station_households(sock: WebSocket, hello) -> None:
         """The households-mode handshake: paired station_id, then one signed challenge."""
         import json
@@ -406,11 +465,13 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     def _pin_only_404():
         raise HTTPException(status_code=404, detail="households auth mode is disabled (web.auth.mode: pin)")
 
+    create_limit = int((web.get("auth") or {}).get("household_creates_per_hour", HOUSEHOLD_CREATES_PER_HOUR))
+
     def _rate_limit_household_creates(req: Request) -> None:
         now = time.time()
         ip = req.client.host if req.client else "unknown"
         recent = [t for t in household_creates.get(ip, []) if now - t < 3600]
-        if len(recent) >= HOUSEHOLD_CREATES_PER_HOUR:
+        if len(recent) >= create_limit:
             raise HTTPException(status_code=429, detail="too many households from this address; try again later")
         recent.append(now)
         household_creates[ip] = recent
@@ -753,11 +814,15 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             await sock.close(code=4401, reason="Unauthorized: session revoked or expired")
             return
         lr = await app.state.registry.get(viewer.household_id)
-        q = lr.hub.subscribe()
+        q = lr.hub.subscribe(viewer_id=viewer.id)
         try:
             await sock.send_json({"type": "status", "seq": 0, "data": lr.runtime.status()})
             while True:
-                await sock.send_json(await q.get())
+                msg = await q.get()
+                if msg is KICKED:  # the owner revoked this viewer (T2.6)
+                    await sock.close(code=CLOSE_REVOKED, reason="your access was revoked")
+                    return
+                await sock.send_json(msg)
         except (WebSocketDisconnect, RuntimeError):
             pass
         finally:

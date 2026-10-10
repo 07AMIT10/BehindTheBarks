@@ -32,6 +32,7 @@ export function useBackend() {
   const [token, setToken] = useState<string | null>(getStoredToken());
   const [authRequired, setAuthRequired] = useState(false);
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
+  const [me, setMe] = useState<{ household_id: string; role: string } | null>(null);
   const [authenticated, setAuthenticated] = useState(true);
   const [privacyOverride, setPrivacyOverride] = useState<boolean | null>(null);
 
@@ -54,9 +55,12 @@ export function useBackend() {
             setAuthenticated(true);
             return;
           }
-          // The session cookie is HttpOnly: probe /me once to learn whether we have one.
+          // The session cookie is HttpOnly: probe /me once to learn whether we have one (and who).
           void fetch(`${base.http}/me`, { credentials: "include" })
-            .then((r) => setAuthenticated(r.ok))
+            .then(async (r) => {
+              setAuthenticated(r.ok);
+              if (r.ok) setMe(await r.json());
+            })
             .catch(() => setAuthenticated(false));
           return;
         }
@@ -249,6 +253,53 @@ export function useBackend() {
     clearStoredToken();
   }, [base]);
 
+  const createPairing = useCallback(async (kind: "station" | "viewer", opts: { mode_ceiling?: string; label?: string } = {}) => {
+    const tok = token ?? getStoredToken();
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (tok) headers["Authorization"] = `Bearer ${tok}`;
+    const url = `${base.http}/households/me/pairing${tok ? `?token=${encodeURIComponent(tok)}` : ""}`;
+    const res = await fetch(url, { method: "POST", headers, credentials: "include", body: JSON.stringify({ kind, ...opts }) });
+    if (!res.ok) throw new Error(`pairing: HTTP ${res.status}`);
+    return res.json() as Promise<{ code: string; expires_in: number; qr: { v: 2; url: string; pair_url: string; code: string } }>;
+  }, [base, token]);
+
+  const joinHousehold = useCallback(async (code: string, label: string) => {
+    const res = await fetch(`${base.http}/join`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code, label }),
+    });
+    if (!res.ok) throw new Error("That invite code did not work");
+    setAuthenticated(true);
+  }, [base]);
+
+  const fetchMembers = useCallback(async () => {
+    const tok = token ?? getStoredToken();
+    const headers: Record<string, string> = {};
+    if (tok) headers["Authorization"] = `Bearer ${tok}`;
+    const res = await fetch(`${base.http}/households/me/members`, { credentials: "include", headers });
+    if (!res.ok) throw new Error(`members: HTTP ${res.status}`);
+    return res.json() as Promise<{ stations: { id: string; name: string; last_seen: number | null; revoked: boolean }[];
+                                   viewers: { id: string; label: string; role: string; mode_ceiling: string; last_seen: number | null; revoked: boolean }[] }>;
+  }, [base, token]);
+
+  const revokeViewer = useCallback(async (viewerId: string) => {
+    const tok = token ?? getStoredToken();
+    const headers: Record<string, string> = {};
+    if (tok) headers["Authorization"] = `Bearer ${tok}`;
+    const res = await fetch(`${base.http}/viewers/${viewerId}`, { method: "DELETE", credentials: "include", headers });
+    if (!res.ok) throw new Error(`revoke: HTTP ${res.status}`);
+  }, [base, token]);
+
+  const revokeStation = useCallback(async (stationId: string) => {
+    const tok = token ?? getStoredToken();
+    const headers: Record<string, string> = {};
+    if (tok) headers["Authorization"] = `Bearer ${tok}`;
+    const res = await fetch(`${base.http}/stations/${stationId}`, { method: "DELETE", credentials: "include", headers });
+    if (!res.ok) throw new Error(`revoke station: HTTP ${res.status}`);
+  }, [base, token]);
+
   const deleteHousehold = useCallback(async (recovery_key: string) => {
     const res = await fetch(`${base.http}/households/me`, {
       method: "DELETE",
@@ -329,9 +380,15 @@ export function useBackend() {
     saveProfile,
     authStatus,
     authMode,
+    me,
     createHousehold,
     recoverHousehold,
     logoutHousehold,
     deleteHousehold,
+    createPairing,
+    joinHousehold,
+    fetchMembers,
+    revokeViewer,
+    revokeStation,
   };
 }

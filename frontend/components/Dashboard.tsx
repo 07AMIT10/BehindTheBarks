@@ -24,7 +24,8 @@ import Timeline from "./Timeline";
 import ToastStack from "./ToastStack";
 import TreatButton from "./TreatButton";
 import VideoPanel from "./VideoPanel";
-import PairingModal from "./PairingModal";
+import PairingModal, { type Pairing } from "./PairingModal";
+import MembersModal from "./MembersModal";
 import WelcomeScreen from "./WelcomeScreen";
 import DeleteHouseholdModal from "./DeleteHouseholdModal";
 import ProfileModal from "./ProfileModal";
@@ -45,10 +46,16 @@ export default function Dashboard() {
     saveProfile,
     authStatus,
     authMode,
+    me,
     createHousehold,
     recoverHousehold,
     logoutHousehold,
     deleteHousehold,
+    createPairing,
+    joinHousehold,
+    fetchMembers,
+    revokeViewer,
+    revokeStation,
   } = backend;
   const nowMs = useNow(1000);
   const nowSec = serverNow(state, nowMs);
@@ -71,6 +78,22 @@ export default function Dashboard() {
   // A fresh key per open re-seeds the form with the live profile (no effect, no reset on broadcasts).
   const [profileOpen, setProfileOpen] = useState<number | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [membersOpen, setMembersOpen] = useState(false);
+  // The pairing code is fetched on click (never in an effect, so no cascading renders); a fresh key
+  // per open re-seeds it, like the profile sheet (T1.8).
+  const [pairOpenCount, setPairOpenCount] = useState(0);
+  const [pairing, setPairing] = useState<Pairing | null>(null);
+  const [pairKind, setPairKind] = useState<"station" | "viewer">("station");
+  const [pairError, setPairError] = useState<string | null>(null);
+
+  const mintPairing = useCallback((kind: "station" | "viewer", ceiling = "full") => {
+    setPairKind(kind);
+    setPairError(null);
+    setPairing(null);
+    void createPairing(kind, kind === "viewer" ? { mode_ceiling: ceiling, label: "viewer" } : {})
+      .then(setPairing)
+      .catch((err) => setPairError(err instanceof Error ? err.message : "could not create the code"));
+  }, [createPairing]);
   const mode = state.status?.mode ?? "live";
   const demo = mode === "demo";
   const viewMoment = useCallback((ts: number) => {
@@ -99,6 +122,16 @@ export default function Dashboard() {
     return () => window.removeEventListener("keydown", onKey);
   }, [onTreat, demo, setMode]);
 
+  // An invite link (/?join=<code>) adopts this browser as a viewer, then reloads into the dashboard.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const code = new URLSearchParams(window.location.search).get("join");
+    if (!code || authenticated) return;
+    void joinHousehold(code, "viewer")
+      .then(() => window.location.reload())
+      .catch(() => undefined);
+  }, [authenticated, joinHousehold]);
+
   if (welcomeVisible(authStatus, authenticated)) {
     return <WelcomeScreen onCreate={createHousehold} onRecover={recoverHousehold} />;
   }
@@ -109,7 +142,7 @@ export default function Dashboard() {
         <Header dogName={profile.dog_name} location={profile.location}>
           <button
             type="button"
-            onClick={() => setIsPairingOpen(true)}
+            onClick={() => { setPairOpenCount((n) => n + 1); setIsPairingOpen(true); mintPairing("station"); }}
             title="Pair Phone Station"
             className="flex h-9 items-center gap-1.5 px-3 rounded-lg border border-accent/40 bg-accent/10 text-accent hover:bg-accent/20 text-xs font-semibold transition-colors"
           >
@@ -129,6 +162,15 @@ export default function Dashboard() {
           </button>
           {authMode === "households" && authenticated && (
             <>
+              <button
+                type="button"
+                onClick={() => setMembersOpen(true)}
+                title="Household members"
+                aria-label="Household members"
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              </button>
               <button
                 type="button"
                 onClick={() => setDeleteOpen(true)}
@@ -238,12 +280,27 @@ export default function Dashboard() {
           onSave={saveProfile}
         />
       )}
-      <PairingModal
-        isOpen={isPairingOpen}
-        onClose={() => setIsPairingOpen(false)}
-        token={token}
-        phoneConnected={state.status?.phone?.connected}
-        deviceName={state.status?.phone?.device}
+      {isPairingOpen && (
+        <PairingModal
+          key={pairOpenCount}
+          isOpen
+          kind={pairKind}
+          pairing={pairing}
+          error={pairError}
+          onClose={() => setIsPairingOpen(false)}
+          phoneConnected={state.status?.phone?.connected}
+          deviceName={state.status?.phone?.device}
+          onRegenerate={() => mintPairing(pairKind)}
+          onSwitchKind={(k) => mintPairing(k)}
+        />
+      )}
+      <MembersModal
+        isOpen={membersOpen}
+        onClose={() => setMembersOpen(false)}
+        isOwner={me?.role === "owner"}
+        fetchMembers={fetchMembers}
+        revokeViewer={revokeViewer}
+        revokeStation={revokeStation}
       />
       {!demo && (
         <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-bg/90 p-3 backdrop-blur lg:hidden"

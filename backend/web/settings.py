@@ -80,6 +80,8 @@ def load_config(path: str | Path = "config.yaml", env: Mapping[str, str] | None 
         cfg["web"]["database_url"] = env["BTB_DATABASE_URL"].strip()
     if env.get("BTB_AUTH_MODE"):
         cfg["web"].setdefault("auth", {})["mode"] = env["BTB_AUTH_MODE"].strip().lower()
+    if env.get("BTB_HOUSEHOLD_CREATES_PER_HOUR"):
+        cfg["web"].setdefault("auth", {})["household_creates_per_hour"] = int(env["BTB_HOUSEHOLD_CREATES_PER_HOUR"])
     profile = cfg["web"].setdefault("profile", {})
     # The deployer names the dog without editing YAML; the saved profile file (PUT /profile) wins later.
     if env.get("BTB_DOG_NAME"):
