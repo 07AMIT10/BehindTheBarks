@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import http.cookiejar as cookiejar
 import io
 import json
 import os
@@ -269,7 +270,7 @@ def find_key(obj, key: str):
     return None
 
 
-def dom(url: str = BASE + "/", wait_for: str | None = None) -> str:
+def dom(url: str = BASE + "/", wait_for: str | None = None, cookie: str | None = None) -> str:
     """Dashboard text (document.body.innerText) from scripts/dom.mjs: playwright-core on the system Chrome,
     waiting for `load`, then for the dashboard to render and for `wait_for` text (its status arrives over the
     WebSocket after load, so a check that reads a state must name the text that state shows). Headless `--dump-dom` hangs while the dashboard keeps the /video MJPEG <img>
@@ -277,6 +278,8 @@ def dom(url: str = BASE + "/", wait_for: str | None = None) -> str:
     cmd = ["node", str(REPO / "scripts" / "dom.mjs"), url]
     if wait_for:
         cmd += ["--wait-for", wait_for]
+    if cookie:
+        cmd += ["--cookie", cookie]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
     try:
         out, err = proc.communicate(timeout=15)
@@ -401,10 +404,16 @@ def dims(jpeg: bytes) -> tuple[int, int] | None:
 # ----------------------------------------------------------------------------- backend process
 
 class Backend:
-    def __init__(self, tmp: Path) -> None:
-        self.tmp = tmp
-        self.out = tmp / "out"
-        self.log_path = tmp / "backend.log"
+    """One backend on PORT. `households=True` starts it with web.auth.mode households (BTB_AUTH_MODE), in its
+    own cwd, database and log, so the pin-mode and households runs never share state."""
+
+    def __init__(self, tmp: Path, households: bool = False) -> None:
+        self.households = households
+        self.tmp = tmp / ("hh" if households else "pin")
+        self.tmp.mkdir(parents=True, exist_ok=True)
+        self.out = self.tmp / "out"
+        self.out.mkdir(parents=True, exist_ok=True)
+        self.log_path = self.tmp / "backend.log"
         self.proc: subprocess.Popen | None = None
         self._write_config()
 
@@ -417,6 +426,8 @@ class Backend:
         web["log_dir"] = str(self.out)
         web["database_url"] = f"sqlite:///{self.out / 'btb.db'}"
         web.setdefault("auth", {})["enabled"] = False
+        if self.households:
+            web["auth"]["mode"] = "households"
         (self.tmp / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
 
     def start(self) -> None:
@@ -432,6 +443,8 @@ class Backend:
             "BTB_AUTH_ENABLED": "0",
             "BTB_DATABASE_URL": f"sqlite:///{self.out / 'btb.db'}",
         })
+        if self.households:
+            env["BTB_AUTH_MODE"] = "households"
         with self.log_path.open("ab") as logf:
             self.proc = subprocess.Popen(
                 [PY, "-m", "uvicorn", "backend.main:app", "--host", "127.0.0.1", "--port", str(PORT)],
@@ -904,7 +917,287 @@ def c12_blackout_not_stalled(ctx: Ctx) -> tuple[str, str]:
     return (PASS if ok_all else FAIL), "; ".join(parts)
 
 
-CHECKS = [
+# ----------------------------------------------------------------------------- households (checks 13-15) and the
+# notification approval (check 16)
+
+DOG_A = "Biscuit"
+DOG_B = "Mochi"
+REMOVED_TEXT = "Removed from household"   # MainActivity.REMOVED_MESSAGE: the station was removed, pair again
+HH: dict = {}                              # the households run's owner clients, shared by checks 13-15
+# Phone-derived live events. "emotion" is each household's own fusion heartbeat (its state, with no phone),
+# so it is reported separately rather than counted as a leak.
+LIVE_TYPES = {"frame", "audio", "rules", "treat", "telemetry", "llm", "notification"}
+
+
+class HhClient:
+    """A cookie-keeping client for one household (households mode): the owner's btb_session cookie is the
+    only thing that selects a household. There is no household id parameter to send."""
+
+    def __init__(self) -> None:
+        self.jar = cookiejar.CookieJar()
+        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar))
+
+    def call(self, method: str, path: str, body: dict | None = None, query: str = "",
+             headers: dict | None = None, timeout: float = 5.0) -> tuple[int, dict]:
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        hdrs = {"Content-Type": "application/json"} if data is not None else {}
+        hdrs.update(headers or {})
+        req = urllib.request.Request(BASE + path + query, data=data, method=method, headers=hdrs)
+        try:
+            with self.opener.open(req, timeout=timeout) as resp:
+                return resp.status, json.loads(resp.read().decode("utf-8") or "{}")
+        except urllib.error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", "replace")
+            try:
+                return exc.code, json.loads(raw)
+            except ValueError:
+                return exc.code, {"raw": raw}
+
+    def session(self) -> str:
+        for c in self.jar:
+            if c.name == "btb_session":
+                return c.value
+        return ""
+
+    def cookie_header(self) -> str:
+        return f"btb_session={self.session()}"
+
+
+def hh_stations(client: HhClient) -> list[dict]:
+    code, body = client.call("GET", "/households/me/members")
+    return body.get("stations", []) if code == 200 else []
+
+
+def hh_phone(client: HhClient) -> dict:
+    code, body = client.call("GET", "/status")
+    return (body.get("phone") or {}) if code == 200 else {}
+
+
+def ws_collect(cookie: str, seconds: float) -> list[str]:
+    """Every text message /ws sends for `seconds`, as the browser would receive it."""
+    from websockets.sync.client import connect
+    msgs: list[str] = []
+    with connect(f"ws://127.0.0.1:{PORT}/ws", additional_headers={"Cookie": cookie}, open_timeout=5) as ws:
+        end = time.monotonic() + seconds
+        while True:
+            left = end - time.monotonic()
+            if left <= 0:
+                break
+            try:
+                raw = ws.recv(timeout=left)
+            except TimeoutError:
+                break
+            msgs.append(raw if isinstance(raw, str) else raw.decode("utf-8", "replace"))
+    return msgs
+
+
+def _leaks(msgs: list[str], names: list[str]) -> list[str]:
+    """Messages that carry live events or any of `names` (the other household's device and dog)."""
+    found: list[str] = []
+    for m in msgs:
+        try:
+            env = json.loads(m)
+        except ValueError:
+            found.append(f"non-JSON: {m[:60]!r}")
+            continue
+        kind = env.get("type")
+        if kind in LIVE_TYPES:
+            found.append(f"{kind} envelope")
+        elif kind == "emotion" and (env.get("data") or {}).get("source") not in (None, "unknown", "fused", "rules"):
+            found.append(f"emotion from source {(env.get('data') or {}).get('source')!r}")
+        elif kind == "status" and (env.get("data") or {}).get("phone"):
+            found.append("status with a phone")
+        if any(n and n in m for n in names):
+            found.append(f"name in {kind}")
+    return found
+
+
+def c13_households_pairing(ctx: Ctx) -> tuple[str, str]:
+    """Owner creates a household, mints a station code, and the app pairs from the QR payload delivered as the
+    debug intent extra (the same code path as a scan). The paired station starts monitoring with no token,
+    the household shows it connected with proto 2, telemetry matches dumpsys, and the dashboard shows the dog."""
+    force_stop()
+    owner = HhClient()
+    code, created = owner.call("POST", "/households", {"dog_name": DOG_A, "location": "Kitchen"})
+    if code != 200:
+        return FAIL, f"POST /households -> {code} {created}"
+    HH.clear()
+    HH["A"] = owner
+    HH["A_id"] = created["household_id"]
+    code, pr = owner.call("POST", "/households/me/pairing", {"kind": "station"})
+    if code != 200 or "qr" not in pr:
+        return FAIL, f"POST /households/me/pairing -> {code} {pr}"
+    qr = pr["qr"]
+    ensure_adb_reverse()
+    payload = json.dumps(qr, separators=(",", ":"))
+    intent_out = adb("shell", f"am start -n {PKG}/.ui.MainActivity --es extra_pair_payload '{payload}'")
+    paired, took_pair, stations = poll(lambda: ((st := hh_stations(owner)) != [], st), 25.0, 1.0)
+    if not paired:
+        return FAIL, f"no station appeared in the household after the pairing payload; intent: {intent_out.strip()[:120]!r}"
+    station = stations[0]
+    HH["A_station"] = station
+    # Start monitoring with the paired station: no token, the app signs the challenge with its Keystore key.
+    start_out = adb("shell", "am", "start", "-n", f"{PKG}/.ui.MainActivity", "-a", f"{PKG}.action.START")
+    connected, took_conn, st = poll(
+        lambda: (bool(hh_phone(owner).get("connected")) and pipe_state(hh_phone_status(owner)) == "running",
+                 hh_phone(owner)), 30.0, 0.7)
+    phone = hh_phone(owner)
+    proto = phone.get("proto")
+    telem_ok, took_t, phone = poll(
+        lambda: (phone_telem_ready(owner), hh_phone(owner)), 30.0, 1.0)
+    phone = hh_phone(owner)
+    bat = phone_battery()
+    d_bat = abs((phone.get("battery_pct") or -99) - bat["level"])
+    page = dom(wait_for=DOG_A, cookie=owner.cookie_header())
+    dog_shown = DOG_A in page
+    reconnecting = "Reconnecting" in page
+    ok = (paired and connected and proto == 2 and telem_ok and d_bat <= 2 and dog_shown and not reconnecting)
+    ev = (f"pairing: station '{station.get('name')}' in household after {took_pair:.1f} s, intent "
+          f"{'accepted' if 'Error' not in intent_out else 'error'}; start (no token): connected={connected} after "
+          f"{took_conn:.1f} s, proto={proto}, device={phone.get('device')!r}; telemetry battery_pct="
+          f"{phone.get('battery_pct')} vs dumpsys {bat['level']} (delta {d_bat}, limit 2); dashboard shows "
+          f"{DOG_A!r}={dog_shown}, 'Reconnecting'={reconnecting}")
+    return (PASS if ok else FAIL), ev
+
+
+def phone_telem_ready(owner: HhClient) -> bool:
+    p = hh_phone(owner)
+    return p.get("battery_pct") is not None and p.get("temp_c") is not None
+
+
+def hh_phone_status(owner: HhClient) -> dict:
+    """The whole /status body, for pipeline_status."""
+    return owner.call("GET", "/status")[1]
+
+
+def c14_households_isolation_live(ctx: Ctx) -> tuple[str, str]:
+    """A second household with another dog: its /status phone is null, its /ws never carries the first household's
+    device, dog name or live events (5 s, with the first household's socket as a positive control), and the first
+    household's cookie cannot reach the second household: household id parameters and headers are ignored."""
+    owner_a = HH.get("A")
+    if owner_a is None or not HH.get("A_station"):
+        return FAIL, "check 13 did not pair a station; households isolation needs it"
+    b = HhClient()
+    code, created_b = b.call("POST", "/households", {"dog_name": DOG_B, "location": "Hall"})
+    if code != 200:
+        return FAIL, f"POST /households (second) -> {code} {created_b}"
+    hid_b = created_b["household_id"]
+    hid_a = HH["A_id"]
+    st_b = b.call("GET", "/status")[1]
+    phone_b_null = not st_b.get("phone")
+    names = [HH["A_station"].get("name") or "", DOG_A]
+    msgs_b = ws_collect(b.cookie_header(), 5.0)
+    leaks_b = _leaks(msgs_b, names)
+    emotion_b = sorted({str((json.loads(m).get("data") or {}).get("emotion")) for m in msgs_b
+                        if m and json.loads(m).get("type") == "emotion"})
+    msgs_a = ws_collect(owner_a.cookie_header(), 5.0)     # positive control: the first household does see its phone
+    control_frames = sum(1 for m in msgs_a if '"type": "frame"' in m or '"type":"frame"' in m)
+    # Spoof attempts with the first household's cookie: a household id in the query or a header is ignored.
+    spoofs = {
+        "query household_id=B on /me (cookie A)": owner_a.call("GET", "/me", query=f"?household_id={hid_b}")[1],
+        "query household=B on /status (cookie A)": owner_a.call("GET", "/status", query=f"?household={hid_b}")[1],
+        "header X-Household-Id=B on /me (cookie A)": owner_a.call("GET", "/me", headers={"X-Household-Id": hid_b})[1],
+    }
+    spoof_ok = []
+    for label, body in spoofs.items():
+        dog = (body.get("profile") or {}).get("dog_name")
+        spoof_ok.append(f"{label}: dog {dog!r}")
+    spoofed_ignored = all(((spoofs[k].get("profile") or {}).get("dog_name") == DOG_A) for k in spoofs)
+    b_sees_a = b.call("GET", "/me", query=f"?household_id={hid_a}")[1]
+    b_ignored = (b_sees_a.get("profile") or {}).get("dog_name") == DOG_B
+    ok = (phone_b_null and not leaks_b and control_frames >= 1 and spoofed_ignored and b_ignored)
+    ev = (f"second household {DOG_B!r}: /status phone null={phone_b_null}; /ws for 5 s: {len(msgs_b)} messages, "
+          f"leaks {leaks_b[:3] or 'none'} (own emotion heartbeats {emotion_b}); first household's /ws control frames={control_frames}; spoof "
+          f"attempts ignored={spoofed_ignored} ({'; '.join(spoof_ok)}); second cookie with household_id=A "
+          f"ignored={b_ignored}")
+    return (PASS if ok else FAIL), ev
+
+
+def c15_station_revoke(ctx: Ctx) -> tuple[str, str]:
+    """The owner removes the station: its socket closes with 4410, the app stops retrying and says it was removed
+    (pair again), the household forgets the phone (status phone null), and Start stays on screen."""
+    owner = HH.get("A")
+    station = HH.get("A_station")
+    if owner is None or not station:
+        return FAIL, "check 13 did not pair a station; nothing to revoke"
+    log_before_revoke = len(ctx.backend.log())
+    code, body = owner.call("DELETE", f"/stations/{station['id']}")
+    t0 = time.monotonic()
+    shown, took_msg, _ = poll(lambda: (any(REMOVED_TEXT in t for t in ui_texts(ui_xml())), None), 20.0, 1.0)
+    texts = ui_texts(ui_xml())
+    removed_text = next((t for t in texts if REMOVED_TEXT in t), "")
+    start_visible = any(t == "Start Monitoring" for t in texts)
+    gone, took_gone, st = poll(lambda: (not hh_phone(owner), hh_phone_status(owner)), 10.0, 0.5)
+    pipe = pipe_state(st)
+    # No retries: a retrying phone would open a new /ingest-events session, and the server logs each one.
+    log_mid = ctx.backend.log()
+    time.sleep(10.0)
+    retries = ctx.backend.log()[len(log_mid):].count("phone connected")
+    ok = (code == 200 and shown and gone and start_visible and retries == 0)
+    ev = (f"DELETE /stations/{station['id'][:8]}… -> {code}; app shows {removed_text!r} after {took_msg:.1f} s; "
+          f"Start Monitoring visible={start_visible}; /status phone null={gone} after {took_gone:.1f} s "
+          f"(pipeline {pipe!r}); reconnect attempts in the 10 s after the close={retries}")
+    return (PASS if ok else FAIL), ev
+
+
+def notification_text_visible(text: str) -> bool:
+    return any(text in t for t in ui_texts(ui_xml()))
+
+
+def c16_notification_approval(ctx: Ctx) -> tuple[str, str]:
+    """App NOT in front: the owner's raise becomes a 'Sharing request' notification with Allow and Keep private.
+    Allow raises the effective mode to full; Keep private leaves it at privacy. Device cap restored at the end."""
+    parts: list[str] = [recover_full_session()]
+    ok, _ = ensure_connected()
+    if not ok:
+        return FAIL, "phone did not connect"
+    verdicts: list[str] = []
+    try:
+        for answer, expect in (("Allow", "full"), ("Keep private", "privacy")):
+            parts.append(set_device_cap("privacy"))
+            adb("shell", "input", "keyevent", "KEYCODE_HOME")
+            time.sleep(1.5)
+            front = top_package()
+            code, body = http("POST", "/mode", {"mode": "full"})
+            pending = code == 200 and body.get("status") == "pending"
+            adb("shell", "cmd", "statusbar", "expand-notifications")
+            time.sleep(1.0)
+            seen, took, _ = poll(lambda: (notification_text_visible("Sharing request"), None), 8.0, 0.7)
+            tapped = "not tapped (no notification)"
+            if seen:
+                tapped = tap_node(lambda n, a=answer: n.get("text", "").strip() == a, f"notification action {answer!r}")
+            time.sleep(1.0)
+            adb("shell", "cmd", "statusbar", "collapse")
+            if answer == "Allow":
+                eff_ok, took2, _ = poll(lambda: (status().get("effective_mode") == expect, None), 8.0)
+            else:
+                time.sleep(3.0)
+                eff_ok = status().get("effective_mode") == expect
+                took2 = 3.0
+            verdict = pending and seen and eff_ok
+            verdicts.append(PASS if verdict else FAIL)
+            parts.append(f"{answer}: app in front before HOME={front!r}; POST /mode full -> {body.get('status')}; "
+                         f"'Sharing request' shade text={seen} after {took:.1f} s; {tapped}; effective {expect} "
+                         f"={eff_ok} ({took2:.1f} s)")
+    except LookupError as exc:
+        verdicts.append(FAIL)
+        parts.append(f"notification control not found: {exc}")
+    finally:
+        restored = None
+        for _ in range(3):
+            try:
+                restored = set_device_cap("full")
+                break
+            except LookupError as exc:
+                restored = f"restore device cap failed: {exc}"
+                time.sleep(2.0)
+        parts.append("restore device cap: " + str(restored))
+        if restored and "failed" in restored:
+            verdicts.append(FAIL)
+    return (FAIL if FAIL in verdicts or not verdicts else PASS), "; ".join(parts)
+
+
+PIN_CHECKS = [
     (1, "fresh_server_idle", c1_fresh_server_idle),
     (2, "connect", c2_connect),
     (3, "telemetry", c3_telemetry),
@@ -917,7 +1210,16 @@ CHECKS = [
     (10, "abrupt_drop", c10_abrupt_drop),
     (11, "raise_approval", c11_raise_approval),
     (12, "blackout_not_stalled", c12_blackout_not_stalled),
+    (16, "notification_approval", c16_notification_approval),
 ]
+
+# Households checks run in this order: 15 revokes the station, so it is last.
+HOUSEHOLDS_CHECKS = [
+    (13, "households_pairing", c13_households_pairing),
+    (14, "households_isolation_live", c14_households_isolation_live),
+    (15, "station_revoke", c15_station_revoke),
+]
+CHECKS = PIN_CHECKS + HOUSEHOLDS_CHECKS
 
 
 # ----------------------------------------------------------------------------- preflight, report, main
@@ -1006,46 +1308,72 @@ def write_report(path: Path, results: list[tuple[int, str, str, str]], meta: dic
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def run_checks(backend: Backend, checks, results: list, meta_out: dict) -> None:
+    """Run each check against a started backend. A crashing check is a FAIL and the next check still runs."""
+    ctx = Ctx(backend=backend)
+    ensure_adb_reverse()
+    for num, name, fn in checks:
+        try:
+            verdict, evidence = fn(ctx)
+        except Exception as exc:  # a crashing check is a FAIL, and the next check still runs
+            verdict = FAIL
+            evidence = f"exception {type(exc).__name__}: {exc}; {traceback.format_exc(limit=1).strip().splitlines()[-1]}"
+        results.append((num, name, verdict, evidence))
+        print(f"[{verdict}] {num:>2} {name}: {evidence}", flush=True)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--report", type=Path, default=DEFAULT_REPORT)
+    ap.add_argument("--only", default="", help="comma-separated check numbers to run (default: all)")
     args = ap.parse_args()
+    only = {int(x) for x in args.only.split(",") if x.strip()}
+
+    def pick(checks):
+        return [c for c in checks if not only or c[0] in only]
 
     started = dt.datetime.now()
     tmp = Path(tempfile.mkdtemp(prefix="btb-accept-"))
-    backend = Backend(tmp)
-    ctx = Ctx(backend=backend)
     results: list[tuple[int, str, str, str]] = []
     meta: dict = {}
     fatal: str | None = None
+    logs: list[Path] = []
+    backends: list[Backend] = []
     try:
         preflight()
         meta = device_meta()
-        backend.start()
-        backend.wait_healthy()
-        ensure_adb_reverse()
-        for num, name, fn in CHECKS:
-            try:
-                verdict, evidence = fn(ctx)
-            except Exception as exc:  # a crashing check is a FAIL, and the next check still runs
-                verdict = FAIL
-                evidence = f"exception {type(exc).__name__}: {exc}; {traceback.format_exc(limit=1).strip().splitlines()[-1]}"
-            results.append((num, name, verdict, evidence))
-            print(f"[{verdict}] {num:>2} {name}: {evidence}", flush=True)
+        # Pin mode first (checks 1-12, 16), then households mode (13-15) on the same port.
+        for households, checks in ((False, pick(PIN_CHECKS)), (True, pick(HOUSEHOLDS_CHECKS))):
+            if not checks:
+                continue
+            backend = Backend(tmp, households=households)
+            backends.append(backend)
+            logs.append(backend.log_path)
+            backend.start()
+            backend.wait_healthy()
+            run_checks(backend, checks, results, meta)
+            backend.kill()
     except Exception as exc:
         fatal = f"{type(exc).__name__}: {exc}"
         print(f"ABORTED before the checks finished: {fatal}", file=sys.stderr)
     finally:
-        for step in (force_stop, lambda: adb("reverse", "--remove-all"), backend.kill):
+        for step in (force_stop, lambda: adb("reverse", "--remove-all")):
             try:
                 step()
             except Exception as exc:
                 print(f"cleanup step failed: {exc}", file=sys.stderr)
+        for backend in backends:
+            try:
+                backend.kill()
+            except Exception as exc:
+                print(f"cleanup step failed: {exc}", file=sys.stderr)
     if fatal:
         results.append((0, "setup", FAIL, fatal))
-    write_report(args.report, results, meta, backend.log_path, started)
+    results.sort(key=lambda r: r[0])
+    write_report(args.report, results, meta, logs[-1] if logs else tmp, started)
     print(f"report: {args.report}")
-    print(f"backend log: {backend.log_path}")
+    for log in logs:
+        print(f"backend log: {log}")
     return 1 if any(r[2] == FAIL for r in results) else 0
 
 

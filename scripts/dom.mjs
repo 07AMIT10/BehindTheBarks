@@ -1,7 +1,9 @@
 // Print the rendered text of a dashboard page: a replacement for `chrome --dump-dom`, which hangs while
 // the dashboard keeps an MJPEG <img> (/video) open for a dropped phone.
 //
-//   node scripts/dom.mjs <url> [--wait-for "text"]
+//   node scripts/dom.mjs <url> [--wait-for "text"] [--cookie "name=value"]
+//
+// --cookie sets one cookie for the page's origin (households mode: the owner's btb_session).
 //
 // Navigates with the system Chrome (playwright-core ships no browser), waits for the `load` event
 // (never for network idle, which an MJPEG stream prevents), waits up to 6 s for the dashboard to render
@@ -17,6 +19,8 @@ const WAIT_FOR_MS = 6000;
 const url = process.argv[2];
 const waitIdx = process.argv.indexOf("--wait-for");
 const waitFor = waitIdx === -1 ? null : process.argv[waitIdx + 1];
+const cookieIdx = process.argv.indexOf("--cookie");
+const cookieArg = cookieIdx === -1 ? null : process.argv[cookieIdx + 1];
 
 if (!url) {
   console.error('usage: node scripts/dom.mjs <url> [--wait-for "text"]');
@@ -32,7 +36,12 @@ const hardStop = setTimeout(() => {
 
 try {
   browser = await chromium.launch({ executablePath: CHROME, args: ["--no-sandbox"] });
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  if (cookieArg) {
+    const eq = cookieArg.indexOf("=");
+    await context.addCookies([{ name: cookieArg.slice(0, eq), value: cookieArg.slice(eq + 1), url }]);
+  }
+  const page = await context.newPage();
   await page.goto(url, { waitUntil: "load", timeout: HARD_LIMIT_MS - 2000 });
   // The dashboard renders after `load` (the page shows "Loading WagWatch…" until hydration).
   await page
