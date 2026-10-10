@@ -97,3 +97,22 @@ async def test_idle_eviction_stops_and_forgets(tmp_path):
     again = await reg.get("a")
     assert again is not a and again.runtime._stopped is False
     await reg.close()
+
+
+async def test_concurrent_first_requests_share_one_runtime(tmp_path):
+    """Two requests for a household that has no runtime yet both await Runtime.start(); the loser
+    must hand back the winner's runtime and stop its own, not overwrite it and leak it."""
+    import asyncio
+
+    reg, _clock = make_registry(tmp_path)
+    real_create = reg._create
+
+    async def slow_create(hid):  # a real build yields to the loop; make that explicit here
+        await asyncio.sleep(0.01)
+        return await real_create(hid)
+
+    reg._create = slow_create
+    a, b = await asyncio.gather(reg.get("hh-race"), reg.get("hh-race"))
+    assert a is b
+    assert reg.peek("hh-race") is a
+    assert a.runtime._stopped is False

@@ -196,6 +196,11 @@ class HouseholdRegistry:
             found.used_at = self.clock()
             return found
         lr = await self._create(hid)
+        raced = self._households.get(hid)
+        if raced is not None:  # another request finished first while we awaited Runtime.start()
+            await lr.runtime.stop()
+            lr.hub.close()
+            return raced
         self._households[hid] = lr
         return lr
 
