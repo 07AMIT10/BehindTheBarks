@@ -699,8 +699,13 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             household = store_repo.get_household(s, ctx.household_id)
             if household is None or not store_db.equal_digest(household.recovery_hash, store_db.sha256_hex(key)):
                 raise HTTPException(status_code=400, detail="recovery key does not match")
+            viewer_ids = [v.id for v in store_repo.viewers_of_household(s, ctx.household_id)]
             store_repo.delete_household(s, ctx.household_id)
             s.commit()
+        # Every open dashboard of the erased household gets a 4410 close (KICKED sentinel), not a
+        # socket left waiting on a hub that will never publish again.
+        for vid in viewer_ids:
+            ctx.hub.kick(vid)
         await app.state.registry.forget(ctx.household_id)
         log_dir = Path(str(ctx.runtime.cfg["web"]["log_dir"]))
         if log_dir.is_dir():  # the household's event-log directory goes with it (data erasure)

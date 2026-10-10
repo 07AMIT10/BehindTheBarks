@@ -160,3 +160,22 @@ def test_controls_for_an_offline_station_do_not_reach_the_default_station(tmp_pa
         assert c.post(f"/torch?station={sid}", json={"enabled": True}).status_code == 404
         assert c.get(f"/torch?station={sid}").status_code == 404
         assert c.post(f"/camera/flip?station={sid}").status_code == 404
+
+
+def test_deleting_the_household_closes_open_viewer_sockets(tmp_path):
+    """DELETE /households/me erases the data and must also end every open dashboard socket (4410);
+    a socket left on a dead hub would otherwise wait for ever."""
+    with TestClient(app(tmp_path)) as c:
+        created = c.post("/households", json={"dog_name": "Rex"}).json()
+        owner_cookie, recovery_key = c.cookies[VIEWER_COOKIE], created["recovery_key"]
+        code = c.post("/households/me/pairing", json={"kind": "viewer"}).json()["code"]
+        c.cookies.clear()
+        c.post("/join", json={"code": code, "label": "v"})
+        viewer_cookie = c.cookies[VIEWER_COOKIE]
+        c.cookies.clear()
+        ws = c.websocket_connect("/ws", cookies={VIEWER_COOKIE: viewer_cookie})
+        with ws:
+            assert ws.receive_json()["type"] == "status"
+            c.cookies.set(VIEWER_COOKIE, owner_cookie)
+            assert c.request("DELETE", "/households/me", json={"recovery_key": recovery_key}).status_code == 200
+            assert ws.receive().get("code") == 4410
