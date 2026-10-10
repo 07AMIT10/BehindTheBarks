@@ -195,6 +195,9 @@ class RemoteSession:
         # T3.1: what the person holding the phone allows, and what it says it is actually doing.
         self.station_cap = "full"          # an un-upgraded station is assumed full until it says otherwise
         self.effective_mode: str | None = None
+        # T6.1: station telemetry (battery, temperature, thermal, inference, RTT)
+        self.latest_telemetry: dict | None = None
+        self.telemetry_history: deque[dict] = deque(maxlen=360)
 
     @property
     def events(self) -> int:
@@ -228,6 +231,8 @@ class RemoteSession:
             return self._mode_state(data)
         if kind == "kick_viewers":
             return self._kick_viewers()
+        if kind == "telemetry":
+            return self._telemetry(data, now)
         model = EVENT_MODELS.get(kind) if isinstance(kind, str) else None
         if model is None or not isinstance(data, dict):
             self.dropped += 1
@@ -278,6 +283,50 @@ class RemoteSession:
         if tracker:
             tracker.kick_all(cooldown_s=60.0)
         return "kick_viewers"
+
+    def _telemetry(self, data: object, now: float) -> str | None:
+        """T6.1: validate telemetry envelope and store latest + ring buffer."""
+        if not isinstance(data, dict):
+            self.dropped += 1
+            return None
+
+        # Validate numeric ranges:
+        # battery: 0..100
+        # temp: -20..90
+        # ms values: 0..60000
+        bat = data.get("battery_pct")
+        if bat is not None:
+            if isinstance(bat, bool) or not isinstance(bat, (int, float)) or not (0 <= bat <= 100):
+                self.dropped += 1
+                return None
+
+        temp = data.get("temp_c")
+        if temp is not None:
+            if isinstance(temp, bool) or not isinstance(temp, (int, float)) or not (-20.0 <= temp <= 90.0):
+                self.dropped += 1
+                return None
+
+        rtt = data.get("ws_rtt_ms")
+        if rtt is not None:
+            if isinstance(rtt, bool) or not isinstance(rtt, (int, float)) or not (0 <= rtt <= 60000):
+                self.dropped += 1
+                return None
+
+        inf_ms = data.get("inference_ms")
+        if inf_ms is not None:
+            if not isinstance(inf_ms, dict):
+                self.dropped += 1
+                return None
+            for v in inf_ms.values():
+                if isinstance(v, bool) or not isinstance(v, (int, float)) or not (0 <= v <= 60000):
+                    self.dropped += 1
+                    return None
+
+        stored = dict(data)
+        stored["server_ts"] = now
+        self.latest_telemetry = stored
+        self.telemetry_history.append(stored)
+        return "telemetry"
 
     def handle(self, data: bytes) -> str | None:
         """Dispatch one binary message: 0x01 + JPEG preview. Returns "preview" or None."""
@@ -357,6 +406,7 @@ class RemoteSession:
     def snapshot(self, now: float) -> dict:
         """The dashboard's phone card (/status -> phone)."""
         h = self.hello
+        telem = self.latest_telemetry or {}
         return {
             "connected": self.connected, "device": h.device, "transport": "ingest-events", "camera": True,
             "facing": None,  # the app has one camera; the card shape stays the /ingest one
@@ -370,10 +420,15 @@ class RemoteSession:
             "last_event_age_s": self._age(self.last_event_ts, now),
             "last_frame_age_s": self._age(self.last_frame_ts, now),
             "station_cap": self.station_cap, "effective_mode": self.effective_mode,
+            "battery_pct": telem.get("battery_pct"),
+            "charging": telem.get("charging"),
+            "temp_c": telem.get("temp_c"),
+            "latest_telemetry": self.latest_telemetry,
         }
 
     def metrics(self, now: float) -> dict:
         """What RemotePipeline.status() mirrors."""
+        telem = self.latest_telemetry or {}
         return {
             "events_s": self._fps.rate(now), "preview_fps": self._preview_fps.rate(now),
             "events": self.events, "previews": self.previews, "dropped": self.dropped,
@@ -385,6 +440,10 @@ class RemoteSession:
             "last_preview_age_s": self._age(self.last_preview_ts, now),
             "audio_ok": self.last_audio_ts is not None and now - self.last_audio_ts <= AUDIO_OK_S,
             "station_cap": self.station_cap, "effective_mode": self.effective_mode,
+            "battery_pct": telem.get("battery_pct"),
+            "charging": telem.get("charging"),
+            "temp_c": telem.get("temp_c"),
+            "latest_telemetry": self.latest_telemetry,
         }
 
 

@@ -87,10 +87,16 @@ class EventUploader(
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO),
 ) {
     val previewDroppedBackpressure = java.util.concurrent.atomic.AtomicLong(0L)
+    @Volatile
+    var lastRttMs: Long = 0L
+        private set
+    private var lastPingSentMs: Long = 0L
 
     fun setPreviewMinInterval(intervalMs: Long) {
         previewMinIntervalMs = intervalMs.coerceAtLeast(0L)
     }
+
+    fun queueBytes(): Long = webSocket?.queueSize() ?: 0L
 
     companion object {
         const val KIND_PREVIEW: Byte = 0x01
@@ -288,7 +294,9 @@ class EventUploader(
                     }
                 }
                 "pong" -> {
-                    // Clock skew offset handled by server
+                    if (lastPingSentMs > 0L) {
+                        lastRttMs = (System.currentTimeMillis() - lastPingSentMs).coerceAtLeast(0L)
+                    }
                 }
                 "treat" -> {
                     // The server sends {"type":"treat","data":{"ts":<phone clock>,"offset_s":...}}; the
@@ -416,6 +424,7 @@ class EventUploader(
             while (isActive && connectionState == ConnectionState.CONNECTED) {
                 delay(pingIntervalMs)
                 if (connectionState == ConnectionState.CONNECTED) {
+                    lastPingSentMs = System.currentTimeMillis()
                     val pingJson = """{"type":"ping","phone_time":${clock()}}"""
                     webSocket?.send(pingJson)
                 }
@@ -537,6 +546,13 @@ class EventUploader(
             android.util.Log.w("EventUploader", "ws.send preview failed, queue=${ws.queueSize()}")
         }
         return sent
+    }
+
+    fun sendTelemetry(json: String): Boolean {
+        if (connectionState != ConnectionState.CONNECTED) return false
+        val ws = webSocket ?: return false
+        if (ws.queueSize() > maxQueueBytes) return false
+        return ws.send(json)
     }
 
     private fun sendEnvelope(type: String, jsonPayload: String): Boolean {

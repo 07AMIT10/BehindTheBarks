@@ -44,6 +44,8 @@ import com.btb.ondevice.ui.OverlayState
 import com.btb.ondevice.vision.DogDetector
 import com.btb.ondevice.vision.FaceLandmarker
 import com.btb.ondevice.vision.PoseEstimator
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
@@ -94,6 +96,7 @@ class MonitorService : Service(), LifecycleOwner {
         ModeController(stationCap = ViewMode.fromWire(readStationCap()) ?: ViewMode.FULL)
     }
     private var previewEncoder: PreviewEncoder? = null
+    private var telemetrySampler: TelemetrySampler? = null
     private val isScanningQr = AtomicBoolean(false)
     private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
     private var currentVideoViewers: Int = 0
@@ -369,11 +372,26 @@ class MonitorService : Service(), LifecycleOwner {
         previewEncoder = enc
         up.setPreviewMinInterval(modeController.policy.previewIntervalMs())
 
-        // 7. Initialize InferenceExecutor
+        // 7. Initialize TelemetrySampler (T6.1)
+        val sampler = TelemetrySampler(
+            uploader = { uploader },
+            batteryProvider = AndroidBatteryProvider(this),
+            thermalProvider = AndroidThermalProvider(this),
+            memoryProvider = AndroidMemoryProvider(this),
+            metricsTracker = { pipeline?.metricsTracker },
+            degradeLevel = { pipeline?.scheduler?.getLevel() ?: com.btb.ondevice.pipeline.DegradeLevel.L0_NORMAL },
+            previewEncoder = { previewEncoder },
+            sampleIntervalMs = 10_000L,
+            scope = CoroutineScope(Dispatchers.Default),
+        )
+        telemetrySampler = sampler
+        sampler.start()
+
+        // 8. Initialize InferenceExecutor
         val exec = InferenceExecutor()
         executor = exec
 
-        // 8. Initialize CameraSource & MicSource
+        // 9. Initialize CameraSource & MicSource
         val camera = CameraSource(
             context = this,
             lifecycleOwner = this,
@@ -634,6 +652,9 @@ class MonitorService : Service(), LifecycleOwner {
 
         micSource?.stop()
         micSource = null
+
+        telemetrySampler?.close()
+        telemetrySampler = null
 
         previewEncoder?.shutdown()
         previewEncoder = null

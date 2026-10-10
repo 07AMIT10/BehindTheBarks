@@ -17,6 +17,7 @@ import com.btb.ondevice.vision.PoseEstimator
 import com.btb.ondevice.vision.RoiWagEstimator
 import com.btb.ondevice.vision.boxIou
 import com.btb.ondevice.vision.pointInZone
+import com.btb.ondevice.bench.MetricsTracker
 import java.nio.ByteBuffer
 import kotlin.math.max
 import kotlin.math.min
@@ -44,6 +45,7 @@ class OnDevicePipeline(
     val audioPipeline: AudioPipeline = AudioPipeline(),
     val scheduler: Scheduler = Scheduler(),
     val executor: InferenceExecutor = InferenceExecutor(),
+    val metricsTracker: MetricsTracker = MetricsTracker(),
     var listener: PipelineListener? = null,
     val sourceName: String = "ondevice",
 ) : AutoCloseable {
@@ -66,7 +68,10 @@ class OnDevicePipeline(
     }
 
     fun pushAudioPcm16(ts: Double, pcm: ShortArray): List<AudioEvent> {
+        val t0 = System.nanoTime()
         val events = audioPipeline.pushPcm16(ts, pcm)
+        val dMs = (System.nanoTime() - t0) / 1_000_000.0
+        metricsTracker.recordStage("yamnet", dMs, ts)
         if (events.isNotEmpty()) {
             synchronized(heldAudioEvents) {
                 heldAudioEvents.addAll(events)
@@ -176,7 +181,10 @@ class OnDevicePipeline(
 
         // 4. Detection
         if (tick.detect) {
+            val t0 = System.nanoTime()
             val det = dogDetector.detect(rgba, width, height)
+            val dMs = (System.nanoTime() - t0) / 1_000_000.0
+            metricsTracker.recordStage("detector", dMs, ts)
             if (det != null) {
                 val prev = boxTracker.current()
                 val smoothed = boxTracker.update(det.box, ts)
@@ -200,7 +208,10 @@ class OnDevicePipeline(
 
         // 5. Pose
         if (dogDetected && tick.pose) {
+            val t0 = System.nanoTime()
             val kps = poseEstimator.estimate(rgba, width, height, activeBox!!)
+            val dMs = (System.nanoTime() - t0) / 1_000_000.0
+            metricsTracker.recordStage("pose", dMs, ts)
             lastKeypoints = kps
             val hBox = faceLandmarker.headBox(kps)
             lastHeadBoxValid = hBox != null
@@ -208,7 +219,10 @@ class OnDevicePipeline(
 
         // 6. Face
         if (dogDetected && tick.face && lastHeadBoxValid) {
+            val t0 = System.nanoTime()
             val lms = faceLandmarker.estimate(rgba, width, height, lastKeypoints)
+            val dMs = (System.nanoTime() - t0) / 1_000_000.0
+            metricsTracker.recordStage("face", dMs, ts)
             if (lms != null) {
                 lastFaceLandmarks = lms
             }

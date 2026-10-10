@@ -359,6 +359,10 @@ class RemotePipeline:
             "station_cap": self._station_cap,
             "effective_mode": self.effective_mode,
             "policy_mode": self._policy_mode,
+            "battery_pct": m.get("battery_pct"),
+            "charging": m.get("charging"),
+            "temp_c": m.get("temp_c"),
+            "latest_telemetry": m.get("latest_telemetry"),
         }
 
     def _metrics(self, now: float) -> dict:
@@ -366,7 +370,8 @@ class RemotePipeline:
             return self._session.metrics(now)
         return {"events_s": 0.0, "preview_fps": 0.0, "events": 0, "previews": 0, "dropped": 0, "device": None,
                 "models": {}, "clock_offset_s": 0.0, "clock_samples": 0, "ping_due_s": None, "audio_ok": False,
-                "last_event_age_s": None, "last_frame_age_s": None, "last_preview_age_s": None}
+                "last_event_age_s": None, "last_frame_age_s": None, "last_preview_age_s": None,
+                "battery_pct": None, "charging": None, "temp_c": None, "latest_telemetry": None}
 
     def _frame_ts(self) -> float | None:
         """The newest camera data we have seen: a FrameEvent envelope or a preview JPEG."""
