@@ -72,7 +72,7 @@ class Policy:
         self.viewers = dict(viewers or {"video": 0, "audio": 0})
         self._prev_household_mode: str = "full" if self.household_mode == "blackout" else self.household_mode
 
-    def compute_effective(self, station_cap: str = "full", viewer: Any = None) -> str:
+    def compute_effective(self, station_cap: str = "full", viewer: Any = None, *, is_peeking: bool = False) -> str:
         """Compute effective exposure for a viewer: min(station_cap, household_mode, viewer.ceiling)."""
         cap = parse_mode(station_cap)
         ceiling = "full"
@@ -82,7 +82,8 @@ class Policy:
             c = getattr(viewer, "mode_ceiling", None)
             if c:
                 ceiling = parse_mode(c)
-        return min_mode(cap, self.household_mode, ceiling)
+        base_mode = "full" if is_peeking else self.household_mode
+        return min_mode(cap, base_mode, ceiling)
 
     def mode_info(self, station_cap: str = "full", viewer: Any = None) -> dict[str, str]:
         cap = parse_mode(station_cap)

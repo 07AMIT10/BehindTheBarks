@@ -221,7 +221,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             s.commit()
             return Ctx(household_id=viewer.household_id, role=viewer.role, viewer_id=viewer.id,
                        runtime=lr.runtime, hub=lr.hub, pipeline=lr.pipeline, request=req,
-                       policy=lr.policy, tracker=lr.tracker, mode_ceiling=viewer.mode_ceiling or "full")
+                       policy=lr.policy, tracker=lr.tracker, limited=lr.limited, mode_ceiling=viewer.mode_ceiling or "full")
 
 
 
@@ -235,9 +235,10 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         lr = app.state.registry.peek(LEGACY)
         policy = getattr(lr, "policy", None) or getattr(lr.runtime, "policy", None)
         tracker = getattr(lr, "tracker", None) or getattr(lr.runtime, "tracker", None)
+        limited = getattr(lr, "limited", None) or getattr(lr.runtime, "limited", None)
         return Ctx(household_id=LEGACY, role="owner", viewer_id=None,
                    runtime=lr.runtime, hub=lr.hub, pipeline=lr.pipeline, request=req,
-                   policy=policy, tracker=tracker, mode_ceiling="full")
+                   policy=policy, tracker=tracker, limited=limited, mode_ceiling="full")
 
     class _BadPair(Exception):
         """An otherwise-invalid /pair attempt: counted, then answered with the same 400 body."""
@@ -877,12 +878,31 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         station_cap = getattr(ctx.pipeline, "station_cap", "full")
         policy = ctx.policy or getattr(ctx.runtime, "policy", None)
         h_mode = policy.household_mode if policy else getattr(ctx.pipeline, "_policy_mode", "full")
-        effective = min_mode(station_cap, h_mode, getattr(ctx, "mode_ceiling", "full"))
+        is_peeking = ctx.limited.is_peeking(ctx.viewer_id or "owner") if ctx.limited else False
+        base = "full" if is_peeking else h_mode
+        effective = min_mode(station_cap, base, getattr(ctx, "mode_ceiling", "full"))
         return {
             "household_mode": h_mode,
             "station_cap": station_cap,
             "effective": effective,
         }
+
+    @app.post("/peek")
+    async def post_peek(ctx: Ctx = Depends(auth_ctx)) -> dict:
+        """T3.5: temporary 15s window raising effective mode to min(full, ceiling) if station cap is full."""
+        station_cap = getattr(ctx.pipeline, "station_cap", "full")
+        if station_cap != "full":
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "station_cap", "message": f"Peek not allowed while station cap is {station_cap}"}
+            )
+        if ctx.limited is None:
+            raise HTTPException(status_code=500, detail="limited processor not available")
+        vid = ctx.viewer_id or "owner"
+        expires_at = ctx.limited.start_peek(vid, role=ctx.role, duration_s=15.0)
+        if ctx.tracker:
+            ctx.tracker.push_policy_now()
+        return {"ok": True, "status": "peeking", "duration_s": 15.0, "expires_at": expires_at}
 
     @app.post("/mode")
     async def set_mode(ctx: Ctx = Depends(auth_ctx), body: dict | None = None) -> dict:
@@ -989,7 +1009,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                     station_cap = getattr(ctx.pipeline, "station_cap", "full")
                     policy = ctx.policy or getattr(ctx.runtime, "policy", None)
                     h_mode = policy.household_mode if policy else getattr(ctx.pipeline, "_policy_mode", "full")
-                    eff_mode = min_mode(station_cap, h_mode, getattr(ctx, "mode_ceiling", "full"))
+                    is_peeking = ctx.limited.is_peeking(ctx.viewer_id or "owner") if ctx.limited else False
+                    eff_mode = policy.compute_effective(station_cap, ctx, is_peeking=is_peeking) if policy else min_mode(station_cap, "full" if is_peeking else h_mode, getattr(ctx, "mode_ceiling", "full"))
 
                     if getattr(ctx.pipeline, "_idle", False):
                         jpeg = None
@@ -999,7 +1020,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                         jpeg = build_events_only_slate()
                     elif eff_mode == "limited":
                         raw = getattr(ctx.pipeline, "raw_frame_jpeg", ctx.pipeline.latest_frame_jpeg)()
-                        jpeg = limit_jpeg(raw) if raw else None
+                        jpeg = ctx.limited.process(raw) if (ctx.limited and raw) else (limit_jpeg(raw) if raw else None)
                     else:  # full
                         jpeg = getattr(ctx.pipeline, "raw_frame_jpeg", ctx.pipeline.latest_frame_jpeg)()
 

@@ -19,6 +19,7 @@ from typing import Any, Awaitable, Callable
 from backend.notify.dashboard import DashboardOnlyNotifier
 from backend.web.event_log import EventLog
 from backend.web.hub import Hub
+from backend.web.limited import Limited
 from backend.web.policy import Policy
 from backend.web.runtime import Runtime
 from backend.web.tracker import ViewerTracker
@@ -44,6 +45,7 @@ class HouseholdRuntime:
     pipeline: Any
     policy: Policy = field(default_factory=Policy)
     tracker: Any = None
+    limited: Any = None
     used_at: float = 0.0
     stations: int = 0  # live station sockets; eviction needs zero of these and zero viewers
     viewers: int = 0
@@ -70,8 +72,10 @@ class HouseholdRegistry:
         )
         tracker.register_kick_callback(hub.kick_all_viewers)
         runtime.tracker = tracker
+        limited = getattr(runtime, "limited", None) or Limited(clock=self.clock)
+        runtime.limited = limited
         lr = HouseholdRuntime(household_id=LEGACY, runtime=runtime, hub=hub, pipeline=pipeline,
-                              policy=policy, tracker=tracker, used_at=self.clock())
+                              policy=policy, tracker=tracker, limited=limited, used_at=self.clock())
         self._households[LEGACY] = lr
         return lr
 
@@ -119,14 +123,16 @@ class HouseholdRegistry:
         policy = Policy(household_mode="privacy")
         tracker = ViewerTracker(household_id=hid, policy=policy, pipeline=pipeline, clock=self.clock)
         tracker.register_kick_callback(hub.kick_all_viewers)
+        limited = Limited(clock=self.clock)
         rt = Runtime(cfg, pipeline, interpreter, notifier, hub, clock=self.clock, policy=policy)
         rt.policy = policy
         rt.tracker = tracker
+        rt.limited = limited
         if hasattr(pipeline, "set_policy"):
             pipeline.set_policy(policy.household_mode)
         await rt.start()
         return HouseholdRuntime(household_id=hid, runtime=rt, hub=hub, pipeline=pipeline,
-                                policy=policy, tracker=tracker, used_at=self.clock())
+                                policy=policy, tracker=tracker, limited=limited, used_at=self.clock())
 
     def _household_settings(self, hid: str, cfg: dict) -> tuple[dict, bool, bool]:
         """The profile, log flag and LLM opt-in from the DB row (T2.9); else the cfg."""

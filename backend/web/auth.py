@@ -28,4 +28,5 @@ class Ctx:
     request: Any = None  # set by auth_ctx so routes can build absolute URLs (pairing QR)
     policy: Any = None
     tracker: Any = None
+    limited: Any = None
     mode_ceiling: str = "full"

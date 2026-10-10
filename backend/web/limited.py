@@ -57,3 +57,49 @@ def limit_jpeg(jpeg: bytes, *, width: int = 240, blur: int = 31, quality: int = 
     except Exception:
         pass
     return _build_limited_slate()
+
+
+class Limited:
+    """Manages limited mode frame caching (10s) and 15s peek windows (T3.5)."""
+
+    def __init__(self, cache_s: float = 10.0, clock: Callable[[], float] | None = None) -> None:
+        import time
+        self.cache_s = cache_s
+        self.clock = clock or time.time
+        self._cached_jpeg: bytes | None = None
+        self._cached_at: float = -1.0
+        self._peeks: dict[str, float] = {}  # viewer_id -> expires_at
+        self.audit_log: list[dict] = []
+
+    def process(self, raw_jpeg: bytes | None) -> bytes:
+        """Return the cached blurred JPEG if within cache_s, otherwise compute and cache."""
+        now = self.clock()
+        if self._cached_jpeg is not None and (now - self._cached_at) < self.cache_s:
+            return self._cached_jpeg
+        if not raw_jpeg:
+            return _build_limited_slate()
+        res = limit_jpeg(raw_jpeg)
+        self._cached_jpeg = res
+        self._cached_at = now
+        return res
+
+    def start_peek(self, viewer_id: str, role: str = "viewer", duration_s: float = 15.0) -> float:
+        """Start a temporary peek window. Returns expires_at timestamp."""
+        now = self.clock()
+        expires_at = now + duration_s
+        self._peeks[viewer_id] = expires_at
+        self.audit_log.append({
+            "viewer_id": viewer_id,
+            "role": role,
+            "ts": now,
+            "duration_s": duration_s,
+            "expires_at": expires_at,
+        })
+        return expires_at
+
+    def is_peeking(self, viewer_id: str | None) -> bool:
+        if not viewer_id:
+            return False
+        expires_at = self._peeks.get(viewer_id, 0.0)
+        return self.clock() < expires_at
+

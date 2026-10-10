@@ -170,6 +170,10 @@ class ViewerTracker:
 
         self._debounce_task = loop.create_task(_delayed())
 
+    def push_policy_now(self) -> None:
+        """Immediately push policy downlink with current viewer counts to the station."""
+        self._push_policy_now()
+
     def _push_policy_now(self) -> None:
         counts = self.viewer_counts
         if hasattr(self.policy, "viewers"):
@@ -182,3 +186,4 @@ class ViewerTracker:
                 set_policy_fn(mode, preview=preview, viewers=counts)
             except Exception:
                 pass
+
