@@ -345,15 +345,24 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             store_repo.revoke_station(s, station_id)
             s.commit()
         lr = app.state.registry.peek(ctx.household_id)
-        session = lr.runtime.phone if lr is not None else None
-        if session is not None and getattr(getattr(session, "hello", None), "station_id", None) == station_id:
-            closer = getattr(session, "closer", None)
-            code_holder = getattr(session, "close_code", None)  # the shared dict the closer reads
-            if isinstance(code_holder, dict):
-                code_holder["code"] = CLOSE_REVOKED
-            if closer is not None:
-                await closer()
-                lr.runtime.phone_close(session, CLOSE_REVOKED)
+        if lr is not None:
+            ch = lr.channels.get(station_id)
+            target_rt = ch.runtime if ch is not None else lr.runtime
+            session = target_rt.phone
+            if session is not None and getattr(getattr(session, "hello", None), "station_id", None) == station_id:
+                closer = getattr(session, "closer", None)
+                code_holder = getattr(session, "close_code", None)  # the shared dict the closer reads
+                if isinstance(code_holder, dict):
+                    code_holder["code"] = CLOSE_REVOKED
+                if closer is not None:
+                    await closer()
+                    target_rt.phone_close(session, CLOSE_REVOKED)
+            if ch is not None:
+                await ch.runtime.stop()
+                ch.hub.close()
+                del lr.channels[station_id]
+                if lr.default_channel_id == station_id:
+                    lr.default_channel_id = next(iter(lr.channels.keys())) if lr.channels else None
         return {"ok": True}
 
     # -- viewer invites (T2.6): a code joins a viewer, the owner lists and revokes ------------------
@@ -449,9 +458,21 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             return
 
         lr = await app.state.registry.get(station.household_id)
-        rt, hub = lr.runtime, lr.hub
+        max_stations = int(cfg.get("web", {}).get("max_stations_per_household", 4) or 4)
+        if len(lr.channels) >= max_stations and hello.station_id not in lr.channels:
+            await sock.close(code=CLOSE_BUSY, reason="Another phone is already streaming")
+            return
+
         with app.state.db_session() as s:
             store_repo.touch_station(s, station)
+
+        station_name = station.name or hello.device or "Station"
+        try:
+            channel = await lr.channel(hello.station_id, name=station_name)
+        except ValueError:
+            await sock.close(code=CLOSE_BUSY, reason="Another phone is already streaming")
+            return
+        rt, hub, pipeline = channel.runtime, channel.hub, channel.pipeline
 
         async def send_downlink(msg: dict) -> None:
             await sock.send_json(msg)
@@ -465,7 +486,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 pass
 
         rem = cfg["web"].get("remote") or {}
-        session = RemoteSession(hello, lr.pipeline, rt, clock=rt.clock,
+        session = RemoteSession(hello, pipeline, rt, clock=rt.clock,
                                 max_message_bytes=web["ingest"]["max_message_bytes"],
                                 fps_window_s=web["ingest"]["fps_window_s"],
                                 offset_samples=int(rem.get("clock_samples", 5)),
@@ -476,7 +497,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         if session is None:
             await sock.close(code=CLOSE_BUSY, reason="Another phone is already streaming")
             return
-        bind_pipeline(lr.pipeline, session, send_downlink)
+        bind_pipeline(pipeline, session, send_downlink)
         code: int | None = None
         try:
             await sock.send_json({"type": "hello_ack", "server_time": session.server_time_at_hello})
@@ -493,7 +514,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         except (WebSocketDisconnect, RuntimeError):
             pass
         finally:
-            detach = getattr(lr.pipeline, "detach", None)
+            detach = getattr(pipeline, "detach", None)
             if detach is not None:
                 detach(session)
             rt.phone_close(session, code)
@@ -713,51 +734,142 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     async def health() -> dict:
         return {"ok": True}
 
+    def _resolve_channel(lr, station_id: str | None, household_id: str):
+        if not station_id:
+            return lr.get_channel(None) if lr else None
+        if lr and station_id in lr.channels:
+            return lr.channels[station_id]
+        if hasattr(app.state, "db_session") and app.state.db_session:
+            with app.state.db_session() as s:
+                st = store_repo.station_by_id(s, station_id)
+                if st is None or st.household_id != household_id:
+                    raise HTTPException(404, f"station {station_id!r} not found in this household")
+        else:
+            raise HTTPException(404, f"station {station_id!r} not found in this household")
+        return None
+
     @app.get("/status")
-    async def status(ctx: Ctx = Depends(auth_ctx)) -> dict:
-        st = dict(ctx.runtime.status())
-        station_cap = getattr(ctx.pipeline, "station_cap", "full")
-        policy = ctx.policy or getattr(ctx.runtime, "policy", None)
-        h_mode = policy.household_mode if policy else getattr(ctx.pipeline, "_policy_mode", "full")
+    async def status(ctx: Ctx = Depends(auth_ctx), station: str | None = None) -> dict:
+        lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
+        if station:
+            ch = _resolve_channel(lr, station, ctx.household_id)
+            if ch is None:
+                return {
+                    "phone": None, "state": "idle", "effective_mode": "full",
+                    "station_cap": "full", "privacy_mode": False,
+                    "pipeline_status": None, "max_idle_s": 180.0,
+                    "viewers": {"video": 0, "audio": 0},
+                }
+            st = dict(ch.runtime.status())
+            s_cap = getattr(ch.pipeline, "station_cap", "full")
+            eff = min_mode(s_cap, ch.policy.household_mode, getattr(ctx, "mode_ceiling", "full"))
+            st["station_cap"] = s_cap
+            st["effective_mode"] = eff
+            st["privacy_mode"] = eff == "blackout"
+            st["max_idle_s"] = float(web.get("video", {}).get("max_idle_s", 180.0))
+            st["viewers"] = ch.tracker.viewer_counts if ch.tracker else {"video": 0, "audio": 0}
+            st["mode_info"] = {"household_mode": ch.policy.household_mode, "station_cap": s_cap, "effective": eff}
+            return st
+
+        ch = _resolve_channel(lr, None, ctx.household_id)
+        rt = ch.runtime if ch else ctx.runtime
+        pipe = ch.pipeline if ch else ctx.pipeline
+        pol = ch.policy if ch else (ctx.policy or getattr(rt, "policy", None))
+        tracker = ch.tracker if ch else ctx.tracker
+
+        st = dict(rt.status())
+        station_cap = getattr(pipe, "station_cap", "full")
+        h_mode = pol.household_mode if pol else getattr(pipe, "_policy_mode", "full")
         effective = min_mode(station_cap, h_mode, getattr(ctx, "mode_ceiling", "full"))
         st["station_cap"] = station_cap
         st["effective_mode"] = effective
         st["privacy_mode"] = effective == "blackout"
         st["max_idle_s"] = float(web.get("video", {}).get("max_idle_s", 180.0))
-        st["viewers"] = ctx.tracker.viewer_counts if ctx.tracker else {"video": 0, "audio": 0}
+        st["viewers"] = tracker.viewer_counts if tracker else {"video": 0, "audio": 0}
         st["mode_info"] = {
             "household_mode": h_mode,
             "station_cap": station_cap,
             "effective": effective,
         }
+
+        stations_list = []
+        seen_sids = set()
+        for s_id, c_obj in lr.channels.items():
+            if s_id == "default" and len(lr.channels) > 1 and c_obj.runtime.phone is None:
+                continue
+            seen_sids.add(s_id)
+            sc = getattr(c_obj.pipeline, "station_cap", "full")
+            eff_c = min_mode(sc, c_obj.policy.household_mode, getattr(ctx, "mode_ceiling", "full"))
+            c_phone = c_obj.runtime.status().get("phone")
+            stations_list.append({
+                "id": s_id,
+                "name": c_obj.name,
+                "dog_name": c_obj.runtime.cfg["web"].get("profile", {}).get("dog_name", "Your dog"),
+                "phone": c_phone,
+                "pipeline_status": c_obj.runtime.status().get("pipeline_status"),
+                "effective_mode": eff_c,
+                "battery": c_phone.get("battery_pct") if c_phone else None,
+            })
+        if hasattr(app.state, "db_session") and app.state.db_session and ctx.household_id != LEGACY:
+            with app.state.db_session() as s:
+                for db_st in store_repo.stations_of_household(s, ctx.household_id):
+                    if db_st.revoked_at is None and db_st.id not in seen_sids:
+                        seen_sids.add(db_st.id)
+                        stations_list.append({
+                            "id": db_st.id,
+                            "name": db_st.name,
+                            "dog_name": db_st.dog_name or (lr.runtime.cfg["web"].get("profile", {}).get("dog_name", "Your dog")),
+                            "phone": None,
+                            "pipeline_status": None,
+                            "effective_mode": "full",
+                            "battery": None,
+                        })
+        st["stations"] = stations_list
         return st
 
     @app.get("/events")
-    async def events(ctx: Ctx = Depends(auth_ctx), since: int = 0) -> dict:
+    async def events(ctx: Ctx = Depends(auth_ctx), since: int = 0, station: str | None = None) -> dict:
+        lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
+        if station:
+            ch = _resolve_channel(lr, station, ctx.household_id)
+            if ch is None:
+                return {"events": [], "timeline": []}
+            return {"events": ch.hub.history(since), "timeline": ch.runtime.timeline()}
         return {"events": ctx.hub.history(since), "timeline": ctx.runtime.timeline()}
 
     @app.post("/treat")
-    async def treat(ctx: Ctx = Depends(auth_ctx)) -> dict:
+    async def treat(ctx: Ctx = Depends(auth_ctx), station: str | None = None, body: dict | None = None) -> dict:
         check_rate_limit("treat", 3.5, ctx.household_id)
-        return {"ts": ctx.runtime.treat()}
+        lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
+        target_station = station or (body.get("station") if isinstance(body, dict) else None)
+        ch = _resolve_channel(lr, target_station, ctx.household_id)
+        rt = ch.runtime if ch else ctx.runtime
+        return {"ts": rt.treat()}
 
     @app.post("/torch")
-    async def set_torch(ctx: Ctx = Depends(auth_ctx), body: dict | None = None) -> dict:
+    async def set_torch(ctx: Ctx = Depends(auth_ctx), station: str | None = None, body: dict | None = None) -> dict:
         check_rate_limit("torch", 1.2, ctx.household_id)
-        fn = getattr(ctx.pipeline, "set_torch", None)
+        lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
+        target_station = station or (body.get("station") if isinstance(body, dict) else None)
+        ch = _resolve_channel(lr, target_station, ctx.household_id)
+        pipeline = ch.pipeline if ch else ctx.pipeline
+        fn = getattr(pipeline, "set_torch", None)
         if fn is None:
             raise HTTPException(400, "web.pipeline must be 'remote' to control torch")
         if body is not None and "enabled" in body:
             enabled = bool(body["enabled"])
         else:
-            get_fn = getattr(ctx.pipeline, "get_torch", None)
+            get_fn = getattr(pipeline, "get_torch", None)
             enabled = not (get_fn() if get_fn is not None else False)
         sent = bool(fn(enabled))
         return {"ok": True, "enabled": enabled, "sent": sent}
 
     @app.get("/torch")
-    async def get_torch(ctx: Ctx = Depends(auth_ctx)) -> dict:
-        get_fn = getattr(ctx.pipeline, "get_torch", None)
+    async def get_torch(ctx: Ctx = Depends(auth_ctx), station: str | None = None) -> dict:
+        lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
+        ch = _resolve_channel(lr, station, ctx.household_id)
+        pipeline = ch.pipeline if ch else ctx.pipeline
+        get_fn = getattr(pipeline, "get_torch", None)
         enabled = False if get_fn is None else bool(get_fn())
         return {"enabled": enabled}
 
@@ -782,34 +894,54 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         return saved
 
     @app.post("/camera/flip")
-    async def camera_flip(ctx: Ctx = Depends(auth_ctx)) -> dict:
+    async def camera_flip(ctx: Ctx = Depends(auth_ctx), station: str | None = None, body: dict | None = None) -> dict:
         check_rate_limit("flip", 2.5, ctx.household_id)
-        fn = getattr(ctx.pipeline, "flip_camera", None)
+        lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
+        target_station = station or (body.get("station") if isinstance(body, dict) else None)
+        ch = _resolve_channel(lr, target_station, ctx.household_id)
+        pipeline = ch.pipeline if ch else ctx.pipeline
+        fn = getattr(pipeline, "flip_camera", None)
         if fn is None:
             raise HTTPException(400, "web.pipeline must be 'remote' to flip camera")
         return {"ok": True, "sent": bool(fn())}
 
     @app.post("/privacy")
-    async def set_privacy(ctx: Ctx = Depends(auth_ctx), body: dict | None = None) -> dict:
+    async def set_privacy(ctx: Ctx = Depends(auth_ctx), station: str | None = None, body: dict | None = None) -> dict:
         if ctx.role != ROLE_OWNER:
             raise HTTPException(403, "only the household owner can change the viewing mode")
         enabled = bool((body or {}).get("enabled", False))
-        policy = ctx.policy or getattr(ctx.runtime, "policy", None)
+        target_station = station or (body.get("station") if isinstance(body, dict) else None)
+        lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
+        ch = _resolve_channel(lr, target_station, ctx.household_id)
+        if target_station and ch is None:
+            raise HTTPException(404, f"station {target_station!r} is not active")
+
+        pipeline = ch.pipeline if ch else ctx.pipeline
+        policy = ch.policy if ch else (ctx.policy or getattr(ctx.runtime, "policy", None))
+        hub = ch.hub if ch else ctx.hub
         if policy is None:
             policy = Policy(household_mode="full")
-            ctx.policy = policy
-            if hasattr(ctx.runtime, "policy"):
-                ctx.runtime.policy = policy
+            if ch:
+                ch.policy = policy
+            else:
+                ctx.policy = policy
+                if hasattr(ctx.runtime, "policy"):
+                    ctx.runtime.policy = policy
 
-        station_cap = getattr(ctx.pipeline, "station_cap", "full")
+        station_cap = getattr(pipeline, "station_cap", "full")
         if enabled:
             if policy.household_mode != "blackout":
                 policy._prev_household_mode = policy.household_mode
             policy.household_mode = "blackout"
-            set_policy_fn = getattr(ctx.pipeline, "set_policy", None)
+            set_policy_fn = getattr(pipeline, "set_policy", None)
             if set_policy_fn:
                 set_policy_fn("blackout")
-            ctx.hub.publish("status", {
+            if not target_station and lr:
+                for s_ch in lr.channels.values():
+                    s_ch.policy.household_mode = "blackout"
+                    if hasattr(s_ch.pipeline, "set_policy"):
+                        s_ch.pipeline.set_policy("blackout")
+            hub.publish("status", {
                 "mode_info": {"household_mode": "blackout", "station_cap": station_cap, "effective": "blackout"},
                 "effective_mode": "blackout",
                 "privacy_mode": True,
@@ -818,17 +950,22 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         else:
             restore_mode = policy.restore_mode()
             if mode_rank(restore_mode) > mode_rank(station_cap):
-                req_fn = getattr(ctx.pipeline, "request_mode", None)
+                req_fn = getattr(pipeline, "request_mode", None)
                 if req_fn:
                     req_fn(restore_mode, from_role="owner")
                 return {"ok": True, "privacy_mode": True, "status": "pending", "mode": restore_mode}
             else:
                 policy.household_mode = restore_mode
-                set_policy_fn = getattr(ctx.pipeline, "set_policy", None)
+                set_policy_fn = getattr(pipeline, "set_policy", None)
                 if set_policy_fn:
                     set_policy_fn(restore_mode)
+                if not target_station and lr:
+                    for s_ch in lr.channels.values():
+                        s_ch.policy.household_mode = restore_mode
+                        if hasattr(s_ch.pipeline, "set_policy"):
+                            s_ch.pipeline.set_policy(restore_mode)
                 eff = policy.compute_effective(station_cap, ctx)
-                ctx.hub.publish("status", {
+                hub.publish("status", {
                     "mode_info": {"household_mode": restore_mode, "station_cap": station_cap, "effective": eff},
                     "effective_mode": eff,
                     "privacy_mode": eff == "blackout",
@@ -836,10 +973,15 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 return {"ok": True, "privacy_mode": eff == "blackout", "status": "applied", "mode": restore_mode}
 
     @app.get("/privacy")
-    async def get_privacy(ctx: Ctx = Depends(auth_ctx)) -> dict:
-        station_cap = getattr(ctx.pipeline, "station_cap", "full")
-        policy = ctx.policy or getattr(ctx.runtime, "policy", None)
-        h_mode = policy.household_mode if policy else getattr(ctx.pipeline, "_policy_mode", "full")
+    async def get_privacy(ctx: Ctx = Depends(auth_ctx), station: str | None = None) -> dict:
+        lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
+        ch = _resolve_channel(lr, station, ctx.household_id)
+        if station and ch is None:
+            raise HTTPException(404, f"station {station!r} is not active")
+        pipeline = ch.pipeline if ch else ctx.pipeline
+        policy = ch.policy if ch else (ctx.policy or getattr(ctx.runtime, "policy", None))
+        station_cap = getattr(pipeline, "station_cap", "full")
+        h_mode = policy.household_mode if policy else getattr(pipeline, "_policy_mode", "full")
         effective = min_mode(station_cap, h_mode, getattr(ctx, "mode_ceiling", "full"))
         return {"privacy_mode": effective == "blackout"}
 
@@ -874,11 +1016,18 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         return tl
 
     @app.get("/mode")
-    async def get_mode(ctx: Ctx = Depends(auth_ctx)) -> dict:
-        station_cap = getattr(ctx.pipeline, "station_cap", "full")
-        policy = ctx.policy or getattr(ctx.runtime, "policy", None)
-        h_mode = policy.household_mode if policy else getattr(ctx.pipeline, "_policy_mode", "full")
-        is_peeking = ctx.limited.is_peeking(ctx.viewer_id or "owner") if ctx.limited else False
+    async def get_mode(ctx: Ctx = Depends(auth_ctx), station: str | None = None) -> dict:
+        lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
+        ch = _resolve_channel(lr, station, ctx.household_id)
+        if station and ch is None:
+            raise HTTPException(404, f"station {station!r} is not active")
+        pipeline = ch.pipeline if ch else ctx.pipeline
+        policy = ch.policy if ch else (ctx.policy or getattr(ctx.runtime, "policy", None))
+        limited = ch.limited if ch else ctx.limited
+
+        station_cap = getattr(pipeline, "station_cap", "full") if pipeline else "full"
+        h_mode = policy.household_mode if policy else getattr(pipeline, "_policy_mode", "full") if pipeline else "full"
+        is_peeking = limited.is_peeking(ctx.viewer_id or "owner") if limited else False
         base = "full" if is_peeking else h_mode
         effective = min_mode(station_cap, base, getattr(ctx, "mode_ceiling", "full"))
         return {
@@ -888,30 +1037,43 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         }
 
     @app.post("/peek")
-    async def post_peek(ctx: Ctx = Depends(auth_ctx)) -> dict:
+    async def post_peek(ctx: Ctx = Depends(auth_ctx), station: str | None = None) -> dict:
         """T3.5: temporary 15s window raising effective mode to min(full, ceiling) if station cap is full."""
-        station_cap = getattr(ctx.pipeline, "station_cap", "full")
+        lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
+        ch = _resolve_channel(lr, station, ctx.household_id)
+        if station and ch is None:
+            raise HTTPException(404, f"station {station!r} is not active")
+        pipeline = ch.pipeline if ch else ctx.pipeline
+        tracker = ch.tracker if ch else ctx.tracker
+        limited = ch.limited if ch else ctx.limited
+
+        station_cap = getattr(pipeline, "station_cap", "full") if pipeline else "full"
         if station_cap != "full":
             raise HTTPException(
                 status_code=409,
                 detail={"error": "station_cap", "message": f"Peek not allowed while station cap is {station_cap}"}
             )
-        if ctx.limited is None:
+        if limited is None:
             raise HTTPException(status_code=500, detail="limited processor not available")
         vid = ctx.viewer_id or "owner"
-        expires_at = ctx.limited.start_peek(vid, role=ctx.role, duration_s=15.0)
-        if ctx.tracker:
-            ctx.tracker.push_policy_now()
+        expires_at = limited.start_peek(vid, role=ctx.role, duration_s=15.0)
+        if tracker:
+            tracker.push_policy_now()
         return {"ok": True, "status": "peeking", "duration_s": 15.0, "expires_at": expires_at}
 
     @app.post("/mode")
-    async def set_mode(ctx: Ctx = Depends(auth_ctx), body: dict | None = None) -> dict:
+    async def set_mode(ctx: Ctx = Depends(auth_ctx), station: str | None = None, body: dict | None = None) -> dict:
         if not body or "mode" not in body:
             raise HTTPException(400, "mode is required")
         raw_mode = body.get("mode")
+        target_station = station or (body.get("station") if isinstance(body, dict) else None)
+        lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
+        ch = _resolve_channel(lr, target_station, ctx.household_id)
+
         if raw_mode in ("live", "demo"):
+            rt = ch.runtime if ch else ctx.runtime
             try:
-                return {"mode": ctx.runtime.set_mode(raw_mode)}
+                return {"mode": rt.set_mode(raw_mode)}
             except ValueError as exc:
                 raise HTTPException(400, str(exc))
 
@@ -922,6 +1084,29 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             mode = parse_mode(raw_mode)
         except ModeError as exc:
             raise HTTPException(400, str(exc))
+
+        if target_station:
+            if ch is None:
+                raise HTTPException(404, f"station {target_station!r} is not active")
+            station_cap = getattr(ch.pipeline, "station_cap", "full")
+            if mode_rank(mode) > mode_rank(station_cap):
+                req_fn = getattr(ch.pipeline, "request_mode", None)
+                if req_fn:
+                    req_fn(mode, from_role="owner")
+                return {"status": "pending", "mode": mode}
+            if ch.policy.household_mode != "blackout":
+                ch.policy._prev_household_mode = ch.policy.household_mode
+            ch.policy.household_mode = mode
+            set_policy_fn = getattr(ch.pipeline, "set_policy", None)
+            if set_policy_fn:
+                set_policy_fn(mode)
+            eff = ch.policy.compute_effective(station_cap, ctx)
+            ch.hub.publish("status", {
+                "mode_info": {"household_mode": mode, "station_cap": station_cap, "effective": eff},
+                "effective_mode": eff,
+                "privacy_mode": eff == "blackout",
+            })
+            return {"status": "applied", "mode": mode}
 
         station_cap = getattr(ctx.pipeline, "station_cap", "full")
         policy = ctx.policy or getattr(ctx.runtime, "policy", None)
@@ -945,6 +1130,11 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         set_policy_fn = getattr(ctx.pipeline, "set_policy", None)
         if set_policy_fn:
             set_policy_fn(mode)
+        if lr:
+            for s_ch in lr.channels.values():
+                s_ch.policy.household_mode = mode
+                if hasattr(s_ch.pipeline, "set_policy"):
+                    s_ch.pipeline.set_policy(mode)
         eff = policy.compute_effective(station_cap, ctx)
         ctx.hub.publish("status", {
             "mode_info": {"household_mode": mode, "station_cap": station_cap, "effective": eff},
@@ -959,10 +1149,16 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         return await ctx.runtime.demo_notify(payload.get("clip", ""), float(payload.get("t", 0.0)))
 
     @app.post("/phone/config")
-    async def phone_config(ctx: Ctx = Depends(auth_ctx), body: dict | None = None) -> dict:
+    async def phone_config(ctx: Ctx = Depends(auth_ctx), station: str | None = None, body: dict | None = None) -> dict:
         """Push data.rules overrides to the phone, so retuning needs no APK rebuild (web.pipeline:
         remote only). With no `rules`, the server's own data.rules section is sent."""
-        push = getattr(ctx.pipeline, "push_config", None)
+        target_station = station or (body.get("station") if isinstance(body, dict) else None)
+        lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
+        ch = _resolve_channel(lr, target_station, ctx.household_id)
+        if target_station and ch is None:
+            raise HTTPException(404, f"station {target_station!r} is not active")
+        pipeline = ch.pipeline if ch else ctx.pipeline
+        push = getattr(pipeline, "push_config", None)
         if push is None:
             raise HTTPException(400, "web.pipeline must be 'remote' to push phone config")
         rules = (body or {}).get("rules")
@@ -971,17 +1167,33 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         return {"sent": bool(push(rules))}
 
     @app.post("/viewers/disconnect-all")
-    async def disconnect_all_viewers(ctx: Ctx = Depends(auth_ctx)) -> dict:
+    async def disconnect_all_viewers(ctx: Ctx = Depends(auth_ctx), station: str | None = None) -> dict:
         """T3.4: owner disconnects all viewers; imposes a 60s cooldown against /video."""
         if ctx.role != ROLE_OWNER:
             raise HTTPException(status_code=403, detail="only the owner can disconnect viewers")
-        tracker = ctx.tracker
+        lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
+        ch = _resolve_channel(lr, station, ctx.household_id)
+        if station and ch is None:
+            raise HTTPException(404, f"station {station!r} is not active")
+        tracker = ch.tracker if ch else ctx.tracker
         count = tracker.kick_all(cooldown_s=60.0) if tracker else 0
         return {"ok": True, "disconnected": count, "cooldown_s": 60}
 
     @app.get("/video")
-    async def video(ctx: Ctx = Depends(auth_ctx), max_frames: int = 0) -> StreamingResponse:
-        tracker = ctx.tracker
+    async def video(ctx: Ctx = Depends(auth_ctx), station: str | None = None, max_frames: int = 0) -> StreamingResponse:
+        lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
+        if station:
+            ch = _resolve_channel(lr, station, ctx.household_id)
+            if ch is None:
+                raise HTTPException(404, f"station {station!r} is not active")
+        else:
+            ch = _resolve_channel(lr, None, ctx.household_id)
+
+        pipeline = ch.pipeline if ch else ctx.pipeline
+        policy = ch.policy if ch else (ctx.policy or getattr(ctx.runtime, "policy", None))
+        tracker = ch.tracker if ch else ctx.tracker
+        limited = ch.limited if ch else ctx.limited
+
         if tracker and tracker.is_kicked():
             raise HTTPException(status_code=403, detail="Viewers disconnected by station")
 
@@ -1006,23 +1218,23 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 while max_frames <= 0 or sent < max_frames:
                     if tracker and tracker.is_kicked():
                         return
-                    station_cap = getattr(ctx.pipeline, "station_cap", "full")
-                    policy = ctx.policy or getattr(ctx.runtime, "policy", None)
-                    h_mode = policy.household_mode if policy else getattr(ctx.pipeline, "_policy_mode", "full")
-                    is_peeking = ctx.limited.is_peeking(ctx.viewer_id or "owner") if ctx.limited else False
-                    eff_mode = policy.compute_effective(station_cap, ctx, is_peeking=is_peeking) if policy else min_mode(station_cap, "full" if is_peeking else h_mode, getattr(ctx, "mode_ceiling", "full"))
+                    station_cap = getattr(pipeline, "station_cap", "full") if pipeline else "full"
+                    pol = policy or ctx.policy or getattr(ctx.runtime, "policy", None)
+                    h_mode = pol.household_mode if pol else getattr(pipeline, "_policy_mode", "full") if pipeline else "full"
+                    is_peeking = limited.is_peeking(ctx.viewer_id or "owner") if limited else False
+                    eff_mode = pol.compute_effective(station_cap, ctx, is_peeking=is_peeking) if pol else min_mode(station_cap, "full" if is_peeking else h_mode, getattr(ctx, "mode_ceiling", "full"))
 
-                    if getattr(ctx.pipeline, "_idle", False):
+                    if pipeline is None or getattr(pipeline, "_idle", False):
                         jpeg = None
                     elif eff_mode == "blackout":
-                        jpeg = getattr(ctx.pipeline, "_privacy_jpeg", None) or build_privacy_slate()
+                        jpeg = getattr(pipeline, "_privacy_jpeg", None) or build_privacy_slate()
                     elif eff_mode == "privacy":
                         jpeg = build_events_only_slate()
                     elif eff_mode == "limited":
-                        raw = getattr(ctx.pipeline, "raw_frame_jpeg", ctx.pipeline.latest_frame_jpeg)()
-                        jpeg = ctx.limited.process(raw) if (ctx.limited and raw) else (limit_jpeg(raw) if raw else None)
+                        raw = getattr(pipeline, "raw_frame_jpeg", pipeline.latest_frame_jpeg)()
+                        jpeg = limited.process(raw) if (limited and raw) else (limit_jpeg(raw) if raw else None)
                     else:  # full
-                        jpeg = getattr(ctx.pipeline, "raw_frame_jpeg", ctx.pipeline.latest_frame_jpeg)()
+                        jpeg = getattr(pipeline, "raw_frame_jpeg", pipeline.latest_frame_jpeg)()
 
                     if jpeg:
                         yield b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + str(len(jpeg)).encode() \

@@ -252,3 +252,71 @@ def test_mode_change_in_one_household_never_affects_another(two_households):
     assert c.get("/mode").json() == {"household_mode": "privacy", "station_cap": "full", "effective": "privacy"}
     assert c.get("/privacy").json() == {"privacy_mode": False}
 
+
+def test_two_households_two_stations_matrix(tmp_path):
+    """Two households, two stations each (T4.1 isolation matrix):
+    assert that station routing, video, status, and control remain strictly isolated across households.
+    """
+    app_ = app(tmp_path)
+    with TestClient(app_) as c:
+        # Household 1
+        c.cookies.clear()
+        c.post("/households", json={"dog_name": "Dog1"})
+        h1_cookie = c.cookies[VIEWER_COOKIE]
+        s1A = Station(c, b"H1_STATION_A", "H1 Phone A")
+        s1B = Station(c, b"H1_STATION_B", "H1 Phone B")
+
+        # Household 2
+        c.cookies.clear()
+        c.post("/households", json={"dog_name": "Dog2"})
+        h2_cookie = c.cookies[VIEWER_COOKIE]
+        s2A = Station(c, b"H2_STATION_A", "H2 Phone A")
+        s2B = Station(c, b"H2_STATION_B", "H2 Phone B")
+
+        with (
+            connect_station(c, s1A),
+            connect_station(c, s1B),
+            connect_station(c, s2A),
+            connect_station(c, s2B),
+        ):
+            # Household 1 perspective
+            as_owner(c, h1_cookie)
+            c.post("/mode", json={"mode": "full"})
+            st1 = c.get("/status").json()
+            h1_sids = {st["id"] for st in st1.get("stations", [])}
+            assert h1_sids == {s1A.station_id, s1B.station_id}
+            assert s2A.station_id not in h1_sids
+            assert s2B.station_id not in h1_sids
+
+            # Video routing in Household 1
+            v1A = c.get(f"/video?station={s1A.station_id}&max_frames=1").content
+            assert b"H1_STATION_A" in v1A
+            assert b"H1_STATION_B" not in v1A
+            assert b"H2_STATION" not in v1A
+
+            # Household 1 cannot touch Household 2 stations
+            assert c.get(f"/status?station={s2A.station_id}").status_code == 404
+            assert c.get(f"/video?station={s2A.station_id}&max_frames=1").status_code == 404
+            assert c.post(f"/treat?station={s2A.station_id}").status_code == 404
+
+            # Household 2 perspective
+            as_owner(c, h2_cookie)
+            c.post("/mode", json={"mode": "full"})
+            st2 = c.get("/status").json()
+            h2_sids = {st["id"] for st in st2.get("stations", [])}
+            assert h2_sids == {s2A.station_id, s2B.station_id}
+            assert s1A.station_id not in h2_sids
+            assert s1B.station_id not in h2_sids
+
+            # Video routing in Household 2
+            v2B = c.get(f"/video?station={s2B.station_id}&max_frames=1").content
+            assert b"H2_STATION_B" in v2B
+            assert b"H2_STATION_A" not in v2B
+            assert b"H1_STATION" not in v2B
+
+            # Household 2 cannot touch Household 1 stations
+            assert c.get(f"/status?station={s1A.station_id}").status_code == 404
+            assert c.get(f"/video?station={s1B.station_id}&max_frames=1").status_code == 404
+            assert c.post(f"/treat?station={s1A.station_id}").status_code == 404
+
+

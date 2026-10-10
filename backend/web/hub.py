@@ -30,6 +30,15 @@ class Hub:
         self._seq = 0
         self._frame_period = 1.0 / frame_fps if frame_fps > 0 else 0.0
         self._last_frame = -1e18
+        self._taps: list[Any] = []
+
+    def add_tap(self, fn: Any) -> None:
+        """Register a tap callback fn(env) called inside publish (T4.1)."""
+        self._taps.append(fn)
+
+    def remove_tap(self, fn: Any) -> None:
+        if fn in self._taps:
+            self._taps.remove(fn)
 
     @property
     def client_count(self) -> int:
@@ -107,6 +116,11 @@ class Hub:
                 except asyncio.QueueEmpty:
                     pass
             q.put_nowait(env)
+        for tap in list(self._taps):
+            try:
+                tap(env)
+            except Exception:
+                pass
         return env
 
     def history(self, since: int = 0) -> list[dict]:
@@ -115,3 +129,30 @@ class Hub:
     def close(self) -> None:
         if self._log:
             self._log.close()
+
+
+class HouseholdHub(Hub):
+    """A household-level fan-in hub (T4.1). Subscribes WebSocket viewers across all stations in the household.
+    Station hubs tap into this hub, tagging each envelope with {"station": station_id}.
+    """
+
+    def on_station_envelope(self, station_id: str, env: dict) -> None:
+        """Called by a station hub tap when that station publishes an envelope."""
+        tagged = {**env, "station": station_id}
+        if tagged.get("type") not in ("frame", "status"):
+            self._history.append(tagged)
+        if self._log:
+            self._log.write(tagged)
+        for q in list(self._clients):
+            if q.full():
+                try:
+                    q.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+            q.put_nowait(tagged)
+        for tap in list(self._taps):
+            try:
+                tap(tagged)
+            except Exception:
+                pass
+

@@ -68,12 +68,12 @@ def test_opt_in_enables_the_operator_llm_for_that_household_only(tmp_path):
         hid = me["household_id"]
         assert c.patch("/households/me/settings", json={"llm_enabled": True}).json()["llm_enabled"] is True
         # Drop the cached runtime so the opt-in takes effect, then confirm it is now honoured.
-        app_.state.registry.evict_idle(now=1e12)
+        app_.state.registry.forget(hid)
         rt = app_.state.registry.peek(hid)
         assert rt is None or rt.runtime.interpreter.enabled is True
         # A different household still starts without it.
         other = c.post("/households", json={"dog_name": "Other"}).json()["household_id"]
-        app_.state.registry.evict_idle(now=1e12)
+        app_.state.registry.forget(other)
         rt2 = app_.state.registry.peek(other)
         assert rt2 is None or getattr(rt2.runtime.interpreter, "enabled", False) is False
 
