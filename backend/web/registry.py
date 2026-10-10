@@ -136,8 +136,8 @@ class HouseholdRuntime:
         rt.policy = policy
         rt.tracker = tracker
         rt.limited = limited
-        if hasattr(pipeline, "set_policy"):
-            pipeline.set_policy(policy.household_mode)
+        if hasattr(pipeline, "_policy_mode"):
+            pipeline._policy_mode = policy.household_mode
         await rt.start()
 
         ch = StationChannel(station_id=station_id, name=name or f"Station {len(self.channels)+1}",
@@ -234,8 +234,8 @@ class HouseholdRegistry:
         rt.policy = policy
         rt.tracker = tracker
         rt.limited = limited
-        if hasattr(pipeline, "set_policy"):
-            pipeline.set_policy(policy.household_mode)
+        if hasattr(pipeline, "_policy_mode"):
+            pipeline._policy_mode = policy.household_mode
         await rt.start()
         lr = HouseholdRuntime(household_id=hid, runtime=rt, hub=hub, pipeline=pipeline,
                               policy=policy, tracker=tracker, limited=limited, used_at=self.clock(),
