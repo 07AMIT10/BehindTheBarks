@@ -67,7 +67,7 @@ export default function StationTile({
           <span className="truncate text-small font-semibold text-text">
             {station.name || "Station"}
           </span>
-          <span className="truncate text-[11px] text-muted">
+          <span className="truncate text-[12px] text-muted">
             ({station.dog_name || "Dog"})
           </span>
         </div>
@@ -84,7 +84,7 @@ export default function StationTile({
 
             return (
               <div
-                className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-mono transition-colors ${
+                className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[12px] font-mono transition-colors ${
                   bClass === "critical"
                     ? "bg-red-500/20 text-red-400 font-semibold"
                     : bClass === "low"
@@ -126,7 +126,7 @@ export default function StationTile({
               </div>
             );
           })()}
-          <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
+          <span className="rounded bg-white/10 px-1.5 py-0.5 text-[12px] font-semibold uppercase tracking-wider text-muted">
             {station.effective_mode}
           </span>
         </div>
@@ -164,7 +164,7 @@ export default function StationTile({
 
         {/* Emotion Chip Overlay */}
         {emotion !== "unknown" && (
-          <div className="absolute bottom-2 left-2 flex items-center gap-1.5 rounded-lg border border-white/10 bg-black/70 px-2 py-1 text-[11px] font-medium text-white shadow-sm backdrop-blur-md">
+          <div className="absolute bottom-2 left-2 flex items-center gap-1.5 rounded-lg border border-white/10 bg-black/70 px-2 py-1 text-[12px] font-medium text-white shadow-sm backdrop-blur-md">
             <EmotionIcon emotion={emotion} size={14} />
             <span className="capitalize">{emotion}</span>
           </div>

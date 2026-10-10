@@ -63,7 +63,7 @@ export default function EmotionCard(p: Props) {
         {!p.paused && <div className="font-mono text-[12px] text-muted">updated {updated}</div>}
       </div>
 
-      <div className={`flex items-center gap-5 ${p.paused ? "opacity-55" : ""}`}>
+      <div className="flex items-center gap-5">
         <div className="flex shrink-0 items-center justify-center rounded-[18px]"
           style={{ width: sizes.tile, height: sizes.tile, background: noDog ? "var(--unknown-tint)" : v.tint }}>
           <EmotionIcon emotion={c.emotion} size={sizes.glyph} strokeWidth={1.6} />
@@ -89,7 +89,7 @@ export default function EmotionCard(p: Props) {
       </div>
 
       {!noDog && (
-        <div className={`flex flex-col gap-2 ${p.paused ? "opacity-55" : ""}`}>
+        <div className="flex flex-col gap-2">
           <div className="flex justify-between text-small">
             <span className="font-semibold text-muted">Confidence</span>
             <span className="font-mono font-medium">{pct(c.confidence)}</span>
@@ -101,7 +101,7 @@ export default function EmotionCard(p: Props) {
         </div>
       )}
 
-      {!noDog && <p className={`m-0 leading-[1.45] text-pretty ${sizes.reason} ${p.paused ? "opacity-55" : ""}`}>{c.reason}</p>}
+      {!noDog && <p className={`m-0 leading-[1.45] text-pretty ${sizes.reason}`}>{c.reason}</p>}
     </section>
   );
 }

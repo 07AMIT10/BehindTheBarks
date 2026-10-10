@@ -65,11 +65,11 @@ export default function WelcomeScreen({ onCreate, onRecover }: Props) {
           <pre className="mt-4 select-all break-all rounded-xl bg-surface-2 p-4 text-[13px] text-text">{recoveryKey}</pre>
           <div className="mt-3 flex gap-2">
             <button type="button" onClick={() => { void navigator.clipboard.writeText(recoveryKey); setCopied(true); }}
-              className="h-11 rounded-xl bg-white/10 px-4 text-[14px] font-semibold text-white">
+              className="h-11 rounded-xl bg-surface-2 px-4 text-[14px] font-semibold text-text">
               {copied ? "Copied!" : "Copy"}
             </button>
             <button type="button" onClick={downloadKey}
-              className="h-11 rounded-xl bg-white/10 px-4 text-[14px] font-semibold text-white">Download</button>
+              className="h-11 rounded-xl bg-surface-2 px-4 text-[14px] font-semibold text-text">Download</button>
           </div>
           <label className="mt-4 flex items-center gap-3 text-[14px] text-text">
             <input type="checkbox" checked={savedIt} onChange={(e) => setSavedIt(e.target.checked)} className="h-5 w-5" />
@@ -93,7 +93,7 @@ export default function WelcomeScreen({ onCreate, onRecover }: Props) {
       <div className="flex gap-2" role="tablist">
         {(["create", "recover"] as const).map((t) => (
           <button key={t} type="button" role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
-            className={`h-11 flex-1 rounded-xl text-[14px] font-semibold ${tab === t ? "bg-accent text-accent-fg" : "bg-white/10 text-white"}`}>
+            className={`h-11 flex-1 rounded-xl text-[14px] font-semibold ${tab === t ? "bg-accent text-accent-fg" : "bg-surface-2 text-text"}`}>
             {t === "create" ? "Create household" : "I have a recovery key"}
           </button>
         ))}
@@ -104,20 +104,20 @@ export default function WelcomeScreen({ onCreate, onRecover }: Props) {
             <label className="flex flex-col gap-1 text-[13px] font-semibold text-text-soft">
               Pet name
               <input value={dogName} onChange={(e) => setDogName(e.target.value)} maxLength={56}
-                className="h-11 rounded-xl border border-white/10 bg-white/5 px-3 text-[14px] text-white outline-none focus:border-accent/60" />
+                className="h-11 rounded-xl border border-border bg-surface-2 px-3 text-[14px] text-text outline-none focus:border-accent/60" />
             </label>
             <label className="flex flex-col gap-1 text-[13px] font-semibold text-text-soft">
               Location (optional)
               <input value={location} onChange={(e) => setLocation(e.target.value)} maxLength={56}
                 placeholder="Living room"
-                className="h-11 rounded-xl border border-white/10 bg-white/5 px-3 text-[14px] text-white outline-none focus:border-accent/60" />
+                className="h-11 rounded-xl border border-border bg-surface-2 px-3 text-[14px] text-text outline-none focus:border-accent/60" />
             </label>
           </>
         ) : (
           <label className="flex flex-col gap-1 text-[13px] font-semibold text-text-soft">
             Recovery key
             <textarea value={key} onChange={(e) => setKey(e.target.value)} rows={3}
-              className="rounded-xl border border-white/10 bg-white/5 p-3 text-[14px] text-white outline-none focus:border-accent/60" />
+              className="rounded-xl border border-border bg-surface-2 p-3 text-[14px] text-text outline-none focus:border-accent/60" />
           </label>
         )}
         {error && <div role="alert" className="rounded-lg bg-red-500/10 px-3 py-2 text-[13px] text-red-300">{error}</div>}

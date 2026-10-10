@@ -22,7 +22,7 @@ export default function SignalsPanel({ history, defaultOpen }: { history: Featur
         <div className="grid grid-cols-2 gap-px overflow-hidden rounded-b-xl border-t border-border bg-border sm:grid-cols-3">
           {rows.map((r) => (
             <div key={r.key} className="flex flex-col gap-1.5 bg-surface px-4 py-3.5">
-              <div className="text-[11px] font-bold uppercase tracking-[0.06em] text-muted">{r.name}</div>
+              <div className="text-[12px] font-bold uppercase tracking-[0.06em] text-muted">{r.name}</div>
               <div className="flex items-baseline gap-1">
                 <span className="font-mono text-[20px] font-medium">{r.value}</span>
                 <span className="text-[12px] text-muted">{r.unit}</span>

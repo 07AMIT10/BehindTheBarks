@@ -66,7 +66,7 @@ export default function CameraSetup(p: Props) {
                 <button key={c.id} type="button" role="radio" aria-checked={on} onClick={() => p.onPick(c.id)}
                   className={`flex h-11 flex-col items-center justify-center rounded-[9px] text-[14px] font-semibold ${on ? "bg-[#2A3035] text-text" : "bg-transparent text-muted"}`}>
                   {c.label}
-                  <span className="text-[11px] font-medium opacity-75">{c.sub}</span>
+                  <span className="text-[12px] font-medium opacity-75">{c.sub}</span>
                 </button>
               );
             })}
@@ -81,7 +81,7 @@ export default function CameraSetup(p: Props) {
           <div className="relative h-[150px] overflow-hidden rounded-md bg-[#1B1D1F]">
             <LiveVideo stream={p.stream} mirror={p.facing === "front"} className="absolute inset-0 h-full w-full object-cover" />
             <ZoneGuide zone={ZONE_SETUP} radius={12} />
-            <div className="absolute text-[11px] font-bold text-[#BFF2F4]" style={{ left: ZONE_SETUP.left, top: ZONE_SETUP.top, transform: "translateY(-120%)" }}>
+            <div className="absolute text-[12px] font-bold text-[#BFF2F4]" style={{ left: ZONE_SETUP.left, top: ZONE_SETUP.top, transform: "translateY(-120%)" }}>
               Feeding zone
             </div>
           </div>

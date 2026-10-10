@@ -101,7 +101,7 @@ export default function Timeline({ spans, audio, treats, notifications, nowSec, 
                 <div className="absolute inset-x-0 top-1/2 h-px bg-border" />
                 {sounds.map((a, i) => (
                   <div key={`a${i}`}
-                    className="absolute top-1/2 flex h-6 -translate-x-1/2 -translate-y-1/2 items-center gap-1 whitespace-nowrap rounded-full border border-border bg-surface px-2 text-[11px] font-semibold"
+                    className="absolute top-1/2 flex h-6 -translate-x-1/2 -translate-y-1/2 items-center gap-1 whitespace-nowrap rounded-full border border-border bg-surface px-2 text-[12px] font-semibold"
                     style={{ left: `${a.left}%` }}>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 10v4" /></svg>
                     {a.label}{a.count > 1 ? ` ×${a.count}` : ""}
@@ -110,7 +110,7 @@ export default function Timeline({ spans, audio, treats, notifications, nowSec, 
               </div>
               <div className="relative mt-1.5 h-5">
                 {tickList.map((k, i) => (
-                  <div key={`t${i}`} className="absolute top-0 font-mono text-[11px] text-muted"
+                  <div key={`t${i}`} className="absolute top-0 font-mono text-[12px] text-muted"
                     style={{ left: `${k.left}%`, transform: k.align === "start" ? "none" : k.align === "end" ? "translateX(-100%)" : "translateX(-50%)" }}>
                     {k.label}
                   </div>
