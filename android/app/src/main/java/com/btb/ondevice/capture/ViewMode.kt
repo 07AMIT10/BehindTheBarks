@@ -1,0 +1,165 @@
+package com.btb.ondevice.capture
+
+/**
+ * T3.1/T3.2 viewing modes, ordered by how much may leave the phone.
+ *
+ * The phone is the authority: whatever the dashboard asks for, the effective mode is
+ * `min(stationCap, policy.mode)`. Raising the cap can only happen on the device.
+ */
+enum class ViewMode(val wire: String, val rank: Int) {
+    BLACKOUT("blackout", 0),
+    PRIVACY("privacy", 1),
+    LIMITED("limited", 2),
+    FULL("full", 3);
+
+    companion object {
+        /** Parse a wire value. An unknown value is never guessed: it falls back to [PRIVACY],
+         *  the safest mode that still lets barks through, and returns null so the caller can log it. */
+        fun fromWire(value: String?): ViewMode? = when (value?.trim()?.lowercase()) {
+            "blackout" -> BLACKOUT
+            "privacy" -> PRIVACY
+            "limited" -> LIMITED
+            "full" -> FULL
+            else -> null
+        }
+    }
+
+    /** The less exposed of the two. This is the ceiling that applies. */
+    fun minOf(other: ViewMode): ViewMode = if (this.rank <= other.rank) this else other
+}
+
+/** A server-sent viewing policy (T3.1 `policy` downlink). */
+data class Policy(
+    val mode: ViewMode = ViewMode.FULL,
+    val previewFps: Int = 2,
+    val previewMaxEdge: Int = 320,
+    val previewQuality: Int = 60,
+    val audio: Boolean = false,
+    val videoViewers: Int = 0,
+    val audioViewers: Int = 0,
+) {
+    companion object {
+        val DEFAULT = Policy()
+
+        /** A policy that reveals nothing: used when no server has spoken yet. */
+        val SAFEST = Policy(mode = ViewMode.BLACKOUT, videoViewers = 0, audioViewers = 0)
+    }
+
+    /** Preview interval in ms, from the policy's fps (T3.2: the phone no longer hard-codes 500 ms). */
+    fun previewIntervalMs(): Long = if (previewFps <= 0) Long.MAX_VALUE else 1000L / previewFps
+}
+
+/** Why the effective mode is what it is; reported upstream in `mode_state`. */
+enum class ModeReason(val wire: String) {
+    STATION("station"),
+    POLICY("policy"),
+    APPROVED_RAISE("approved_raise"),
+    EXPIRED_RAISE("expired_raise"),
+}
+
+/**
+ * T3.2 the station's mode decisions, extracted from [MonitorService] so they are testable without
+ * Android. Every rule about who may raise or lower exposure lives here, not in the service.
+ */
+class ModeController(
+    private var stationCap: ViewMode = ViewMode.FULL,
+    private val clock: () -> Long = { System.currentTimeMillis() },
+    /** When true, an owner raise tagged `from=owner` skips the prompt. Off by default (T3.2). */
+    private val allowOwnerRaiseWithoutPrompt: Boolean = false,
+) {
+    /** How long an approved raise lasts before the phone falls back to its own cap. */
+    var raiseDurationMs: Long = 15 * 60_000L
+
+    var policy: Policy = Policy.DEFAULT
+        private set
+
+    /** The cap the phone itself enforces, before any policy. */
+    val cap: ViewMode
+        get() = stationCap
+
+    private var raisedUntil: Long = 0L
+    private var raiseApproved = false
+    private var approvedMode: ViewMode = ViewMode.FULL
+
+    /** Set by the device UI: the person holding the phone chose this. This is the only way to raise. */
+    fun setStationCapFromDevice(mode: ViewMode) {
+        stationCap = mode
+        raiseApproved = false
+        raisedUntil = 0L
+        approvedMode = ViewMode.FULL
+    }
+
+    /** A server `policy` downlink. Lowering is applied at once; it can never raise the cap. */
+    fun onPolicy(next: Policy) {
+        policy = next
+    }
+
+    /**
+     * A server `mode_request`: the owner wants [mode].
+     * Returns what happened so the service can show the right thing.
+     */
+    fun onModeRequest(mode: ViewMode, fromOwner: Boolean): RequestOutcome =
+        when {
+            mode.rank <= effectiveMode().rank -> RequestOutcome.Applied(effectiveMode(), ModeReason.POLICY)
+            allowOwnerRaiseWithoutPrompt && fromOwner -> {
+                approveRaise(mode)
+                RequestOutcome.Applied(effectiveMode(), ModeReason.APPROVED_RAISE)
+            }
+            else -> RequestOutcome.NeedsApproval(mode)
+        }
+
+    /** The device UI approved a raise. It lasts [raiseDurationMs], then the old cap returns. */
+    fun approveRaise(mode: ViewMode) {
+        if (mode.rank <= stationCap.rank) return  // no raise needed; nothing to remember
+        raiseApproved = true
+        approvedMode = mode
+        raisedUntil = clock() + raiseDurationMs
+    }
+
+    /** The legacy `privacy` downlink. Lowering applies immediately; it can NEVER raise exposure. */
+    fun onLegacyPrivacy(enabled: Boolean): ViewMode {
+        if (enabled) {
+            setStationCapFromDevice(ViewMode.BLACKOUT)
+        }
+        // A remote `privacy:false` is ignored on purpose: only the device UI restores exposure.
+        return effectiveMode()
+    }
+
+    /** The mode that actually applies right now, accounting for an expired raise. */
+    fun effectiveMode(): ViewMode {
+        if (raiseApproved && clock() >= raisedUntil) {
+            raiseApproved = false
+            raisedUntil = 0L
+        }
+        // An approved raise temporarily lifts the *cap* to what the person allowed; the server's
+        // policy still applies on top, so a policy of `privacy` cannot be raised past it.
+        val effectiveCap = if (raiseApproved) approvedMode else stationCap
+        return effectiveCap.minOf(policy.mode)
+    }
+
+    fun effectiveReason(): ModeReason = when {
+        raiseApproved -> ModeReason.APPROVED_RAISE
+        stationCap.rank <= policy.mode.rank -> ModeReason.STATION
+        else -> ModeReason.POLICY
+    }
+
+    /** Whether a camera preview should be produced and uploaded at all. */
+    fun shouldEncodePreview(): Boolean {
+        val mode = effectiveMode()
+        if (mode.rank < ViewMode.LIMITED.rank) return false   // blackout/privacy: no image at all
+        if (policy.videoViewers <= 0) return false           // nobody is watching: don't spend battery
+        return true
+    }
+
+    /** Whether raw audio may be streamed (T3.9). */
+    fun shouldStreamAudio(): Boolean =
+        effectiveMode() == ViewMode.FULL && policy.audio && policy.audioViewers > 0
+
+    sealed class RequestOutcome {
+        /** Applied immediately: it lowered exposure, or a raise was already approved. */
+        data class Applied(val mode: ViewMode, val reason: ModeReason) : RequestOutcome()
+
+        /** The phone must ask the person holding it before anything is raised. */
+        data class NeedsApproval(val mode: ViewMode) : RequestOutcome()
+    }
+}

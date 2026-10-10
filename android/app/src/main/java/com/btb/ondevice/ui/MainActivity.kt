@@ -85,6 +85,7 @@ class MainActivity : Activity() {
                         overlayView.updateState(overlayState)
                         val isPriv = monitorService?.isPrivacyMode() ?: false
                         updatePrivacyButton(isPriv)
+                        monitorService?.effectiveMode()?.let { privacyButton.text = modeButtonLabel(it) }
                         if (isPriv) {
                             ambientStatusText.text = "🛡️ Privacy Active · Camera Muted"
                             ambientStatusText.setTextColor(Color.parseColor("#E53935"))
@@ -132,6 +133,7 @@ class MainActivity : Activity() {
             })
             val isPriv = monitorService?.isPrivacyMode() ?: false
             updatePrivacyButton(isPriv)
+            monitorService?.effectiveMode()?.let { privacyButton.text = modeButtonLabel(it) }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -411,16 +413,14 @@ class MainActivity : Activity() {
         }
         toolsRow.addView(flipButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = 8 })
 
+        // T3.2: one button that shows the current mode and opens the 4-option chooser.
         privacyButton = Button(this).apply {
-            text = "🛡️ Privacy"
+            text = "🛡️ Full"
             textSize = 12f
             setBackgroundColor(Color.parseColor("#37474F"))
             setTextColor(Color.WHITE)
             isEnabled = false
-            setOnClickListener {
-                val on = monitorService?.togglePrivacyMode() ?: false
-                updatePrivacyButton(on)
-            }
+            setOnClickListener { showModeChooser() }
         }
         toolsRow.addView(privacyButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         controlsPanel.addView(toolsRow)
@@ -982,6 +982,36 @@ class MainActivity : Activity() {
             torchButton.setBackgroundColor(Color.parseColor("#37474F"))
             torchButton.setTextColor(Color.WHITE)
         }
+    }
+
+    /** T3.2: the four viewing modes, with one line each. This control is the ONLY place the cap can
+     *  be raised: the dashboard can lower it, but raising always needs the person holding the phone. */
+    private fun showModeChooser() {
+        val modes = com.btb.ondevice.capture.ViewMode.entries.toTypedArray()
+        val labels = arrayOf(
+            "⛔ Blackout\nNothing leaves the phone",
+            "🔇 Privacy\nBarks and behaviour only",
+            "🖼️ Limited\nBlurred snapshots",
+            "👁️ Full\nLive video",
+        )
+        val current = monitorService?.effectiveMode() ?: com.btb.ondevice.capture.ViewMode.FULL
+        android.app.AlertDialog.Builder(this)
+            .setTitle("What may be shared?")
+            .setSingleChoiceItems(labels, modes.indexOf(current)) { dialog, which ->
+                monitorService?.setStationCapFromDevice(modes[which])
+                updatePrivacyButton(modes[which] == com.btb.ondevice.capture.ViewMode.BLACKOUT)
+                privacyButton.text = modeButtonLabel(modes[which])
+                dialog.dismiss()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun modeButtonLabel(mode: com.btb.ondevice.capture.ViewMode): String = when (mode) {
+        com.btb.ondevice.capture.ViewMode.BLACKOUT -> "⛔ Blackout"
+        com.btb.ondevice.capture.ViewMode.PRIVACY -> "🔇 Privacy"
+        com.btb.ondevice.capture.ViewMode.LIMITED -> "🖼️ Limited"
+        com.btb.ondevice.capture.ViewMode.FULL -> "👁️ Full"
     }
 
     private fun updatePrivacyButton(on: Boolean) {

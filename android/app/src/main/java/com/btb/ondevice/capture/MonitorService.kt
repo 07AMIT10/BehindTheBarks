@@ -57,6 +57,10 @@ interface MonitorServiceListener {
     fun onStateUpdate(overlayState: OverlayState) {}
     fun onConnectionUpdate(state: ConnectionState) {}
     fun onQrCodeDetected(rawText: String) {}
+    /** T3.2: the effective mode changed (device or server driven). */
+    fun onModeStateChanged(effectiveWire: String) {}
+    /** T3.2: the owner asked for more exposure than the phone allows: prompt, default deny. */
+    fun onModeApprovalRequested(requestedWire: String) {}
 }
 
 class MonitorService : Service(), LifecycleOwner {
@@ -80,10 +84,14 @@ class MonitorService : Service(), LifecycleOwner {
     private var memoryGuard: MemoryGuard? = null
 
     private val isRunning = AtomicBoolean(false)
-    private val lastPreviewSendMs = AtomicLong(0)
     private var listener: MonitorServiceListener? = null
-    private val privacyMode = AtomicBoolean(false)
-    private var privacySlateJpeg: ByteArray? = null
+    // T3.2: the station's own cap plus the server policy decide what may leave the phone. The
+    // controller is the single place that rule lives (and it is unit-tested without Android).
+    // `lazy` because it reads the persisted cap, which needs a Context.
+    private val modeController: ModeController by lazy {
+        ModeController(stationCap = ViewMode.fromWire(readStationCap()) ?: ViewMode.FULL)
+    }
+    private val lastPreviewSendMs = AtomicLong(0L)
     private val isScanningQr = AtomicBoolean(false)
     private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
 
@@ -93,31 +101,10 @@ class MonitorService : Service(), LifecycleOwner {
 
     fun isScanningQr(): Boolean = isScanningQr.get()
 
-    private fun getOrCreatePrivacySlate(): ByteArray {
-        privacySlateJpeg?.let { return it }
-        val bmp = Bitmap.createBitmap(320, 240, Bitmap.Config.ARGB_8888)
-        val canvas = android.graphics.Canvas(bmp)
-        canvas.drawColor(android.graphics.Color.rgb(22, 24, 30))
-        val paint = android.graphics.Paint().apply {
-            color = android.graphics.Color.rgb(239, 68, 68)
-            textSize = 20f
-            isAntiAlias = true
-            textAlign = android.graphics.Paint.Align.CENTER
-        }
-        canvas.drawText("PRIVACY MODE ACTIVE", 160f, 110f, paint)
-        paint.color = android.graphics.Color.rgb(156, 163, 175)
-        paint.textSize = 12f
-        canvas.drawText("Camera & Mic Muted", 160f, 140f, paint)
-        val out = ByteArrayOutputStream()
-        bmp.compress(Bitmap.CompressFormat.JPEG, 75, out)
-        bmp.recycle()
-        val bytes = out.toByteArray()
-        privacySlateJpeg = bytes
-        return bytes
-    }
-
     fun setPrivacyMode(enabled: Boolean): Boolean {
-        privacyMode.set(enabled)
+        if (enabled) modeController.setStationCapFromDevice(ViewMode.BLACKOUT)
+        else modeController.setStationCapFromDevice(ViewMode.FULL)
+        publishModeState("station")
         if (enabled) {
             cameraSource?.setTorch(false)
             listener?.onStateUpdate(
@@ -134,8 +121,73 @@ class MonitorService : Service(), LifecycleOwner {
         return enabled
     }
 
-    fun isPrivacyMode(): Boolean = privacyMode.get()
-    fun togglePrivacyMode(): Boolean = setPrivacyMode(!privacyMode.get())
+    fun isPrivacyMode(): Boolean = modeController.effectiveMode() == ViewMode.BLACKOUT
+    fun togglePrivacyMode(): Boolean = setPrivacyMode(!isPrivacyMode())
+
+    private fun stationPrefs() =
+        getSharedPreferences("btb_station_prefs", android.content.Context.MODE_PRIVATE)
+
+    private fun readStationCap(): String? =
+        stationPrefs().getString(KEY_STATION_CAP, null)
+
+    private fun persistStationCap(mode: ViewMode) {
+        stationPrefs().edit().putString(KEY_STATION_CAP, mode.wire).apply()
+    }
+
+    /** T3.2: the device UI chooses a mode outright (the 4-segment control). */
+    fun setStationCapFromDevice(mode: ViewMode) {
+        modeController.setStationCapFromDevice(mode)
+        persistStationCap(mode)
+        if (mode == ViewMode.BLACKOUT) cameraSource?.setTorch(false)
+        publishModeState("station")
+        listener?.onModeStateChanged(modeController.effectiveMode().wire)
+    }
+
+    fun effectiveMode(): ViewMode = modeController.effectiveMode()
+
+    /** T3.1: tell the server what we allow and what we are doing, after any change. */
+    private fun publishModeState(reason: String) {
+        uploader?.sendModeState(
+            modeController.cap.wire,
+            modeController.effectiveMode().wire,
+            reason,
+        )
+    }
+
+    /** T3.1: a server `policy` downlink. It can lower exposure, never raise the cap. */
+    private fun applyPolicy(
+        mode: String, previewFps: Int, previewMaxEdge: Int, previewQuality: Int,
+        audio: Boolean, videoViewers: Int, audioViewers: Int,
+    ) {
+        val parsed = ViewMode.fromWire(mode)
+        if (parsed == null) {
+            android.util.Log.w("MonitorService", "ignoring unknown policy mode=$mode")
+            return
+        }
+        modeController.onPolicy(
+            Policy(
+                mode = parsed,
+                previewFps = previewFps,
+                previewMaxEdge = previewMaxEdge,
+                previewQuality = previewQuality,
+                audio = audio,
+                videoViewers = videoViewers,
+                audioViewers = audioViewers,
+            )
+        )
+        publishModeState("policy")
+    }
+
+    /** T3.2: the owner asked for more exposure. Lowering applies now; raising waits for the device. */
+    private fun applyModeRequest(mode: String, from: String) {
+        val requested = ViewMode.fromWire(mode)
+        if (requested == null) return
+        when (val outcome = modeController.onModeRequest(requested, from == "owner")) {
+            is ModeController.RequestOutcome.Applied -> publishModeState(outcome.reason.wire)
+            is ModeController.RequestOutcome.NeedsApproval ->
+                listener?.onModeApprovalRequested(requested.wire)
+        }
+    }
 
     fun setListener(l: MonitorServiceListener?) {
         listener = l
@@ -256,8 +308,19 @@ class MonitorService : Service(), LifecycleOwner {
                     cameraSource?.flipCamera()
                 }
                 override fun onPrivacyDownlink(enabled: Boolean) {
-                    setPrivacyMode(enabled)
+                    // T3.2: a remote privacy:false must never raise exposure. Only the on-device
+                    // button (setPrivacyMode) may restore the cap.
+                    val effective = modeController.onLegacyPrivacy(enabled)
+                    publishModeState("station")
+                    if (enabled) {
+                        listener?.onModeStateChanged(effective.wire)
+                    }
                 }
+                override fun onPolicyDownlink(
+                    mode: String, previewFps: Int, previewMaxEdge: Int, previewQuality: Int,
+                    audio: Boolean, videoViewers: Int, audioViewers: Int,
+                ) = applyPolicy(mode, previewFps, previewMaxEdge, previewQuality, audio, videoViewers, audioViewers)
+                override fun onModeRequest(mode: String, from: String) = applyModeRequest(mode, from)
             }
         )
         uploader = up
@@ -275,14 +338,9 @@ class MonitorService : Service(), LifecycleOwner {
             targetHeight = 480,
             targetFps = 15,
             frameCallback = { rgba, width, height, rotation, ts ->
-                if (privacyMode.get()) {
-                    val nowMs = System.currentTimeMillis()
-                    if (nowMs - lastPreviewSendMs.get() >= 1000) {
-                        lastPreviewSendMs.set(nowMs)
-                        try {
-                            up.sendPreview(getOrCreatePrivacySlate())
-                        } catch (_: Exception) {}
-                    }
+                // T3.2 blackout: return before any processing. The phone no longer uploads a slate
+                // -- the server renders it -- so nothing about the room leaves the device at all.
+                if (modeController.effectiveMode() == ViewMode.BLACKOUT) {
                     return@CameraSource
                 }
 
@@ -311,18 +369,25 @@ class MonitorService : Service(), LifecycleOwner {
                     } catch (t: Throwable) {
                         android.util.Log.e("MonitorService", "Inference error: ${t.message}", t)
                     }
-                    // Dashboard video, best-effort at ~2 Hz. JPEG encode stays on this
-                    // background thread; sendPreview applies its own rate limit and
-                    // backpressure drop, so this never blocks inference.
-                    val nowMs = System.currentTimeMillis()
-                    if (nowMs - lastPreviewSendMs.get() >= 500) {
-                        lastPreviewSendMs.set(nowMs)
-                        try {
-                            encodePreviewJpeg(rgba, width, height, rotation)?.let { jpeg ->
-                                up.sendPreview(jpeg)
+                    // T3.2: preview only when the policy says a viewer exists, at the policy's
+                    // fps/max_edge/quality. With zero viewers the phone spends no CPU on JPEG
+                    // encoding at all. JPEG encode stays on this background thread; sendPreview
+                    // applies its own rate limit and backpressure drop, so this never blocks
+                    // inference.
+                    val policy = modeController.policy
+                    if (modeController.shouldEncodePreview()) {
+                        val nowMs = System.currentTimeMillis()
+                        if (nowMs - lastPreviewSendMs.get() >= policy.previewIntervalMs()) {
+                            lastPreviewSendMs.set(nowMs)
+                            try {
+                                encodePreviewJpeg(rgba, width, height, rotation,
+                                    maxEdge = policy.previewMaxEdge,
+                                    quality = policy.previewQuality)?.let { jpeg ->
+                                    up.sendPreview(jpeg)
+                                }
+                            } catch (t: Throwable) {
+                                android.util.Log.e("MonitorService", "Preview error: ${t.message}", t)
                             }
-                        } catch (t: Throwable) {
-                            android.util.Log.e("MonitorService", "Preview error: ${t.message}", t)
                         }
                     }
                 }
@@ -335,7 +400,9 @@ class MonitorService : Service(), LifecycleOwner {
             sampleRate = 16_000,
             chunkDurationMs = 100,
             audioCallback = { pcm16, sampleRate, ts ->
-                if (privacyMode.get()) {
+                // T3.2: only blackout stops perception; `privacy` still produces barks and
+                // behaviour events (they are numbers, not images).
+                if (modeController.effectiveMode() == ViewMode.BLACKOUT) {
                     return@MicSource
                 }
                 val shortArray = ShortArray(pcm16.size / 2)
@@ -428,23 +495,28 @@ class MonitorService : Service(), LifecycleOwner {
      * Downscale an RGBA frame to 320 px (long edge) and encode a dashboard preview JPEG.
      * Returns null when the buffer does not hold a full frame. Caller throttles.
      */
+    /** T3.2: `maxEdge` and `quality` come from the server policy instead of the old hard-coded
+     *  320/60, so a rate-limited preview can be asked for smaller without a new APK. */
     private fun encodePreviewJpeg(
         rgba: ByteArray,
         width: Int,
         height: Int,
         rotationDegrees: Int = 0,
+        maxEdge: Int = 320,
+        quality: Int = 60,
     ): ByteArray? {
         if (width < 2 || height < 2 || rgba.size < width * height * 4) return null
         val full = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         full.copyPixelsFromBuffer(ByteBuffer.wrap(rgba))
         val targetW: Int
         val targetH: Int
+        val edge = maxEdge.coerceIn(64, 1280)
         if (width >= height) {
-            targetW = 320
-            targetH = (320f * height / width).roundToInt().coerceAtLeast(2)
+            targetW = edge
+            targetH = (edge.toFloat() * height / width).roundToInt().coerceAtLeast(2)
         } else {
-            targetW = (320f * width / height).roundToInt().coerceAtLeast(2)
-            targetH = 320
+            targetW = (edge.toFloat() * width / height).roundToInt().coerceAtLeast(2)
+            targetH = edge
         }
         val scaled = Bitmap.createScaledBitmap(full, targetW, targetH, true)
         full.recycle()
@@ -456,7 +528,7 @@ class MonitorService : Service(), LifecycleOwner {
             scaled
         }
         val out = ByteArrayOutputStream(32 * 1024)
-        upright.compress(Bitmap.CompressFormat.JPEG, 60, out)
+        upright.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(20, 95), out)
         upright.recycle()
         return out.toByteArray().takeIf { it.isNotEmpty() }
     }
@@ -587,5 +659,6 @@ class MonitorService : Service(), LifecycleOwner {
         const val EXTRA_DEVICE_NAME = "extra_device_name"
         const val EXTRA_TOKEN = "extra_token"
         const val DEFAULT_SERVER_URL = "ws://10.0.2.2:8000/ingest-events"
+        const val KEY_STATION_CAP = "station_cap"   // T3.2: the cap the person holding the phone allows
     }
 }
