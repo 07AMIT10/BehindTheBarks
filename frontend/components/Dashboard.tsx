@@ -31,6 +31,7 @@ import WelcomeScreen from "./WelcomeScreen";
 import DeleteHouseholdModal from "./DeleteHouseholdModal";
 import ProfileModal from "./ProfileModal";
 import StationGrid from "./StationGrid";
+import DebugDrawer from "./DebugDrawer";
 
 export default function Dashboard() {
   const backend = useBackend(); // backend.readAll / backend.http are used by Tasks 6 and 8
@@ -66,6 +67,7 @@ export default function Dashboard() {
   const isMobile = useIsMobile();
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [showGrid, setShowGrid] = useState(false);
+  const [debugOpen, setDebugOpen] = useState(false);
   const stations = state.status?.stations ?? [];
   const hasMultipleStations = stations.length > 1;
   const projector = useMemo(() => new URLSearchParams(window.location.search).get("size") === "projector", []);
@@ -268,6 +270,30 @@ export default function Dashboard() {
           })()}
           <ThemeToggle />
           <NotificationsBell notifications={state.notifications} dogName={profile.dog_name} onOpen={backend.readAll} />
+          {backend.authStatus?.debug && (
+            <button
+              type="button"
+              onClick={() => setDebugOpen(true)}
+              title="Diagnostics & Debug Mode"
+              aria-label="Diagnostics & Debug Mode"
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            </button>
+          )}
         </Header>
         <StatusBar connected={state.connected} everConnected={state.everConnected} reconnectAttempt={state.reconnectAttempt}
           status={state.status} onMode={(m) => void setMode(m)} />
@@ -437,6 +463,21 @@ export default function Dashboard() {
         </div>
       )}
       <ToastStack toasts={state.toasts} onDismiss={backend.dismissToast} onView={viewMoment} />
+      <DebugDrawer
+        open={debugOpen}
+        onClose={() => setDebugOpen(false)}
+        http={backend.http}
+        token={token || undefined}
+        stationId={state.focusedStation !== "default" ? state.focusedStation : undefined}
+        stationName={state.stations[state.focusedStation]?.name || profile.dog_name}
+        llmInfo={{
+          provider: state.status?.llm?.provider || undefined,
+          model: state.status?.llm?.model || undefined,
+        }}
+        clockOffset={state.clockOffset}
+        eventFps={state.status?.pipeline_status?.fps ?? state.status?.phone?.fps}
+        previewFps={state.status?.pipeline_status?.preview_fps}
+      />
     </div>
   );
 }

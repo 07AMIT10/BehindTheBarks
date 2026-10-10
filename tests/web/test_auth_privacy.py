@@ -26,7 +26,7 @@ def test_auth_status_and_verification(tmp_path):
         # Check auth status
         r = c.get("/auth/status")
         assert r.status_code == 200
-        assert r.json() == {"enabled": True, "auth_required": True, "mode": "pin"}
+        assert r.json() == {"enabled": True, "auth_required": True, "mode": "pin", "debug": False}
 
         # Failed verify
         r = c.post("/auth/verify", json={"pin": "wrong"})

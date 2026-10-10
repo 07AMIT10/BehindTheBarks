@@ -38,7 +38,7 @@ def pin_app(tmp_path):
 
 def test_auth_status_reports_the_mode(tmp_path):
     with TestClient(households_app(tmp_path)) as c:
-        assert c.get("/auth/status").json() == {"enabled": False, "auth_required": True, "mode": "households"}
+        assert c.get("/auth/status").json() == {"enabled": False, "auth_required": True, "mode": "households", "debug": False}
     with TestClient(pin_app(tmp_path)) as c:
         assert c.get("/auth/status").json()["mode"] == "pin"
 

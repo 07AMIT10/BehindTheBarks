@@ -53,6 +53,10 @@ WEB_DEFAULTS: dict[str, Any] = {
         "ingest_token": "",
         "api_token": "",
     },
+    "debug": {
+        "enabled": False,
+        "history_s": 3600,
+    },
 }
 
 
@@ -115,6 +119,9 @@ def load_config(path: str | Path = "config.yaml", env: Mapping[str, str] | None 
         auth["ingest_token"] = env["BTB_INGEST_TOKEN"].strip()
     if env.get("BTB_API_TOKEN"):
         auth["api_token"] = env["BTB_API_TOKEN"].strip()
+    debug = cfg["web"].setdefault("debug", {})
+    if env.get("BTB_DEBUG") is not None:
+        debug["enabled"] = _truthy(env.get("BTB_DEBUG"))
     return cfg
 
 

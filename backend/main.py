@@ -42,6 +42,7 @@ VIEWER_COOKIE = "btb_session"
 STATION_AUTH_PREFIX = b"btb-auth-v1|"  # the signed challenge message: nonce | station_id | device
 SESSION_MAX_AGE_S = 31_536_000  # a year: the recovery key, not a password reset, is the escape hatch
 HOUSEHOLD_CREATES_PER_HOUR = 5  # web.auth.household_creates_per_hour overrides it
+from backend.web.debug_metrics import LoopLagMonitor, calculate_drain_pct_per_h, collect_server_metrics
 from backend.web.event_log import EventLog
 from backend.web.hub import DISCONNECTED_ALL, KICKED, Hub
 from backend.web.tracker import CLOSE_VIEWERS_KICKED, parse_ua_label
@@ -124,9 +125,15 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                         continue
 
             sweeper = asyncio.create_task(_sweep_forever())
+        loop_monitor = LoopLagMonitor()
+        server_start_time = time.time()
+        app.state.loop_monitor = loop_monitor
+        app.state.server_start_time = server_start_time
+        await loop_monitor.start()
         try:
             yield
         finally:
+            loop_monitor.stop()
             if sweeper is not None:
                 sweeper.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -137,6 +144,9 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
 
     app = FastAPI(title="Behind The Barks", lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+    debug_cfg = web.get("debug") or {}
+    debug_enabled = bool(debug_cfg.get("enabled", False))
 
     auth_cfg = web.get("auth") or {}
     auth_enabled = bool(auth_cfg.get("enabled", False))
@@ -718,21 +728,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     @app.get("/auth/status")
     async def auth_status() -> dict:
         required = auth_enabled or households_mode
-        return {"enabled": auth_enabled, "auth_required": required, "mode": auth_mode}
-
-    @app.post("/auth/verify")
-    async def auth_verify(body: dict | None = None) -> dict:
-        if not auth_enabled:
-            return {"ok": True, "token": ""}
-        payload = body or {}
-        submitted = str(payload.get("pin") or payload.get("token") or "").strip()
-        if not submitted or not is_valid_token(submitted):
-            raise HTTPException(status_code=401, detail="Invalid PIN or access token")
-        return {"ok": True, "token": submitted}
-
-    @app.get("/health")
-    async def health() -> dict:
-        return {"ok": True}
+        return {"enabled": auth_enabled, "auth_required": required, "mode": auth_mode, "debug": debug_enabled}
 
     def _resolve_channel(lr, station_id: str | None, household_id: str):
         if not station_id:
@@ -747,6 +743,91 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         else:
             raise HTTPException(404, f"station {station_id!r} not found in this household")
         return None
+
+    @app.get("/debug/metrics")
+    async def debug_metrics(req: Request, station: str | None = None, since: float | None = None) -> dict:
+        if not debug_enabled:
+            raise HTTPException(status_code=404, detail="Debug mode is disabled")
+        ctx = await auth_ctx(req)
+        if ctx.role != "owner":
+            raise HTTPException(status_code=403, detail="Owner role required for debug metrics")
+
+        clock_fn = getattr(getattr(ctx.runtime, "clock", time.time), "__call__", time.time)
+        now = float(clock_fn())
+        start_t = getattr(app.state, "server_start_time", now)
+        uptime = max(0.0, now - start_t)
+
+        lag_mon = getattr(app.state, "loop_monitor", None)
+        loop_lag = getattr(lag_mon, "lag_ms", 0.0) if lag_mon else 0.0
+
+        server = collect_server_metrics(uptime_s=uptime, loop_lag_ms=loop_lag)
+
+        hub = ctx.hub
+        clients = hub.client_count
+        queue_depths = [q.qsize() for q in getattr(hub, "_clients", set())]
+
+        if households_mode:
+            entries = getattr(app.state.registry, "_households", {})
+            households_count = len(entries)
+        else:
+            households_count = 1
+
+        pipeline = ctx.pipeline
+        lr = app.state.registry.peek(ctx.household_id) if hasattr(app.state, "registry") else None
+        if station:
+            ch = _resolve_channel(lr, station, ctx.household_id)
+            if ch is not None:
+                pipeline = ch.pipeline
+        elif lr:
+            ch = lr.get_channel(None)
+            if ch is not None:
+                pipeline = ch.pipeline
+
+        session = getattr(pipeline, "_session", None)
+        telemetry_history = list(getattr(session, "telemetry_history", [])) if session else []
+        latest_telemetry = getattr(session, "latest_telemetry", None) if session else None
+
+        if since is not None:
+            series = [s for s in telemetry_history if float(s.get("ts", 0)) > since]
+        else:
+            series = telemetry_history
+
+        drain = calculate_drain_pct_per_h(telemetry_history, now=now)
+
+        downlinks_sent = int(getattr(pipeline, "downlinks_sent", 0))
+        downlinks_dropped = int(getattr(pipeline, "downlinks_dropped", 0))
+
+        return {
+            "server": server,
+            "hub": {
+                "clients": clients,
+                "queue_depths": queue_depths,
+            },
+            "households": households_count,
+            "station": {
+                "latest_telemetry": latest_telemetry,
+                "series": series,
+            },
+            "downlinks": {
+                "sent": downlinks_sent,
+                "dropped": downlinks_dropped,
+            },
+            "drain_pct_per_h": drain,
+        }
+
+    @app.post("/auth/verify")
+    async def auth_verify(body: dict | None = None) -> dict:
+        if not auth_enabled:
+            return {"ok": True, "token": ""}
+        payload = body or {}
+        submitted = str(payload.get("pin") or payload.get("token") or "").strip()
+        if not submitted or not is_valid_token(submitted):
+            raise HTTPException(status_code=401, detail="Invalid PIN or access token")
+        return {"ok": True, "token": submitted}
+
+    @app.get("/health")
+    async def health() -> dict:
+        return {"ok": True}
 
     @app.get("/status")
     async def status(ctx: Ctx = Depends(auth_ctx), station: str | None = None) -> dict:

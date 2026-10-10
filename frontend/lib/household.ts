@@ -5,6 +5,7 @@ export type AuthStatus = {
   enabled: boolean;
   auth_required: boolean;
   mode: "pin" | "households";
+  debug?: boolean;
 };
 
 const MAX_FIELD = 48;

@@ -22,6 +22,7 @@ export type PipelineStatus = {
   fps: number;
   last_frame_age_s: number | null;
   audio_ok: boolean;
+  preview_fps?: number;
   torch?: boolean;
   privacy_mode?: boolean;
   station_cap?: ViewMode;   // T3.1: what the phone allows
