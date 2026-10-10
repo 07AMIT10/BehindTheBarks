@@ -87,6 +87,8 @@ class EventUploader(
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO),
 ) {
     val previewDroppedBackpressure = java.util.concurrent.atomic.AtomicLong(0L)
+    /** Previews that reached the backpressure gate (monotonic). The ladder's drop ratio divides by this. */
+    val previewsOffered = java.util.concurrent.atomic.AtomicLong(0L)
     @Volatile
     var lastRttMs: Long = 0L
         private set
@@ -530,6 +532,7 @@ class EventUploader(
             return false
         }
 
+        previewsOffered.incrementAndGet()
         // Backpressure: drop preview first if queue > maxQueueBytes
         if (ws.queueSize() > maxQueueBytes) {
             android.util.Log.w("EventUploader", "sendPreview backpressure drop: queue=${ws.queueSize()} > $maxQueueBytes")

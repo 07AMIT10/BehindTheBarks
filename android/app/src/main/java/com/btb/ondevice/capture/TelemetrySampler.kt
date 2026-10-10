@@ -67,6 +67,7 @@ open class TelemetrySampler(
     private val metricsTracker: () -> MetricsTracker?,
     private val degradeLevel: () -> DegradeLevel = { DegradeLevel.L0_NORMAL },
     private val previewEncoder: () -> PreviewEncoder? = { null },
+    private val previewRung: () -> Int = { 0 },
     private val sampleIntervalMs: Long = 10_000L,
     private val clock: () -> Double = { System.currentTimeMillis() / 1000.0 },
     private val scope: CoroutineScope,
@@ -137,6 +138,7 @@ open class TelemetrySampler(
                 put("spool_bytes", spoolBytes)
                 put("mem_mb", memMb)
                 put("degrade_level", degrade)
+                put("ladder_rung", previewRung())
             }
         }.toString()
     }

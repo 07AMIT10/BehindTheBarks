@@ -70,6 +70,7 @@ class TelemetrySamplerTest {
             memoryProvider = mem,
             metricsTracker = { tracker },
             degradeLevel = { DegradeLevel.L1_WARM },
+            previewRung = { 2 },
             clock = { 1700000000.0 },
             scope = scope,
         )
@@ -88,6 +89,7 @@ class TelemetrySamplerTest {
         assertThat(data["thermal_status"]?.jsonPrimitive?.int).isEqualTo(1)
         assertThat(data["mem_mb"]?.jsonPrimitive?.int).isEqualTo(310)
         assertThat(data["degrade_level"]?.jsonPrimitive?.content).isEqualTo("L1_WARM")
+        assertThat(data["ladder_rung"]?.jsonPrimitive?.int).isEqualTo(2)
 
         val infMs = data["inference_ms"]?.jsonObject
         assertThat(infMs).isNotNull()

@@ -1,6 +1,5 @@
 package com.btb.ondevice.capture
 
-import com.btb.ondevice.pipeline.DegradeLevel
 import com.google.common.truth.Truth.assertThat
 import org.junit.jupiter.api.Test
 import java.util.concurrent.CountDownLatch
@@ -157,81 +156,5 @@ class PreviewEncoderTest {
         assertThat(delivered).hasSize(1)
         assertThat(delivered[0][0]).isEqualTo(20.toByte())
         encoder.shutdown()
-    }
-
-    @Test
-    fun `ladder starts at rung 1 (3 fps)`() {
-        val ladder = PreviewLadder()
-        assertThat(ladder.currentRungIndex).isEqualTo(1)
-        assertThat(ladder.currentConfig()).isEqualTo(PreviewConfig(fps = 3.0, maxEdge = 640, quality = 65))
-    }
-
-    @Test
-    fun `ladder steps down on thermal degradation`() {
-        val ladder = PreviewLadder()
-        val cfg = ladder.onFeedback(
-            degradeLevel = DegradeLevel.L1_WARM,
-            recentBackpressureDropRatio = 0.0,
-            nowMs = 10_000L
-        )
-        assertThat(ladder.currentRungIndex).isEqualTo(2)
-        assertThat(cfg).isEqualTo(PreviewConfig(fps = 2.0, maxEdge = 480, quality = 60))
-    }
-
-    @Test
-    fun `ladder steps down on high backpressure drop ratio`() {
-        val ladder = PreviewLadder()
-        val cfg = ladder.onFeedback(
-            degradeLevel = DegradeLevel.L0_NORMAL,
-            recentBackpressureDropRatio = 0.25,
-            nowMs = 10_000L
-        )
-        assertThat(ladder.currentRungIndex).isEqualTo(2)
-        assertThat(cfg).isEqualTo(PreviewConfig(fps = 2.0, maxEdge = 480, quality = 60))
-    }
-
-    @Test
-    fun `ladder clamps at lowest rung`() {
-        val ladder = PreviewLadder()
-        ladder.onFeedback(DegradeLevel.L3_CRITICAL, 0.0, 1000L) // -> rung 2
-        ladder.onFeedback(DegradeLevel.L3_CRITICAL, 0.0, 2000L) // -> rung 3 (lowest: 1 fps, 320, 60)
-        val cfg = ladder.onFeedback(DegradeLevel.L3_CRITICAL, 0.0, 3000L) // clamped
-        assertThat(ladder.currentRungIndex).isEqualTo(3)
-        assertThat(cfg).isEqualTo(PreviewConfig(fps = 1.0, maxEdge = 320, quality = 60))
-    }
-
-    @Test
-    fun `ladder steps up only after 30s clean`() {
-        val ladder = PreviewLadder()
-        ladder.onFeedback(DegradeLevel.L2_HOT, 0.0, 10_000L) // stepped down to rung 2 at t=10s
-        assertThat(ladder.currentRungIndex).isEqualTo(2)
-
-        // At t=25s (15s clean), still not 30s
-        ladder.onFeedback(DegradeLevel.L0_NORMAL, 0.0, 25_000L)
-        assertThat(ladder.currentRungIndex).isEqualTo(2)
-
-        // At t=40s (30s clean), steps up to rung 1
-        val steppedUp = ladder.onFeedback(DegradeLevel.L0_NORMAL, 0.0, 40_000L)
-        assertThat(ladder.currentRungIndex).isEqualTo(1)
-        assertThat(steppedUp.fps).isEqualTo(3.0)
-
-        // At t=70s (another 30s clean), steps up to rung 0
-        val top = ladder.onFeedback(DegradeLevel.L0_NORMAL, 0.0, 70_000L)
-        assertThat(ladder.currentRungIndex).isEqualTo(0)
-        assertThat(top.fps).isEqualTo(5.0)
-
-        // At t=100s, clamped at rung 0
-        val clamped = ladder.onFeedback(DegradeLevel.L0_NORMAL, 0.0, 100_000L)
-        assertThat(ladder.currentRungIndex).isEqualTo(0)
-        assertThat(clamped.fps).isEqualTo(5.0)
-    }
-
-    @Test
-    fun `ladder reset restores target rung`() {
-        val ladder = PreviewLadder()
-        ladder.onFeedback(DegradeLevel.L3_CRITICAL, 0.0, 1000L)
-        ladder.reset(0)
-        assertThat(ladder.currentRungIndex).isEqualTo(0)
-        assertThat(ladder.currentConfig().fps).isEqualTo(5.0)
     }
 }

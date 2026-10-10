@@ -46,6 +46,9 @@ import com.btb.ondevice.vision.FaceLandmarker
 import com.btb.ondevice.vision.PoseEstimator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
@@ -96,6 +99,8 @@ class MonitorService : Service(), LifecycleOwner {
         ModeController(stationCap = ViewMode.fromWire(readStationCap()) ?: ViewMode.FULL)
     }
     private var previewEncoder: PreviewEncoder? = null
+    private var previewLadder = PreviewLadder()
+    private var ladderJob: Job? = null
     private var telemetrySampler: TelemetrySampler? = null
     private val isScanningQr = AtomicBoolean(false)
     private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
@@ -166,6 +171,14 @@ class MonitorService : Service(), LifecycleOwner {
         previewEncoder?.enabled = modeController.shouldEncodePreview()
     }
 
+    /** T5.2: the encoder runs at the server policy, lowered by the ladder's rung (never raised). */
+    private fun applyPreviewConfig() {
+        val p = modeController.policy
+        previewEncoder?.config = previewLadder.effective(
+            PreviewConfig(fps = p.previewFps.toDouble(), maxEdge = p.previewMaxEdge, quality = p.previewQuality)
+        )
+    }
+
     /** T3.1: a server `policy` downlink. It can lower exposure, never raise the cap. */
     private fun applyPolicy(
         mode: String, previewFps: Int, previewMaxEdge: Int, previewQuality: Int,
@@ -187,14 +200,8 @@ class MonitorService : Service(), LifecycleOwner {
             audioViewers = audioViewers,
         )
         modeController.onPolicy(policy)
-        previewEncoder?.let { enc ->
-            enc.config = PreviewConfig(
-                fps = policy.previewFps.toDouble(),
-                maxEdge = policy.previewMaxEdge,
-                quality = policy.previewQuality
-            )
-            enc.enabled = modeController.shouldEncodePreview()
-        }
+        applyPreviewConfig()
+        previewEncoder?.enabled = modeController.shouldEncodePreview()
         uploader?.setPreviewMinInterval(policy.previewIntervalMs())
         publishModeState("policy")
         currentVideoViewers = videoViewers
@@ -370,7 +377,32 @@ class MonitorService : Service(), LifecycleOwner {
             this.enabled = modeController.shouldEncodePreview()
         }
         previewEncoder = enc
+        applyPreviewConfig()
         up.setPreviewMinInterval(modeController.policy.previewIntervalMs())
+
+        // T5.2 step 4: once a second, feed the ladder whether thermal got worse and how many previews
+        // the uploader dropped under backpressure since the last second.
+        previewLadder = PreviewLadder()  // each monitoring session starts at rung 0
+        ladderJob = CoroutineScope(Dispatchers.Default).launch {
+            var prevLevel = thermal.currentLevel
+            var prevOffered = up.previewsOffered.get()
+            var prevDropped = up.previewDroppedBackpressure.get()
+            while (true) {
+                delay(1_000L)
+                val level = thermal.currentLevel
+                val offered = up.previewsOffered.get()
+                val dropped = up.previewDroppedBackpressure.get()
+                previewLadder.onSample(
+                    thermalDegraded = level > prevLevel,
+                    offered = (offered - prevOffered).toInt(),
+                    droppedBackpressure = (dropped - prevDropped).toInt(),
+                )
+                prevLevel = level
+                prevOffered = offered
+                prevDropped = dropped
+                applyPreviewConfig()
+            }
+        }
 
         // 7. Initialize TelemetrySampler (T6.1)
         val sampler = TelemetrySampler(
@@ -381,6 +413,7 @@ class MonitorService : Service(), LifecycleOwner {
             metricsTracker = { pipeline?.metricsTracker },
             degradeLevel = { pipeline?.scheduler?.getLevel() ?: com.btb.ondevice.pipeline.DegradeLevel.L0_NORMAL },
             previewEncoder = { previewEncoder },
+            previewRung = { previewLadder.currentRung },
             sampleIntervalMs = 10_000L,
             scope = CoroutineScope(Dispatchers.Default),
         )
@@ -656,6 +689,8 @@ class MonitorService : Service(), LifecycleOwner {
         telemetrySampler?.close()
         telemetrySampler = null
 
+        ladderJob?.cancel()
+        ladderJob = null
         previewEncoder?.shutdown()
         previewEncoder = null
 

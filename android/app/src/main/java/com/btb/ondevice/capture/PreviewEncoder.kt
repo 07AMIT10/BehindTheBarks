@@ -2,7 +2,6 @@ package com.btb.ondevice.capture
 
 import android.graphics.Bitmap
 import android.graphics.Matrix
-import com.btb.ondevice.pipeline.DegradeLevel
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.util.concurrent.ExecutorService
@@ -17,54 +16,6 @@ data class PreviewConfig(
     val quality: Int = 70,
 ) {
     fun intervalMs(): Long = if (fps <= 0.0) Long.MAX_VALUE else (1000.0 / fps).toLong()
-}
-
-/**
- * Adaptive quality ladder (T5.2):
- * Steps down one rung when ThermalGovernor level degrades or backpressure drops exceed 20% in 10s.
- * Steps back up after 30s clean.
- */
-class PreviewLadder {
-    companion object {
-        val RUNGS = listOf(
-            PreviewConfig(fps = 5.0, maxEdge = 640, quality = 75),
-            PreviewConfig(fps = 3.0, maxEdge = 640, quality = 65),
-            PreviewConfig(fps = 2.0, maxEdge = 480, quality = 60),
-            PreviewConfig(fps = 1.0, maxEdge = 320, quality = 60),
-        )
-    }
-
-    var currentRungIndex: Int = 1
-        private set
-
-    private var lastDegradeMs: Long = 0L
-
-    fun currentConfig(): PreviewConfig = RUNGS[currentRungIndex]
-
-    fun onFeedback(
-        degradeLevel: DegradeLevel,
-        recentBackpressureDropRatio: Double,
-        nowMs: Long
-    ): PreviewConfig {
-        val shouldStepDown = degradeLevel > DegradeLevel.L0_NORMAL || recentBackpressureDropRatio > 0.20
-        if (shouldStepDown) {
-            if (currentRungIndex < RUNGS.size - 1) {
-                currentRungIndex++
-            }
-            lastDegradeMs = nowMs
-        } else if (nowMs - lastDegradeMs >= 30_000L) {
-            if (currentRungIndex > 0) {
-                currentRungIndex--
-                lastDegradeMs = nowMs
-            }
-        }
-        return currentConfig()
-    }
-
-    fun reset(rungIndex: Int = 1) {
-        currentRungIndex = rungIndex.coerceIn(0, RUNGS.size - 1)
-        lastDegradeMs = 0L
-    }
 }
 
 /**
