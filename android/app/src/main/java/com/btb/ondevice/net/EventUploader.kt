@@ -80,12 +80,18 @@ class EventUploader(
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .build(),
     val pingIntervalMs: Long = 15_000L,
-    val previewMinIntervalMs: Long = 500L, // Max 2 fps preview
+    var previewMinIntervalMs: Long = 500L,
     val maxQueueBytes: Long = 256 * 1024L, // 256 KB
     val listener: EventUploaderListener? = null,
     val clock: () -> Double = { System.currentTimeMillis() / 1000.0 },
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO),
 ) {
+    val previewDroppedBackpressure = java.util.concurrent.atomic.AtomicLong(0L)
+
+    fun setPreviewMinInterval(intervalMs: Long) {
+        previewMinIntervalMs = intervalMs.coerceAtLeast(0L)
+    }
+
     companion object {
         const val KIND_PREVIEW: Byte = 0x01
         const val CLOSE_BAD_HELLO = 4400
@@ -518,6 +524,7 @@ class EventUploader(
         // Backpressure: drop preview first if queue > maxQueueBytes
         if (ws.queueSize() > maxQueueBytes) {
             android.util.Log.w("EventUploader", "sendPreview backpressure drop: queue=${ws.queueSize()} > $maxQueueBytes")
+            previewDroppedBackpressure.incrementAndGet()
             return false
         }
 

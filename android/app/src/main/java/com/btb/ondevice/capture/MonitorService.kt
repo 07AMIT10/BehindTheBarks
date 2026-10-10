@@ -93,7 +93,7 @@ class MonitorService : Service(), LifecycleOwner {
     private val modeController: ModeController by lazy {
         ModeController(stationCap = ViewMode.fromWire(readStationCap()) ?: ViewMode.FULL)
     }
-    private val lastPreviewSendMs = AtomicLong(0L)
+    private var previewEncoder: PreviewEncoder? = null
     private val isScanningQr = AtomicBoolean(false)
     private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
     private var currentVideoViewers: Int = 0
@@ -160,6 +160,7 @@ class MonitorService : Service(), LifecycleOwner {
             modeController.effectiveMode().wire,
             reason,
         )
+        previewEncoder?.enabled = modeController.shouldEncodePreview()
     }
 
     /** T3.1: a server `policy` downlink. It can lower exposure, never raise the cap. */
@@ -173,17 +174,25 @@ class MonitorService : Service(), LifecycleOwner {
             return
         }
         val prevVideoViewers = modeController.policy.videoViewers
-        modeController.onPolicy(
-            Policy(
-                mode = parsed,
-                previewFps = previewFps,
-                previewMaxEdge = previewMaxEdge,
-                previewQuality = previewQuality,
-                audio = audio,
-                videoViewers = videoViewers,
-                audioViewers = audioViewers,
-            )
+        val policy = Policy(
+            mode = parsed,
+            previewFps = previewFps,
+            previewMaxEdge = previewMaxEdge,
+            previewQuality = previewQuality,
+            audio = audio,
+            videoViewers = videoViewers,
+            audioViewers = audioViewers,
         )
+        modeController.onPolicy(policy)
+        previewEncoder?.let { enc ->
+            enc.config = PreviewConfig(
+                fps = policy.previewFps.toDouble(),
+                maxEdge = policy.previewMaxEdge,
+                quality = policy.previewQuality
+            )
+            enc.enabled = modeController.shouldEncodePreview()
+        }
+        uploader?.setPreviewMinInterval(policy.previewIntervalMs())
         publishModeState("policy")
         currentVideoViewers = videoViewers
         currentAudioViewers = audioViewers
@@ -346,11 +355,25 @@ class MonitorService : Service(), LifecycleOwner {
         uploader = up
         up.start()
 
-        // 6. Initialize InferenceExecutor
+        // 6. Initialize PreviewEncoder (T5.2) decoupled from inference
+        val enc = PreviewEncoder(
+            onEncoded = { jpeg -> up.sendPreview(jpeg) }
+        ).apply {
+            this.config = PreviewConfig(
+                fps = modeController.policy.previewFps.toDouble(),
+                maxEdge = modeController.policy.previewMaxEdge,
+                quality = modeController.policy.previewQuality
+            )
+            this.enabled = modeController.shouldEncodePreview()
+        }
+        previewEncoder = enc
+        up.setPreviewMinInterval(modeController.policy.previewIntervalMs())
+
+        // 7. Initialize InferenceExecutor
         val exec = InferenceExecutor()
         executor = exec
 
-        // 7. Initialize CameraSource & MicSource
+        // 8. Initialize CameraSource & MicSource
         val camera = CameraSource(
             context = this,
             lifecycleOwner = this,
@@ -372,6 +395,14 @@ class MonitorService : Service(), LifecycleOwner {
                     }
                 }
 
+                // T3.2 & T5.2: preview encoding is completely decoupled from inference.
+                // We offer the raw frame to PreviewEncoder BEFORE submitting to InferenceExecutor.
+                // It drops stale frames internally, enforces rate limits, downscales, and encodes
+                // on a dedicated low-priority thread, so inference never waits for JPEG encoding.
+                if (modeController.shouldEncodePreview()) {
+                    previewEncoder?.offer(rgba, width, height, rotation)
+                }
+
                 // Check thermal governor and memory guard
                 val deg = thermal.poll()
                 pipe.scheduler.setLevel(deg)
@@ -388,27 +419,6 @@ class MonitorService : Service(), LifecycleOwner {
                         updateUiOverlay(frameEvent, rulesLabel, width, height)
                     } catch (t: Throwable) {
                         android.util.Log.e("MonitorService", "Inference error: ${t.message}", t)
-                    }
-                    // T3.2: preview only when the policy says a viewer exists, at the policy's
-                    // fps/max_edge/quality. With zero viewers the phone spends no CPU on JPEG
-                    // encoding at all. JPEG encode stays on this background thread; sendPreview
-                    // applies its own rate limit and backpressure drop, so this never blocks
-                    // inference.
-                    val policy = modeController.policy
-                    if (modeController.shouldEncodePreview()) {
-                        val nowMs = System.currentTimeMillis()
-                        if (nowMs - lastPreviewSendMs.get() >= policy.previewIntervalMs()) {
-                            lastPreviewSendMs.set(nowMs)
-                            try {
-                                encodePreviewJpeg(rgba, width, height, rotation,
-                                    maxEdge = policy.previewMaxEdge,
-                                    quality = policy.previewQuality)?.let { jpeg ->
-                                    up.sendPreview(jpeg)
-                                }
-                            } catch (t: Throwable) {
-                                android.util.Log.e("MonitorService", "Preview error: ${t.message}", t)
-                            }
-                        }
                     }
                 }
             }
@@ -531,48 +541,6 @@ class MonitorService : Service(), LifecycleOwner {
         }
     }
 
-    /**
-     * Downscale an RGBA frame to 320 px (long edge) and encode a dashboard preview JPEG.
-     * Returns null when the buffer does not hold a full frame. Caller throttles.
-     */
-    /** T3.2: `maxEdge` and `quality` come from the server policy instead of the old hard-coded
-     *  320/60, so a rate-limited preview can be asked for smaller without a new APK. */
-    private fun encodePreviewJpeg(
-        rgba: ByteArray,
-        width: Int,
-        height: Int,
-        rotationDegrees: Int = 0,
-        maxEdge: Int = 320,
-        quality: Int = 60,
-    ): ByteArray? {
-        if (width < 2 || height < 2 || rgba.size < width * height * 4) return null
-        val full = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        full.copyPixelsFromBuffer(ByteBuffer.wrap(rgba))
-        val targetW: Int
-        val targetH: Int
-        val edge = maxEdge.coerceIn(64, 1280)
-        if (width >= height) {
-            targetW = edge
-            targetH = (edge.toFloat() * height / width).roundToInt().coerceAtLeast(2)
-        } else {
-            targetW = (edge.toFloat() * width / height).roundToInt().coerceAtLeast(2)
-            targetH = edge
-        }
-        val scaled = Bitmap.createScaledBitmap(full, targetW, targetH, true)
-        full.recycle()
-        val upright = if (rotationDegrees != 0) {
-            val m = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
-            Bitmap.createBitmap(scaled, 0, 0, scaled.width, scaled.height, m, true)
-                .also { scaled.recycle() }
-        } else {
-            scaled
-        }
-        val out = ByteArrayOutputStream(32 * 1024)
-        upright.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(20, 95), out)
-        upright.recycle()
-        return out.toByteArray().takeIf { it.isNotEmpty() }
-    }
-
     private fun initModelRegistry(): ModelRegistry {
         val manifest = try {
             assets.open("models/manifest.json").bufferedReader().use {
@@ -666,6 +634,9 @@ class MonitorService : Service(), LifecycleOwner {
 
         micSource?.stop()
         micSource = null
+
+        previewEncoder?.shutdown()
+        previewEncoder = null
 
         executor?.close()
         executor = null
