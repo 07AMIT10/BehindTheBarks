@@ -130,7 +130,7 @@ When controls are expanded, the on-screen heads-up display shows real-time diagn
 
 ---
 
-## 🎮 Step 6: Remote Downlinks from the Web Dashboard
+## 🎮 Step 6: Remote Controls & Viewing Modes
 
 While you are away or on the couch, the web dashboard gives you full remote control over the phone station:
 
@@ -138,8 +138,25 @@ While you are away or on the couch, the web dashboard gives you full remote cont
 | :--- | :--- | :--- |
 | 🔦 **Torch** | Turns the phone's rear LED flash ON / OFF | Illuminate a dark room at night to check on your dog without turning on room lights. |
 | 🔄 **Flip Camera** | Swaps between rear camera and front selfie camera | Useful if your phone stand requires placing the screen facing the dog. |
-| 🛡️ **Privacy Mode** | Instantly mutes camera stream with black slate | Mute the video feed when family members or house guests enter the room. |
+| 🛡️ **Viewing Mode** | Adjusts privacy tier (`Full`, `Limited`, `Privacy`, `Blackout`) | Regulate domestic privacy exposure for viewers and family members. |
 | 🍖 **Dispense Treat** | Plays an acoustic treat chime on the phone | Alert your dog to an automatic feeder or reinforce calm behavior remotely. |
+
+### 🛡️ Understanding the 4 Viewing Modes
+
+WagWatch is designed from the ground up for **domestic co-inhabitant privacy**—so family members, roommates, and pet sitters never feel surveilled:
+
+1. **Full Mode**: Live camera preview (2 FPS) and behavior telemetry. Designed for live pet observation.
+2. **Limited Mode**: Privacy-preserving blurred snapshots refreshed every 10 seconds. Includes a temporary **15-Second Peek** button to verify room safety without continuous optical streaming.
+3. **Privacy Mode**: **Zero camera images leave the phone.** Only AI numerical telemetry (emotion classification, pose keypoints, and bark detections) is delivered. Ideal when family members are relaxing in the room.
+4. **Blackout Mode (Family Privacy)**: Immediate local hardware shutter. All camera analysis and microphone processing stop completely at the device driver level.
+
+### 🔔 Anti-Lurking Invariants & Station Sovereignty
+
+* **Audible Chime on Connect**: Whenever a viewer opens the live video stream, the Android phone station plays a soft two-tone intercom chime so anyone in the room knows they are being watched.
+* **On-Screen Viewer Badge**: The station HUD and Android status bar notification display `👁️ N viewers watching` in real time.
+* **Instant Disconnect**: Anyone near the phone can tap **"Disconnect Viewers"** on the screen or notification to immediately drop all remote connections.
+* **Station Sovereignty**: The phone station holder has absolute authority. Remote viewers can lower the mode (e.g. to Privacy or Blackout) immediately, but **cannot turn the camera back on** without an on-screen approval prompt on the physical phone station.
+* **180-Second Inactivity Watchdog**: If a browser tab is left open and untouched for 3 minutes (or minimized/hidden), the video stream pauses automatically to save bandwidth and preserve household privacy.
 
 ---
 

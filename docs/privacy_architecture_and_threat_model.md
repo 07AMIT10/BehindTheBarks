@@ -100,19 +100,40 @@ flowchart TD
 * Using the on-device YOLO detector, the phone station can black out or heavily blur 100% of the pixel area outside the dog's bounding box.
 * The viewer sees only the dog; the surrounding domestic space is completely redacted.
 
+### Defense 6: Four-Tier Viewing Modes & Station Sovereignty (T3.1–T3.8)
+
+| Mode | Preview Video | Audio Stream | Telemetry Events (Pose, Barks, Emotion) | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `full` | Live optical frames (2 fps) | Live stream (gated on D3) | Yes | Full live monitoring. |
+| `limited` | Blurred low-res still (10s cache, 240px, Gaussian blur) | None | Yes | Privacy-preserving snapshots + 15s peek window. |
+| `privacy` | None (Server serves "Events Only" slate) | None | Yes | Pure kinematic and acoustic telemetry. Zero camera pixels leave phone. |
+| `blackout` | None (Server serves "Blackout" slate) | None | None | Total sensor shutdown at Android hardware level. |
+
+#### Principles:
+1. **Ordering & Ceiling**: `blackout < privacy < limited < full`. Effective viewer mode is `min(station_cap, household_mode, viewer.mode_ceiling)`.
+2. **Station Sovereignty**: The physical Android phone station is sovereign. The station cap can be lowered from anywhere immediately, but can NEVER be raised remotely without explicit physical approval on the phone station screen (or heads-up notification prompt with 60s timeout).
+3. **15-Second Peek Window**: In `limited` mode, viewers can request a 15-second temporary peek (unblur) if station cap is `full`. The phone station chimes and records the peek in the audit trail.
+
 ---
 
 ## 4. Implementation Matrix
 
 | Component | Responsibility | Status |
 | :--- | :--- | :--- |
-| `backend/main.py` | Track active `/video` subscribers; kick cooldown enforcement; dispatch downlinks. | Implemented (T3.4) |
-| `backend/web/tracker.py` | Maintain active viewers count, kick cooldown, and fire debounced downlinks. | Implemented (T3.4) |
-| `android/.../EventUploader.kt` | Parse `policy` downlinks and send `kick_viewers` uplinks. | Implemented (T3.4) |
-| `android/.../MonitorService.kt` | Play two-tone chime on 0->>0 viewers, notification action & kick handling. | Implemented (T3.4) |
-| `android/.../ui/MainActivity.kt` | Active viewer count indicator & "Disconnect" action button. | Implemented (T3.4) |
-| `frontend/components/VideoPanel.tsx` | Implement 3-minute inactivity watchdog overlay and tab visibility pause. | Implemented (T3.4) |
+| `backend/web/modes.py` | Mode hierarchy, order ranking, and ceiling arithmetic. | Implemented (T3.1) |
+| `android/.../capture/ViewMode.kt` | Android view mode enum, ceiling logic, and preference persistence. | Implemented (T3.2) |
+| `android/.../capture/ModeController.kt` | Station sovereignty, 15-min owner raise expiry, prompt approval flow. | Implemented (T3.2) |
+| `backend/web/policy.py` | Household policy engine, caller ceiling computation, slates generation. | Implemented (T3.3) |
+| `backend/main.py` | Endpoints (`/mode`, `/peek`, `/privacy`), active viewer tracking, kick cooldown. | Implemented (T3.3, T3.4, T3.5) |
+| `backend/web/tracker.py` | Active viewer session tracker with 300 ms debounced downlinks. | Implemented (T3.4) |
+| `android/.../EventUploader.kt` | Parse `policy` and `mode_request` downlinks; send `kick_viewers` uplinks. | Implemented (T3.1, T3.4) |
+| `android/.../MonitorService.kt` | Two-tone chime, viewer counter HUD, notification actions, kick handling. | Implemented (T3.2, T3.4) |
+| `android/.../ui/MainActivity.kt` | 4-segment station mode control HUD, viewer count badge, disconnect action. | Implemented (T3.2, T3.4) |
+| `backend/web/limited.py` | Server-side Gaussian blur (240px, blur=31), 10s caching, 15s peek window. | Implemented (T3.5) |
+| `frontend/components/VideoPanel.tsx` | Mode overlays, watchdog timeout, mobile and desktop mode selectors. | Implemented (T3.4, T3.6) |
+| `frontend/components/ModeSheet.tsx` | Bottom sheet mode selector, ceiling lock tooltips, 60s approval countdown. | Implemented (T3.6) |
 | `frontend/lib/watchdog.ts` | Pure timer watchdog engine with user activity reset. | Implemented (T3.4) |
+| `tests/web/test_mode_wire.py` | End-to-end wire verification across blackout, privacy, limited, and full. | Implemented (T3.8) |
 
 ---
 

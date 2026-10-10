@@ -233,7 +233,7 @@ are untouched; only the producer of the envelopes moves. (Plan:
   dead connection cannot silently swallow later treats and config pushes.
 - **/ingest-events close codes:** same as `/ingest` — `4400` bad hello, `4408` replaced by a newer
   phone after `web.ingest.stale_s` of silence, `4409` another phone is already streaming, `4410` the
-  station was revoked by its owner. Close code `1000` (the app's own Stop) **or a `bye` envelope**
+  station was revoked by its owner, `4411` viewer kicked by station or owner. Close code `1000` (the app's own Stop) **or a `bye` envelope**
   forgets the phone and idles the pipeline; anything else leaves a disconnected card.
 - **Station pairing v2** (`web.auth.mode: households`): the owner mints a one-time, 300 s code
   (`POST /households/me/pairing`); the app registers its ECDSA P-256 public key with it
