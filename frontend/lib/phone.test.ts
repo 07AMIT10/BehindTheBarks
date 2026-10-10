@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deviceLabel, PAUSED_NOTICE, phoneNotice, stationState } from "./phone";
+import { deviceLabel, PAUSED_NOTICE, phoneNotice, shouldStream, stationState } from "./phone";
 import type { PhoneStatus, Status } from "./types";
 
 const phone = (p: Partial<PhoneStatus>): Status => ({
@@ -77,5 +77,22 @@ describe("stationState", () => {
     expect(stationState(phone({}))).toBe("live");
     expect(stationState(phone({ camera: false }))).toBe("blocked");
     expect(stationState(phone({ connected: false }))).toBe("dropped");
+  });
+});
+
+describe("shouldStream", () => {
+  it("keeps the MJPEG stream for a live, stalled (frozen frame) or mic-only station", () => {
+    expect(shouldStream("live")).toBe(true);
+    expect(shouldStream("stalled")).toBe(true);
+    expect(shouldStream("blocked")).toBe(true);
+  });
+  it("opens no stream for idle, paused (Blackout) or dropped phones", () => {
+    expect(shouldStream("idle")).toBe(false);
+    expect(shouldStream("paused")).toBe(false);
+    expect(shouldStream("dropped")).toBe(false);
+  });
+  it("agrees with stationState for a dropped phone", () => {
+    expect(shouldStream(stationState(phone({ connected: false })))).toBe(false);
+    expect(shouldStream(stationState(phone({})))).toBe(true);
   });
 });

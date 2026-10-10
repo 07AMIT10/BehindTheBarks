@@ -38,6 +38,15 @@ export function stationState(s: Status | null): StationState {
   return "live";
 }
 
+/**
+ * Whether the dashboard should hold an open MJPEG `/video` stream for this station state.
+ * idle (stopped or never started), paused (Blackout) and dropped (phone gone) have nothing useful
+ * to show, so no `<img>` and no request. live, stalled (frozen last frame) and blocked keep it.
+ */
+export function shouldStream(st: StationState): boolean {
+  return st === "live" || st === "stalled" || st === "blocked";
+}
+
 /** Status-bar device label. */
 export function deviceLabel(s: Status | null): string {
   const p = s?.phone;

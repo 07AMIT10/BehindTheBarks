@@ -17,6 +17,8 @@ type Props = {
   paused: boolean;
   idle?: boolean;
   blackoutPaused?: boolean;  // a deliberate Blackout (stationState "paused"): neutral card, no stream
+  stream?: boolean;  // shouldStream(stationState): false for idle/paused/dropped, so no <img> and no /video request
+  dropped?: boolean;  // the phone is attached but disconnected: "Reconnecting to camera", no stream
   onPair?: () => void;
   lastDogTs: number | null;
   privacyMode?: boolean;
@@ -44,6 +46,8 @@ export default function VideoPanel({
   paused,
   idle = false,
   blackoutPaused = false,
+  stream = true,
+  dropped = false,
   onPair,
   lastDogTs,
   privacyMode = false,
@@ -315,7 +319,7 @@ export default function VideoPanel({
           }`,
         }}
       >
-        {!watchdogPaused && (
+        {!watchdogPaused && stream && (
           /* eslint-disable-next-line @next/next/no-img-element -- MJPEG stream, next/image can't handle it */
           <img ref={imgRef} key={streamId} src={videoSrc} alt=""
             crossOrigin="anonymous"
@@ -406,7 +410,7 @@ export default function VideoPanel({
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center text-[#D6D8DB]" style={scrim}>
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#7FE3E8" strokeWidth="2" strokeLinecap="round"
             style={{ animation: "spin 1.2s linear infinite" }} aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
-          <div className="text-heading font-semibold text-white">{paused ? "Reconnecting…" : "Waiting for video…"}</div>
+          <div className="text-heading font-semibold text-white">{dropped ? "Reconnecting to camera…" : paused ? "Reconnecting…" : "Waiting for video…"}</div>
           {paused && <div className="max-w-sm text-small">The camera phone dropped off Wi‑Fi. Keep it on and near the router.</div>}
         </div>
       )}

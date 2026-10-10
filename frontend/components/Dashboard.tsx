@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ClipMeta } from "@/lib/demo";
-import { phoneNotice, stationState } from "@/lib/phone";
+import { phoneNotice, shouldStream, stationState } from "@/lib/phone";
 import { welcomeVisible } from "@/lib/household";
 import { serverNow } from "@/lib/store";
 import { spanAt } from "@/lib/timeline";
@@ -377,6 +377,8 @@ export default function Dashboard() {
                 paused={paused}
                 idle={idle}
                 blackoutPaused={blackoutPaused}
+                stream={shouldStream(st)}
+                dropped={st === "dropped"}
                 onPair={() => setIsPairingOpen(true)}
                 lastDogTs={state.lastDogTs}
                 privacyMode={privacyMode}
