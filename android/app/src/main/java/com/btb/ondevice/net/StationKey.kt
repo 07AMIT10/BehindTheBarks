@@ -28,13 +28,24 @@ object StationKey {
     private const val PROVIDER = "AndroidKeyStore"
 
     /** The device's key: strong-box backed when the hardware offers it, otherwise the TEE. */
-    fun getOrCreate(): Signer = KeystoreSigner(getOrCreatePrivateKey())
+    fun getOrCreate(): Signer = getOrCreate(ALIAS)
 
-    private fun getOrCreatePrivateKey(): PrivateKey {
+    /**
+     * Same as [getOrCreate] under any alias. Only the on-device instrumented test passes a throwaway
+     * alias (so it never touches the production key); the app always uses [ALIAS].
+     */
+    fun getOrCreate(alias: String): Signer = KeystoreSigner(getOrCreatePrivateKey(alias), alias)
+
+    /** Removes a key created by [getOrCreate] under [alias]. Used by the instrumented test cleanup. */
+    fun delete(alias: String) {
+        KeyStore.getInstance(PROVIDER).apply { load(null) }.deleteEntry(alias)
+    }
+
+    private fun getOrCreatePrivateKey(alias: String): PrivateKey {
         val ks = KeyStore.getInstance(PROVIDER).apply { load(null) }
-        (ks.getKey(ALIAS, null) as? PrivateKey)?.let { return it }
+        (ks.getKey(alias, null) as? PrivateKey)?.let { return it }
         val generator = KeyPairGenerator.getInstance("EC", PROVIDER)
-        val spec = KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_SIGN)
+        val spec = KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN)
             .setAlgorithmParameterSpec(java.security.spec.ECGenParameterSpec("secp256r1"))
             .setDigests(KeyProperties.DIGEST_SHA256)
             .setUserAuthenticationRequired(false) // the station signs unattended, screen dimmed
@@ -45,10 +56,10 @@ object StationKey {
             generator.initialize(spec) // the spec already prefers strong box; the fallback is implicit
         }
         generator.generateKeyPair()
-        return (KeyStore.getInstance(PROVIDER).apply { load(null) }.getKey(ALIAS, null) as PrivateKey)
+        return (KeyStore.getInstance(PROVIDER).apply { load(null) }.getKey(alias, null) as PrivateKey)
     }
 
-    private class KeystoreSigner(private val key: PrivateKey) : Signer {
+    private class KeystoreSigner(private val key: PrivateKey, private val alias: String) : Signer {
         override fun sign(data: ByteArray): ByteArray =
             Signature.getInstance("SHA256withECDSA").run { initSign(key); update(data); sign() }
 
@@ -57,7 +68,7 @@ object StationKey {
 
         private fun PrivateKey.factoryEncoded(): ByteArray {
             val ks = KeyStore.getInstance(PROVIDER).apply { load(null) }
-            val cert = ks.getCertificate(ALIAS)
+            val cert = ks.getCertificate(alias)
             return cert.publicKey.encoded // DER SubjectPublicKeyInfo, what POST /pair expects
         }
     }

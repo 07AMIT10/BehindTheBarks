@@ -30,6 +30,9 @@ android {
             ?: System.getenv("BTB_DEFAULT_INGEST_URL")
             ?: "ws://10.0.2.2:8000/ingest-events"
         buildConfigField("String", "DEFAULT_INGEST_URL", "\"$defaultIngestUrl\"")
+
+        // On-device tests (src/androidTest), run with `make android-test-device`.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     // Resolved once at the top level so both the signingConfig and the release buildType can name
@@ -146,4 +149,9 @@ dependencies {
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.truth)
     testRuntimeOnly(libs.junit.platform.launcher)
+
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.core)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.junit4)
 }
