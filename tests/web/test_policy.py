@@ -160,6 +160,33 @@ def test_owner_post_mode_full_above_cap_returns_pending_and_sends_mode_request(t
             assert downlink["data"]["from"] == "owner"
 
 
+def test_remote_blackout_then_full_is_applied_not_pending_when_phone_cap_is_full(tmp_path):
+    """A remote blackout is policy-only: the phone keeps reporting cap=full, so the owner's
+    restore is applied directly, with no on-device approval (T3.2 / protocol doc)."""
+    app_ = app(tmp_path)
+    with TestClient(app_) as c:
+        c.post("/households", json={"dog_name": "Rover"})
+        owner_cookie = c.cookies[VIEWER_COOKIE]
+
+        station = StationClient(c)
+        with connect_station(c, station) as ws:
+            ws.send_text(json.dumps({
+                "type": "mode_state",
+                "data": {"cap": "full", "effective": "full", "reason": "station"},
+            }))
+            c.cookies.set(VIEWER_COOKIE, owner_cookie)
+
+            blackout = c.post("/mode", json={"mode": "blackout"})
+            assert blackout.json()["status"] == "applied"
+            full = c.post("/mode", json={"mode": "full"})
+            assert full.json() == {"status": "applied", "mode": "full"}
+
+            # The phone was never asked to raise anything: no mode_request on the wire.
+            # set_policy sends policy then the legacy privacy downlink for each change.
+            sent = [ws.receive_json()["type"] for _ in range(4)]
+            assert sent == ["policy", "privacy", "policy", "privacy"]
+
+
 def test_lowering_to_privacy_makes_video_switch_to_events_only_slate(tmp_path):
     app_ = app(tmp_path)
     with TestClient(app_) as c:

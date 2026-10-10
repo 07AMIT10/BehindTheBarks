@@ -269,6 +269,7 @@ class MonitorService : Service(), LifecycleOwner {
 
     private fun startMonitoring(serverUrl: String, deviceName: String, token: String? = null) {
         if (!isRunning.compareAndSet(false, true)) return
+        modeController.beginSession()
 
         // 1. Foreground Notification
         val notification = buildNotification("Monitoring room with camera & audio...")
@@ -351,6 +352,9 @@ class MonitorService : Service(), LifecycleOwner {
                     cameraSource?.flipCamera()
                 }
                 override fun onPrivacyDownlink(enabled: Boolean) {
+                    // Once a `policy` was seen this session the legacy downlink is ignored completely:
+                    // a remote blackout must not lower the station's own cap (T3.2, protocol doc).
+                    if (modeController.ignoresLegacyPrivacy()) return
                     // T3.2: a remote privacy:false must never raise exposure. Only the on-device
                     // button (setPrivacyMode) may restore the cap.
                     val effective = modeController.onLegacyPrivacy(enabled)

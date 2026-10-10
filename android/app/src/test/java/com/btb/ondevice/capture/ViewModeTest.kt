@@ -95,12 +95,49 @@ class ViewModeTest {
     }
 
     @Test
-    fun `legacy privacy true lowers immediately to blackout`() {
+    fun `legacy privacy true is honoured before any policy (old servers)`() {
         val c = controller(cap = ViewMode.FULL, now = { 0L })
-        c.onPolicy(Policy(mode = ViewMode.FULL))
+        assertThat(c.ignoresLegacyPrivacy()).isFalse()
         c.onLegacyPrivacy(true)
         assertThat(c.effectiveMode()).isEqualTo(ViewMode.BLACKOUT)
+        assertThat(c.cap).isEqualTo(ViewMode.BLACKOUT)
     }
+
+    @Test
+    fun `legacy privacy true is ignored after a policy, so the station cap stays full`() {
+        val c = controller(cap = ViewMode.FULL, now = { 0L })
+        c.onPolicy(Policy(mode = ViewMode.FULL))
+        assertThat(c.ignoresLegacyPrivacy()).isTrue()
+        c.onLegacyPrivacy(true)
+        assertThat(c.cap).isEqualTo(ViewMode.FULL)
+        assertThat(c.effectiveMode()).isEqualTo(ViewMode.FULL)
+    }
+
+    @Test
+    fun `remote blackout by policy, then remote full, needs no on-device approval`() {
+        val c = controller(cap = ViewMode.FULL, now = { 0L })
+        c.onPolicy(Policy(mode = ViewMode.BLACKOUT))
+        c.onLegacyPrivacy(true)                 // the server also sends the legacy downlink
+        assertThat(c.effectiveMode()).isEqualTo(ViewMode.BLACKOUT)
+        c.onPolicy(Policy(mode = ViewMode.FULL)) // owner restores
+        assertThat(c.effectiveMode()).isEqualTo(ViewMode.FULL)
+        assertThat(c.cap).isEqualTo(ViewMode.FULL)
+        // the owner's raise above the cap would have been "pending"; here it is a policy change
+        assertThat(c.onModeRequest(ViewMode.FULL, fromOwner = true))
+            .isInstanceOf(ModeController.RequestOutcome.Applied::class.java)
+    }
+
+    @Test
+    fun `beginSession forgets the previous policy so legacy privacy is honoured again`() {
+        val c = controller(cap = ViewMode.FULL, now = { 0L })
+        c.onPolicy(Policy(mode = ViewMode.FULL))
+        c.beginSession()
+        assertThat(c.ignoresLegacyPrivacy()).isFalse()
+        c.onLegacyPrivacy(true)
+        assertThat(c.cap).isEqualTo(ViewMode.BLACKOUT)
+    }
+
+
 
     @Test
     fun `legacy privacy false never raises exposure from a remote message`() {

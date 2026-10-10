@@ -81,6 +81,16 @@ class ModeController(
     private var raiseApproved = false
     private var approvedMode: ViewMode = ViewMode.FULL
 
+    /** True once a server `policy` arrived in this monitoring session. From then on the policy is the
+     *  only remote control: the legacy `privacy` downlink is ignored (it would otherwise lower the
+     *  station's own cap, and every later raise would need an on-device approval). */
+    private var policySeen = false
+
+    /** Start of a monitoring session: nothing from the previous connection's policy carries over. */
+    fun beginSession() {
+        policySeen = false
+    }
+
     /** Set by the device UI: the person holding the phone chose this. This is the only way to raise. */
     fun setStationCapFromDevice(mode: ViewMode) {
         stationCap = mode
@@ -92,6 +102,7 @@ class ModeController(
     /** A server `policy` downlink. Lowering is applied at once; it can never raise the cap. */
     fun onPolicy(next: Policy) {
         policy = next
+        policySeen = true
     }
 
     /**
@@ -116,12 +127,18 @@ class ModeController(
         raisedUntil = clock() + raiseDurationMs
     }
 
-    /** The legacy `privacy` downlink. Lowering applies immediately; it can NEVER raise exposure. */
+    /** Whether the legacy `privacy` downlink must be ignored: a `policy` has been seen this session. */
+    fun ignoresLegacyPrivacy(): Boolean = policySeen
+
+    /**
+     * The legacy `privacy` downlink, for servers that never send `policy` (old APKs keep working
+     * there). Once a policy was seen it is ignored completely. Before that, `true` lowers the cap to
+     * blackout. It can NEVER raise exposure: a remote `privacy:false` is ignored on purpose.
+     */
     fun onLegacyPrivacy(enabled: Boolean): ViewMode {
-        if (enabled) {
+        if (enabled && !ignoresLegacyPrivacy()) {
             setStationCapFromDevice(ViewMode.BLACKOUT)
         }
-        // A remote `privacy:false` is ignored on purpose: only the device UI restores exposure.
         return effectiveMode()
     }
 
