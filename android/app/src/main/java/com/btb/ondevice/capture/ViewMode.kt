@@ -57,6 +57,16 @@ enum class ModeReason(val wire: String) {
     EXPIRED_RAISE("expired_raise"),
 }
 
+/** How a raise prompt ended. The wire value goes upstream in `mode_result` (T3.2 / server envelope). */
+enum class RaiseResult(val wire: String) {
+    ALLOWED("allowed"),
+    DENIED("denied"),
+    TIMEOUT("timeout"),
+}
+
+/** The raise that was answered, and how. */
+data class RaiseResolution(val mode: ViewMode, val result: RaiseResult)
+
 /**
  * T3.2 the station's mode decisions, extracted from [MonitorService] so they are testable without
  * Android. Every rule about who may raise or lower exposure lives here, not in the service.
@@ -79,6 +89,7 @@ class ModeController(
     private var pending: PendingRaise? = null
 
     /** The unanswered raise, or null. A prompt past its deadline is denied and cleared here. */
+    @Synchronized
     fun pendingRaise(): PendingRaise? {
         val p = pending ?: return null
         if (clock() >= p.deadline) {
@@ -88,30 +99,44 @@ class ModeController(
         return p
     }
 
-    /** Allow the pending raise for [raiseDurationMs]. Returns the mode now in force, or null if nothing was pending. */
-    fun allowPendingRaise(): ViewMode? {
-        val p = pendingRaise() ?: return null
+    /**
+     * Ends the pending raise with the on-device answer. [RaiseResult.ALLOWED] approves it for [raiseDurationMs];
+     * [RaiseResult.DENIED] and [RaiseResult.TIMEOUT] leave the cap alone. A prompt that is past its deadline
+     * is reported as a timeout whatever the caller says, so a late tap cannot approve an expired request.
+     * Returns null when nothing was pending (the other path already answered it).
+     */
+    @Synchronized
+    fun resolvePendingRaise(answer: RaiseResult): RaiseResolution? {
+        val p = pending ?: return null
         pending = null
-        approveRaise(p.mode)
-        return effectiveMode()
+        val result = if (answer != RaiseResult.TIMEOUT && clock() >= p.deadline) RaiseResult.TIMEOUT else answer
+        if (result == RaiseResult.ALLOWED) approveRaise(p.mode)
+        return RaiseResolution(p.mode, result)
+    }
+
+    /** Allow the pending raise for [raiseDurationMs]. Returns the mode now in force, or null if nothing was pending. */
+    @Synchronized
+    fun allowPendingRaise(): ViewMode? {
+        val resolved = resolvePendingRaise(RaiseResult.ALLOWED) ?: return null
+        return if (resolved.result == RaiseResult.ALLOWED) effectiveMode() else null
     }
 
     /** Keep private: the pending raise is dropped; the cap does not move. Returns true if one was pending. */
-    fun denyPendingRaise(): Boolean {
-        val had = pendingRaise() != null
-        pending = null
-        return had
-    }
+    @Synchronized
+    fun denyPendingRaise(): Boolean = resolvePendingRaise(RaiseResult.DENIED) != null
 
+    @get:Synchronized
     var policy: Policy = Policy.DEFAULT
         private set
 
     /** The cap the phone itself enforces, before any policy. */
+    @get:Synchronized
     val cap: ViewMode
         get() = stationCap
 
     /** The cap the server should see: an approved raise is reported as the raised cap while it lasts,
      *  so the dashboard's effective mode follows the approval. It falls back on expiry (see effectiveMode). */
+    @Synchronized
     fun reportedCap(): ViewMode {
         effectiveMode() // lapses an expired raise first
         return if (raiseApproved) approvedMode else stationCap
@@ -127,12 +152,14 @@ class ModeController(
     private var policySeen = false
 
     /** Start of a monitoring session: nothing from the previous connection's policy carries over. */
+    @Synchronized
     fun beginSession() {
         policySeen = false
         pending = null
     }
 
     /** Set by the device UI: the person holding the phone chose this. This is the only way to raise. */
+    @Synchronized
     fun setStationCapFromDevice(mode: ViewMode) {
         stationCap = mode
         pending = null
@@ -142,6 +169,7 @@ class ModeController(
     }
 
     /** A server `policy` downlink. Lowering is applied at once; it can never raise the cap. */
+    @Synchronized
     fun onPolicy(next: Policy) {
         policy = next
         policySeen = true
@@ -151,6 +179,7 @@ class ModeController(
      * A server `mode_request`: the owner wants [mode].
      * Returns what happened so the service can show the right thing.
      */
+    @Synchronized
     fun onModeRequest(mode: ViewMode, fromOwner: Boolean): RequestOutcome =
         when {
             mode.rank <= effectiveMode().rank -> RequestOutcome.Applied(effectiveMode(), ModeReason.POLICY)
@@ -165,6 +194,7 @@ class ModeController(
         }
 
     /** The device UI approved a raise. It lasts [raiseDurationMs], then the old cap returns. */
+    @Synchronized
     fun approveRaise(mode: ViewMode) {
         if (mode.rank <= stationCap.rank) return  // no raise needed; nothing to remember
         raiseApproved = true
@@ -173,6 +203,7 @@ class ModeController(
     }
 
     /** Whether the legacy `privacy` downlink must be ignored: a `policy` has been seen this session. */
+    @Synchronized
     fun ignoresLegacyPrivacy(): Boolean = policySeen
 
     /**
@@ -180,6 +211,7 @@ class ModeController(
      * there). Once a policy was seen it is ignored completely. Before that, `true` lowers the cap to
      * blackout. It can NEVER raise exposure: a remote `privacy:false` is ignored on purpose.
      */
+    @Synchronized
     fun onLegacyPrivacy(enabled: Boolean): ViewMode {
         if (enabled && !ignoresLegacyPrivacy()) {
             setStationCapFromDevice(ViewMode.BLACKOUT)
@@ -188,6 +220,7 @@ class ModeController(
     }
 
     /** The mode that actually applies right now, accounting for an expired raise. */
+    @Synchronized
     fun effectiveMode(): ViewMode {
         if (raiseApproved && clock() >= raisedUntil) {
             raiseApproved = false
@@ -199,6 +232,13 @@ class ModeController(
         return effectiveCap.minOf(policy.mode)
     }
 
+    /** Cap, server policy, effective mode and reason, read under one lock: a consistent view for callers and tests. */
+    @Synchronized
+    fun snapshot(): ModeSnapshot {
+        val effective = effectiveMode()
+        return ModeSnapshot(stationCap, policy.mode, effective, effectiveReason())
+    }
+
     fun effectiveReason(): ModeReason = when {
         raiseApproved -> ModeReason.APPROVED_RAISE
         stationCap.rank <= policy.mode.rank -> ModeReason.STATION
@@ -206,6 +246,7 @@ class ModeController(
     }
 
     /** Whether a camera preview should be produced and uploaded at all. */
+    @Synchronized
     fun shouldEncodePreview(): Boolean {
         val mode = effectiveMode()
         if (mode.rank < ViewMode.LIMITED.rank) return false   // blackout/privacy: no image at all
@@ -214,6 +255,7 @@ class ModeController(
     }
 
     /** Whether raw audio may be streamed (T3.9). */
+    @Synchronized
     fun shouldStreamAudio(): Boolean =
         effectiveMode() == ViewMode.FULL && policy.audio && policy.audioViewers > 0
 
@@ -225,6 +267,9 @@ class ModeController(
         data class NeedsApproval(val mode: ViewMode) : RequestOutcome()
     }
 }
+
+/** A consistent read of the controller (see [ModeController.snapshot]). */
+data class ModeSnapshot(val cap: ViewMode, val policy: ViewMode, val effective: ViewMode, val reason: ModeReason)
 
 /** The on-device prompt for a raise, shared by the dialog and the notification so both say the same thing. */
 fun approvalQuestion(mode: ViewMode): String {

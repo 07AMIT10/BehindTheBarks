@@ -34,6 +34,7 @@ import com.btb.ondevice.net.ConnectionState
 import com.btb.ondevice.net.EventSpool
 import com.btb.ondevice.net.EventUploader
 import com.btb.ondevice.net.EventUploaderListener
+import com.btb.ondevice.net.StationKey
 import com.btb.ondevice.pipeline.AndroidMemoryProvider
 import com.btb.ondevice.pipeline.AndroidThermalProvider
 import com.btb.ondevice.pipeline.InferenceExecutor
@@ -68,6 +69,9 @@ interface MonitorServiceListener {
     fun onModeApprovalRequested(requestedWire: String) {}
     /** The pending raise was answered (on the phone or in the notification) or timed out: dismiss the prompt. */
     fun onModeApprovalResolved() {}
+
+    /** T2.4/T2.5: the server removed this station (4410) or refused its identity (4401): pair again. */
+    fun onPairingInvalid(reason: String) {}
     /** True when the activity is resumed and can show the prompt itself; otherwise a notification is posted. */
     fun isUiInFront(): Boolean = false
     /** T3.4: active remote viewer count changed. */
@@ -115,7 +119,7 @@ class MonitorService : Service(), LifecycleOwner {
     private var currentAudioViewers: Int = 0
     private var currentStatusText: String = "Monitoring room with camera & audio..."
     private val approvalHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private val approvalTimeout = Runnable { resolveRaise(allow = false) }
+    private val approvalTimeout = Runnable { resolveRaise(RaiseResult.TIMEOUT) }
     /** An approved raise lapses after 15 minutes: the phone then reports its own cap again. */
     private val raiseExpiry = Runnable {
         publishModeState(ModeReason.EXPIRED_RAISE.wire)
@@ -256,10 +260,10 @@ class MonitorService : Service(), LifecycleOwner {
     fun pendingApprovalMode(): ViewMode? = modeController.pendingRaise()?.mode
 
     /** The on-device answer: Allow for 15 minutes (the dialog button or the notification action). */
-    fun allowPendingRaise(): Boolean = resolveRaise(allow = true)
+    fun allowPendingRaise(): Boolean = resolveRaise(RaiseResult.ALLOWED)
 
-    /** The on-device answer: Keep private. Also the default when the prompt times out. */
-    fun keepPendingPrivate(): Boolean = resolveRaise(allow = false)
+    /** The on-device answer: Keep private. */
+    fun keepPendingPrivate(): Boolean = resolveRaise(RaiseResult.DENIED)
 
     /** Re-post the notification, e.g. when the activity goes away while its dialog is still open. */
     fun repostApprovalNotification() {
@@ -268,17 +272,17 @@ class MonitorService : Service(), LifecycleOwner {
     }
 
     /**
-     * Ends the pending raise one way or the other, then clears both prompts (dialog and notification).
-     * Returns false when nothing was pending (for example the other path already answered it).
+     * Ends the pending raise (allowed, denied, or timed out), tells the server the outcome as a
+     * `mode_result`, then clears both prompts (dialog and notification). Returns false when nothing was
+     * pending (for example the other path already answered it).
      */
-    private fun resolveRaise(allow: Boolean): Boolean {
+    private fun resolveRaise(answer: RaiseResult): Boolean {
         approvalHandler.removeCallbacks(approvalTimeout)
-        val wasPending = if (allow) {
-            modeController.allowPendingRaise() != null
-        } else {
-            modeController.denyPendingRaise()
+        val resolved = modeController.resolvePendingRaise(answer)
+        if (resolved != null) {
+            uploader?.sendModeResult(resolved.mode.wire, resolved.result.wire)
         }
-        if (wasPending && allow) {
+        if (resolved?.result == RaiseResult.ALLOWED) {
             publishModeState(ModeReason.APPROVED_RAISE.wire)
             listener?.onModeStateChanged(modeController.effectiveMode().wire)
             approvalHandler.removeCallbacks(raiseExpiry)
@@ -286,7 +290,7 @@ class MonitorService : Service(), LifecycleOwner {
         }
         cancelApprovalNotification()
         listener?.onModeApprovalResolved()
-        return wasPending
+        return resolved != null
     }
 
     private fun postApprovalNotification(mode: ViewMode) {
@@ -370,12 +374,14 @@ class MonitorService : Service(), LifecycleOwner {
         val token = intent?.getStringExtra(EXTRA_TOKEN)
             ?: intent?.getStringExtra("token")
             ?: defaultToken
+        // A paired station (households, T2.5) identifies itself with its id and Keystore key, never a token.
+        val stationId = intent?.getStringExtra(EXTRA_STATION_ID)?.takeIf { it.isNotBlank() }
 
-        startMonitoring(serverUrl, deviceName, token)
+        startMonitoring(serverUrl, deviceName, if (stationId != null) null else token, stationId)
         return START_STICKY
     }
 
-    private fun startMonitoring(serverUrl: String, deviceName: String, token: String? = null) {
+    private fun startMonitoring(serverUrl: String, deviceName: String, token: String? = null, stationId: String? = null) {
         if (!isRunning.compareAndSet(false, true)) return
         isServiceRunning = true
         modeController.beginSession()
@@ -442,11 +448,16 @@ class MonitorService : Service(), LifecycleOwner {
             serverUrl = serverUrl,
             deviceName = deviceName,
             token = token,
+            stationId = stationId,
+            signer = stationId?.let { StationKey.getOrCreate() },
             spool = spool,
             listener = object : EventUploaderListener {
                 override fun onStateChanged(state: ConnectionState) {
                     lastConnectionState = state
                     listener?.onConnectionUpdate(state)
+                }
+                override fun onPairingInvalid(reason: String) {
+                    listener?.onPairingInvalid(reason)
                 }
                 override fun onHelloAck() {
                     // The server forgets the cap of a previous connection: tell it on every handshake.
@@ -894,6 +905,7 @@ class MonitorService : Service(), LifecycleOwner {
         const val EXTRA_SERVER_URL = "extra_server_url"
         const val EXTRA_DEVICE_NAME = "extra_device_name"
         const val EXTRA_TOKEN = "extra_token"
+        const val EXTRA_STATION_ID = "extra_station_id"
         const val DEFAULT_SERVER_URL = "ws://10.0.2.2:8000/ingest-events"
         /** Set with the service's own running flag, so an activity can check it before it restarts anything. */
         @Volatile

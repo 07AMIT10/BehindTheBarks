@@ -262,4 +262,44 @@ class ViewModeTest {
         assertThat(approvalQuestion(ViewMode.LIMITED)).contains("to raise sharing to Limited.")
         assertThat(approvalQuestion(ViewMode.PRIVACY)).contains("to raise sharing to Privacy.")
     }
+
+    @Test
+    fun `resolvePendingRaise reports allowed denied and timeout, and only allowed raises the cap`() {
+        var now = 1_000L
+        val allowed = controller(cap = ViewMode.PRIVACY, now = { now })
+        allowed.onModeRequest(ViewMode.FULL, fromOwner = true)
+        assertThat(allowed.resolvePendingRaise(RaiseResult.ALLOWED))
+            .isEqualTo(RaiseResolution(ViewMode.FULL, RaiseResult.ALLOWED))
+        assertThat(allowed.effectiveMode()).isEqualTo(ViewMode.FULL)
+
+        val denied = controller(cap = ViewMode.PRIVACY, now = { now })
+        denied.onModeRequest(ViewMode.FULL, fromOwner = true)
+        assertThat(denied.resolvePendingRaise(RaiseResult.DENIED))
+            .isEqualTo(RaiseResolution(ViewMode.FULL, RaiseResult.DENIED))
+        assertThat(denied.effectiveMode()).isEqualTo(ViewMode.PRIVACY)
+
+        val timedOut = controller(cap = ViewMode.PRIVACY, now = { now })
+        timedOut.onModeRequest(ViewMode.FULL, fromOwner = true)
+        assertThat(timedOut.resolvePendingRaise(RaiseResult.TIMEOUT))
+            .isEqualTo(RaiseResolution(ViewMode.FULL, RaiseResult.TIMEOUT))
+        assertThat(timedOut.effectiveMode()).isEqualTo(ViewMode.PRIVACY)
+    }
+
+    @Test
+    fun `a late allow after the deadline is a timeout and raises nothing`() {
+        var now = 1_000L
+        val c = controller(cap = ViewMode.PRIVACY, now = { now })
+        c.requestTimeoutMs = 60_000L
+        c.onModeRequest(ViewMode.FULL, fromOwner = true)
+        now += 60_000L
+        assertThat(c.resolvePendingRaise(RaiseResult.ALLOWED))
+            .isEqualTo(RaiseResolution(ViewMode.FULL, RaiseResult.TIMEOUT))
+        assertThat(c.effectiveMode()).isEqualTo(ViewMode.PRIVACY)
+        assertThat(c.resolvePendingRaise(RaiseResult.ALLOWED)).isNull() // nothing left to answer
+    }
+
+    @Test
+    fun `the raise result wire values are the ones the server accepts`() {
+        assertThat(RaiseResult.values().map { it.wire }).containsExactly("allowed", "denied", "timeout").inOrder()
+    }
 }
