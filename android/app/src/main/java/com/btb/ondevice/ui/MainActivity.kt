@@ -935,11 +935,14 @@ class MainActivity : Activity() {
 
     private fun startQrScan() {
         val service = monitorService
-        if (service != null && isMonitoring) {
-            service.setScanningQr(true)
-            Toast.makeText(this, "📷 Point camera at Dashboard QR code", Toast.LENGTH_SHORT).show()
-        } else {
-            Toast.makeText(this, "Tap 'Start Monitoring' or 'Paste' to connect. Point camera at QR code while monitoring.", Toast.LENGTH_LONG).show()
+        when (ScanRoute.choose(monitoring = service != null && isMonitoring)) {
+            ScanRoute.Target.MONITOR_SERVICE -> {
+                service?.setScanningQr(true)
+                Toast.makeText(this, "📷 Point camera at Dashboard QR code", Toast.LENGTH_SHORT).show()
+            }
+            // Pairing does not need monitoring: ScannerActivity pairs and saves the station itself.
+            ScanRoute.Target.STANDALONE_SCANNER ->
+                startActivity(android.content.Intent(this, ScannerActivity::class.java))
         }
     }
 
@@ -1088,6 +1091,11 @@ class MainActivity : Activity() {
             privacyButton.setBackgroundColor(Color.parseColor("#37474F"))
             privacyButton.setTextColor(Color.WHITE)
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshHouseholdLabel()  // a pairing done in ScannerActivity is shown when we come back
     }
 
     override fun onStart() {
