@@ -66,8 +66,10 @@ class DebugOverlayView @JvmOverloads constructor(
     private val wagRect = RectF()
 
     fun updateState(newState: OverlayState) {
+        // An unchanged state must not invalidate: a full-screen invalidation per frame keeps the UI busy.
+        if (newState.drawsSameAs(state)) return
         state = newState
-        postInvalidate()
+        invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {

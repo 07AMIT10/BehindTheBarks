@@ -95,6 +95,9 @@ class MonitorService : Service(), LifecycleOwner {
     private var memoryGuard: MemoryGuard? = null
 
     private val isRunning = AtomicBoolean(false)
+    /** UI overlay updates are capped (see OverlayThrottle): the camera runs far faster than a screen can use. */
+    private val uiThrottle = com.btb.ondevice.ui.OverlayThrottle()
+    @Volatile private var lastConnectionState: ConnectionState? = null
     private var listener: MonitorServiceListener? = null
     // T3.2: the station's own cap plus the server policy decide what may leave the phone. The
     // controller is the single place that rule lives (and it is unit-tested without Android).
@@ -127,6 +130,12 @@ class MonitorService : Service(), LifecycleOwner {
     }
 
     fun isScanningQr(): Boolean = isScanningQr.get()
+
+    /** True while this service is capturing; an activity recreated by a rotation reattaches to it. */
+    fun isMonitoringNow(): Boolean = isRunning.get()
+
+    /** The last connection state, so a recreated activity can show it without waiting for a change. */
+    fun currentConnectionState(): ConnectionState? = lastConnectionState
 
     fun setPrivacyMode(enabled: Boolean): Boolean {
         if (enabled) modeController.setStationCapFromDevice(ViewMode.BLACKOUT)
@@ -368,6 +377,7 @@ class MonitorService : Service(), LifecycleOwner {
 
     private fun startMonitoring(serverUrl: String, deviceName: String, token: String? = null) {
         if (!isRunning.compareAndSet(false, true)) return
+        isServiceRunning = true
         modeController.beginSession()
         cancelApprovalNotification()
 
@@ -435,6 +445,7 @@ class MonitorService : Service(), LifecycleOwner {
             spool = spool,
             listener = object : EventUploaderListener {
                 override fun onStateChanged(state: ConnectionState) {
+                    lastConnectionState = state
                     listener?.onConnectionUpdate(state)
                 }
                 override fun onHelloAck() {
@@ -686,7 +697,9 @@ class MonitorService : Service(), LifecycleOwner {
             confidence = rules?.confidence?.toFloat() ?: 0f,
             degradeLevel = pipeline?.scheduler?.getLevel()?.name
         )
-        l.onStateUpdate(overlayState)
+        // Throttled: at most ~4 UI updates a second, and none while the state is unchanged.
+        val due = uiThrottle.offer(android.os.SystemClock.elapsedRealtime(), overlayState) ?: return
+        l.onStateUpdate(due)
     }
 
     /**
@@ -797,6 +810,7 @@ class MonitorService : Service(), LifecycleOwner {
 
     private fun stopMonitoring() {
         if (!isRunning.compareAndSet(true, false)) return
+        isServiceRunning = false
         approvalHandler.removeCallbacks(approvalTimeout)
         approvalHandler.removeCallbacks(raiseExpiry)
         if (modeController.denyPendingRaise()) listener?.onModeApprovalResolved()
@@ -881,6 +895,10 @@ class MonitorService : Service(), LifecycleOwner {
         const val EXTRA_DEVICE_NAME = "extra_device_name"
         const val EXTRA_TOKEN = "extra_token"
         const val DEFAULT_SERVER_URL = "ws://10.0.2.2:8000/ingest-events"
+        /** Set with the service's own running flag, so an activity can check it before it restarts anything. */
+        @Volatile
+        var isServiceRunning: Boolean = false
+
         const val KEY_STATION_CAP = "station_cap"   // T3.2: the cap the person holding the phone allows
     }
 }

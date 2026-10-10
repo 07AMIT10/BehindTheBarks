@@ -26,6 +26,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.camera.view.PreviewView
@@ -37,6 +38,7 @@ import com.btb.ondevice.net.ConnectionState
 import com.btb.ondevice.net.PairResult
 import com.btb.ondevice.net.StationKey
 import com.btb.ondevice.net.StationPairing
+import kotlin.math.roundToInt
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import com.btb.ondevice.util.PairingTarget
@@ -47,6 +49,7 @@ class MainActivity : Activity() {
     private lateinit var previewView: PreviewView
     private lateinit var overlayView: DebugOverlayView
     private lateinit var controlsPanel: LinearLayout
+    private lateinit var controlsScroll: ScrollView
     private lateinit var floatingPill: TextView
     private lateinit var ambientOverlay: FrameLayout
     private lateinit var ambientStatusText: TextView
@@ -90,7 +93,7 @@ class MainActivity : Activity() {
                         overlayView.updateState(overlayState)
                         val isPriv = monitorService?.isPrivacyMode() ?: false
                         updatePrivacyButton(isPriv)
-                        monitorService?.effectiveMode()?.let { privacyButton.text = modeButtonLabel(it) }
+                        monitorService?.effectiveMode()?.let { setModeButton(it) }
                         if (isPriv) {
                             ambientStatusText.text = "🛡️ Privacy Active · Camera Muted"
                             ambientStatusText.setTextColor(Color.parseColor("#E53935"))
@@ -152,9 +155,15 @@ class MainActivity : Activity() {
                     runOnUiThread { dismissApprovalDialog() }
                 }
             })
+            val service = monitorService
+            if (service != null && service.isMonitoringNow()) {
+                // Reattached: a rotation or font change recreated this screen while the service kept running.
+                setMonitoringUi(true)
+                service.currentConnectionState()?.let { updateConnectionUi(it) }
+            }
             val isPriv = monitorService?.isPrivacyMode() ?: false
             updatePrivacyButton(isPriv)
-            monitorService?.effectiveMode()?.let { privacyButton.text = modeButtonLabel(it) }
+            monitorService?.effectiveMode()?.let { setModeButton(it) }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -191,7 +200,7 @@ class MainActivity : Activity() {
             text = "🐾 Behind The Barks · Tap to expand"
             setTextColor(Color.WHITE)
             textSize = 12f
-            setPadding(32, 14, 32, 14)
+            setPadding(dp(32), dp(14), dp(32), dp(14))
             val bg = GradientDrawable().apply {
                 setColor(Color.argb(200, 20, 20, 20))
                 cornerRadius = 32f
@@ -202,7 +211,7 @@ class MainActivity : Activity() {
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            ).apply { topMargin = 40 }
+            ).apply { topMargin = dp(40) }
             setOnClickListener {
                 expandControls()
             }
@@ -210,15 +219,31 @@ class MainActivity : Activity() {
         root.addView(floatingPill)
 
         // 4. Controls panel (vertical layout at top)
-        controlsPanel = LinearLayout(this).apply {
+        // Scrollable so small screens and large font scales can reach every control; the column is
+        // capped at 600dp and centred on tablets. The panel background covers only its content.
+        controlsPanel = CappedWidthLinearLayout(this, dp(MAX_CONTENT_WIDTH_DP)).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(32, 48, 32, 24)
+            setPadding(dp(16), dp(24), dp(16), dp(16))
             setBackgroundColor(Color.argb(210, 18, 18, 18))
+        }
+        val centredColumn = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            addView(controlsPanel, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+        }
+        controlsScroll = ScrollView(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP
+                FrameLayout.LayoutParams.MATCH_PARENT
             )
+            isVerticalScrollBarEnabled = true
+            addView(centredColumn, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ))
         }
 
         val headerRow = LinearLayout(this).apply {
@@ -252,14 +277,14 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             setHintTextColor(Color.GRAY)
             setBackgroundColor(Color.argb(140, 50, 50, 50))
-            setPadding(16, 12, 16, 12)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
         }
         controlsPanel.addView(urlEditText)
 
         // URL Quick Actions row (Scan QR & Paste)
         val urlActionsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 4, 0, 4)
+            setPadding(dp(0), dp(4), dp(0), dp(4))
         }
 
         val scanQrBtn = Button(this).apply {
@@ -271,7 +296,7 @@ class MainActivity : Activity() {
                 startQrScan()
             }
         }
-        urlActionsRow.addView(scanQrBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = 8 })
+        urlActionsRow.addView(scanQrBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
 
         // v2 pairing works before monitoring: the scanner is its own screen (T2.5).
         val pairQrBtn = Button(this).apply {
@@ -283,10 +308,10 @@ class MainActivity : Activity() {
                 startActivity(android.content.Intent(this@MainActivity, ScannerActivity::class.java))
             }
         }
-        urlActionsRow.addView(pairQrBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = 8 })
+        urlActionsRow.addView(pairQrBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
 
         // The paired household, and a way out of it.
-        val householdRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 8, 0, 0) }
+        val householdRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(0), dp(8), dp(0), dp(0)) }
         val householdLabel = TextView(this).apply { textSize = 11f }
         val unpairBtn = Button(this).apply {
             text = "Unpair"
@@ -297,7 +322,6 @@ class MainActivity : Activity() {
         }
         householdRow.addView(householdLabel, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         householdRow.addView(unpairBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        urlActionsRow.addView(householdRow)
         householdRef = householdLabel
         refreshHouseholdLabel()
 
@@ -312,11 +336,12 @@ class MainActivity : Activity() {
         }
         urlActionsRow.addView(pasteBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         controlsPanel.addView(urlActionsRow)
+        controlsPanel.addView(householdRow)
 
         // Preset buttons row
         val presetsLayout = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 4, 0, 8)
+            setPadding(dp(0), dp(4), dp(0), dp(8))
         }
 
         val cloudPreset = Button(this).apply {
@@ -328,7 +353,7 @@ class MainActivity : Activity() {
                 showCloudPrompt()
             }
         }
-        presetsLayout.addView(cloudPreset, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f).apply { rightMargin = 8 })
+        presetsLayout.addView(cloudPreset, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f).apply { rightMargin = dp(8) })
 
         val wifiPreset = Button(this).apply {
             text = "Local Wi-Fi"
@@ -339,7 +364,7 @@ class MainActivity : Activity() {
                 showLocalWifiPrompt()
             }
         }
-        presetsLayout.addView(wifiPreset, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = 8 })
+        presetsLayout.addView(wifiPreset, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
 
         val usbPreset = Button(this).apply {
             text = "USB (Local)"
@@ -360,7 +385,7 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             setHintTextColor(Color.GRAY)
             setBackgroundColor(Color.argb(140, 50, 50, 50))
-            setPadding(16, 12, 16, 12)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
         }
         controlsPanel.addView(deviceEditText)
 
@@ -368,13 +393,13 @@ class MainActivity : Activity() {
             text = "● Idle · Ready"
             setTextColor(Color.LTGRAY)
             textSize = 13f
-            setPadding(0, 10, 0, 10)
+            setPadding(dp(0), dp(10), dp(0), dp(10))
         }
         controlsPanel.addView(statusTextView)
 
         val actionsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 4, 0, 0)
+            setPadding(dp(0), dp(4), dp(0), dp(0))
         }
 
         toggleButton = Button(this).apply {
@@ -389,7 +414,7 @@ class MainActivity : Activity() {
                 }
             }
         }
-        actionsRow.addView(toggleButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f).apply { rightMargin = 12 })
+        actionsRow.addView(toggleButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f).apply { rightMargin = dp(12) })
 
         dimButton = Button(this).apply {
             text = "🌙 Station Dim"
@@ -405,7 +430,7 @@ class MainActivity : Activity() {
 
         val toolsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 8, 0, 0)
+            setPadding(dp(0), dp(8), dp(0), dp(0))
         }
 
         torchButton = Button(this).apply {
@@ -419,7 +444,7 @@ class MainActivity : Activity() {
                 updateTorchButton(on)
             }
         }
-        toolsRow.addView(torchButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = 8 })
+        toolsRow.addView(torchButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
 
         flipButton = Button(this).apply {
             text = "🔄 Flip"
@@ -430,9 +455,10 @@ class MainActivity : Activity() {
             setOnClickListener {
                 val isBack = monitorService?.flipCamera() ?: true
                 text = if (isBack) "🔄 Back" else "🔄 Front"
+                contentDescription = if (isBack) "Flip camera, now back" else "Flip camera, now front"
             }
         }
-        toolsRow.addView(flipButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = 8 })
+        toolsRow.addView(flipButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
 
         // T3.2: one button that shows the current mode and opens the 4-option chooser.
         privacyButton = Button(this).apply {
@@ -450,7 +476,7 @@ class MainActivity : Activity() {
         val viewersRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 6, 0, 0)
+            setPadding(dp(0), dp(6), dp(0), dp(0))
         }
         viewersBadge = TextView(this).apply {
             text = "👁️ 0 viewers watching"
@@ -474,7 +500,7 @@ class MainActivity : Activity() {
         viewersRow.addView(disconnectViewersButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         controlsPanel.addView(viewersRow)
 
-        root.addView(controlsPanel)
+        root.addView(controlsScroll)
 
         // 5. Ambient / Station Mode Fullscreen Overlay (pitch black to save power & prevent OLED burn-in)
         ambientOverlay = FrameLayout(this).apply {
@@ -499,7 +525,7 @@ class MainActivity : Activity() {
             setTextColor(Color.parseColor("#616161"))
             textSize = 20f
             gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 16)
+            setPadding(dp(0), dp(0), dp(0), dp(16))
         }
         ambientContent.addView(ambientTitle)
 
@@ -508,7 +534,7 @@ class MainActivity : Activity() {
             setTextColor(Color.parseColor("#43A047"))
             textSize = 14f
             gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 8)
+            setPadding(dp(0), dp(0), dp(0), dp(8))
         }
         ambientContent.addView(ambientStatusText)
 
@@ -517,7 +543,7 @@ class MainActivity : Activity() {
             setTextColor(Color.parseColor("#757575"))
             textSize = 13f
             gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 24)
+            setPadding(dp(0), dp(0), dp(0), dp(24))
         }
         ambientContent.addView(ambientEmotionText)
 
@@ -526,7 +552,7 @@ class MainActivity : Activity() {
             setTextColor(Color.parseColor("#4FC3F7"))
             textSize = 13f
             gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 12)
+            setPadding(dp(0), dp(0), dp(0), dp(12))
             visibility = View.GONE
         }
         ambientContent.addView(ambientViewersText)
@@ -544,8 +570,60 @@ class MainActivity : Activity() {
         root.addView(ambientOverlay)
 
         setContentView(root)
+        enforceTouchTargets(controlsPanel)
+        enforceTouchTargets(floatingPill)
+        applyAccessibility(viewersRow)
         requestPermissionsIfNeeded()
+        // A rotation or font change recreates this screen while the service keeps capturing.
+        // Reattach to the running service instead of treating the screen as idle.
+        if (MonitorService.isServiceRunning) {
+            isBound = bindService(Intent(this, MonitorService::class.java), serviceConnection, 0)
+        }
         handleIntent(intent)
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
+
+    /** Every tappable control is at least 48dp in both directions (the Material touch target). */
+    private fun enforceTouchTargets(view: View) {
+        if (view is Button || view is EditText || view.isClickable) {
+            view.minimumHeight = maxOf(view.minimumHeight, dp(MIN_TOUCH_DP))
+            view.minimumWidth = maxOf(view.minimumWidth, dp(MIN_TOUCH_DP))
+        }
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) enforceTouchTargets(view.getChildAt(i))
+        }
+    }
+
+    /**
+     * Accessibility: decorative layers are hidden from TalkBack, the status line and viewer count
+     * are polite live regions, icon or emoji labels get a speakable description, and the viewer row
+     * is always in the tree when it is shown. Focus follows the order the controls are added, which
+     * is top to bottom as drawn.
+     */
+    private fun applyAccessibility(viewers: LinearLayout) {
+        previewView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        overlayView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        statusTextView.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        viewersBadge.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        viewers.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        viewersBadge.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        disconnectViewersButton.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        disconnectViewersButton.contentDescription = "Disconnect all viewers"
+        dimButton.contentDescription = "Station Dim: black screen, camera stays on"
+        collapseButton.contentDescription = "Hide the control panel"
+        ambientOverlay.contentDescription = "Station Dim is on. Tap to wake the screen."
+        describeEmojiLabels(controlsPanel)
+    }
+
+    /** Buttons whose text carries emoji get a plain-words description; explicit ones are kept. */
+    private fun describeEmojiLabels(view: View) {
+        if (view is Button && view.contentDescription == null) {
+            view.contentDescription = spokenLabel(view.text.toString())
+        }
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) describeEmojiLabels(view.getChildAt(i))
+        }
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -605,7 +683,7 @@ class MainActivity : Activity() {
 
         when (intent?.action) {
             ACTION_START -> {
-                if (!isMonitoring) {
+                if (!isMonitoring && !MonitorService.isServiceRunning) {
                     checkPermissionsAndStart()
                 }
             }
@@ -643,7 +721,7 @@ class MainActivity : Activity() {
         if (!isMonitoring) return
         isAmbientMode = true
         ambientOverlay.visibility = View.VISIBLE
-        controlsPanel.visibility = View.GONE
+        controlsScroll.visibility = View.GONE
         floatingPill.visibility = View.GONE
         previewView.visibility = View.INVISIBLE // Pause viewfinder rendering to save GPU/display power
 
@@ -663,17 +741,17 @@ class MainActivity : Activity() {
         lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         window.attributes = lp
 
-        controlsPanel.visibility = View.VISIBLE
+        controlsScroll.visibility = View.VISIBLE
     }
 
     private fun collapseControls() {
-        controlsPanel.visibility = View.GONE
+        controlsScroll.visibility = View.GONE
         floatingPill.visibility = View.VISIBLE
     }
 
     private fun expandControls() {
         floatingPill.visibility = View.GONE
-        controlsPanel.visibility = View.VISIBLE
+        controlsScroll.visibility = View.VISIBLE
     }
 
     private fun updateConnectionUi(state: ConnectionState) {
@@ -990,14 +1068,7 @@ class MainActivity : Activity() {
         }
 
         bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
-        isMonitoring = true
-        toggleButton.text = "Stop Monitoring"
-        toggleButton.setBackgroundColor(Color.parseColor("#FF1744"))
-        dimButton.isEnabled = true
-        torchButton.isEnabled = true
-        flipButton.isEnabled = true
-        privacyButton.isEnabled = true
-        updatePrivacyButton(monitorService?.isPrivacyMode() ?: false)
+        setMonitoringUi(true)
         statusTextView.text = "○ Connecting to $url..."
     }
 
@@ -1021,19 +1092,35 @@ class MainActivity : Activity() {
         }
         startService(intent)
 
-        isMonitoring = false
-        toggleButton.text = "Start Monitoring"
-        toggleButton.setBackgroundColor(Color.parseColor("#00E676"))
-        dimButton.isEnabled = false
-        torchButton.isEnabled = false
-        flipButton.isEnabled = false
-        privacyButton.isEnabled = false
-        updateTorchButton(false)
-        updatePrivacyButton(false)
-        flipButton.text = "🔄 Flip"
+        setMonitoringUi(false)
         statusTextView.text = "● Idle · Ready"
         overlayView.updateState(OverlayState())
         updateViewersUi(0)
+    }
+
+    /** The controls that depend on monitoring. Used on start, on stop and when a recreated screen reattaches. */
+    private fun setMonitoringUi(on: Boolean) {
+        isMonitoring = on
+        toggleButton.text = if (on) "Stop Monitoring" else "Start Monitoring"
+        toggleButton.setBackgroundColor(Color.parseColor(if (on) "#FF1744" else "#00E676"))
+        dimButton.isEnabled = on
+        torchButton.isEnabled = on
+        flipButton.isEnabled = on
+        privacyButton.isEnabled = on
+        if (on) {
+            updatePrivacyButton(monitorService?.isPrivacyMode() ?: false)
+            monitorService?.effectiveMode()?.let { setModeButton(it) }
+        } else {
+            updateTorchButton(false)
+            updatePrivacyButton(false)
+            flipButton.text = "🔄 Flip"
+            describe(flipButton)
+        }
+    }
+
+    /** Speakable text for a control whose label changes (emoji and status symbols are dropped). */
+    private fun describe(view: TextView) {
+        view.contentDescription = spokenLabel(view.text.toString())
     }
 
     private fun updateViewersUi(count: Int) {
@@ -1061,6 +1148,7 @@ class MainActivity : Activity() {
             torchButton.setBackgroundColor(Color.parseColor("#37474F"))
             torchButton.setTextColor(Color.WHITE)
         }
+        torchButton.contentDescription = if (on) "Light, on" else "Light, off"
     }
 
     /** T3.2: the four viewing modes, with one line each. This control is the ONLY place the cap can
@@ -1079,7 +1167,7 @@ class MainActivity : Activity() {
             .setSingleChoiceItems(labels, modes.indexOf(current)) { dialog, which ->
                 monitorService?.setStationCapFromDevice(modes[which])
                 updatePrivacyButton(modes[which] == com.btb.ondevice.capture.ViewMode.BLACKOUT)
-                privacyButton.text = modeButtonLabel(modes[which])
+                setModeButton(modes[which])
                 dialog.dismiss()
             }
             .setNegativeButton("Cancel", null)
@@ -1103,6 +1191,13 @@ class MainActivity : Activity() {
             privacyButton.setBackgroundColor(Color.parseColor("#37474F"))
             privacyButton.setTextColor(Color.WHITE)
         }
+        describe(privacyButton)
+    }
+
+    /** The sharing-mode button. Its label names the mode, and TalkBack hears the same words. */
+    private fun setModeButton(mode: com.btb.ondevice.capture.ViewMode) {
+        privacyButton.text = modeButtonLabel(mode)
+        privacyButton.contentDescription = "Sharing: ${spokenLabel(modeButtonLabel(mode))}. Tap to change."
     }
 
     override fun onResume() {
@@ -1173,6 +1268,9 @@ class MainActivity : Activity() {
         const val ACTION_TOGGLE_TORCH = "com.btb.ondevice.action.TOGGLE_TORCH"
         const val ACTION_ENTER_AMBIENT = "com.btb.ondevice.action.ENTER_AMBIENT"
         const val ACTION_EXIT_AMBIENT = "com.btb.ondevice.action.EXIT_AMBIENT"
+
+        private const val MAX_CONTENT_WIDTH_DP = 600
+        private const val MIN_TOUCH_DP = 48
 
         private const val PREFS_NAME = StationPrefs.NAME
         private const val KEY_URL = StationPrefs.URL
