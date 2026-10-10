@@ -195,5 +195,15 @@ def expire_pairing_codes(session: Session, older_than_s: float, now: float | Non
     return int(deleted or 0)
 
 
+def revoke_expired_viewers(session: Session, now: float | None = None) -> int:
+    """T2.10: a viewer past its expires_at is revoked so its cookie stops working after the TTL."""
+    now = now if now is not None else _now()
+    return int((session.query(Viewer)
+                .filter(Viewer.revoked_at.is_(None),
+                        Viewer.expires_at.is_not(None),
+                        Viewer.expires_at < now)
+                .update({Viewer.revoked_at: now}, synchronize_session=False)))
+
+
 def any_of(session: Session, model: Any) -> int:
     return int(session.query(model).count())

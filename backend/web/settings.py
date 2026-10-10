@@ -19,6 +19,9 @@ WEB_DEFAULTS: dict[str, Any] = {
     "database_url": "sqlite:///out/btb.db",
     "ws": {"frame_fps": 8, "client_queue": 64, "history": 2000},
     "video": {"fps": 8},
+    # T2.10 retention: a household's session logs live 7 days by default, then the registry's
+    # periodic sweep deletes them. Set 0 to keep everything.
+    "log_retention_days": 7,
     "state": {
         "persist_s": 3.0, "no_dog_unknown_s": 2.0, "llm_override_conf": 0.7, "llm_stale_s": 12.0,
         "cooldown_s": 60.0, "cooldowns": {}, "always_notify": ["fearful", "aggressive", "disinterested"],

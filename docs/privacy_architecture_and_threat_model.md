@@ -111,3 +111,52 @@ flowchart TD
 | `android/.../EventUploader.kt` | Parse `viewer` downlink messages from WebSocket. | Ready for hookup |
 | `android/.../MonitorService.kt` | Play `playViewerConnectedChime()` and update overlay with active viewer count. | Ready for hookup |
 | `frontend/components/VideoPanel.tsx` | Implement 3-minute inactivity watchdog and Kinematic Mode toggle. | Planned |
+
+---
+
+## 5. Multi-Household Data Retention (T2.9, T2.10)
+
+Each household is a separate data boundary. Nothing below is shared between households, and the
+per-household isolation gate (`tests/web/test_isolation.py`) enforces it.
+
+### What is stored, where, and for how long
+
+| Data | Where | Default lifetime | Deleted by |
+| :--- | :--- | :--- | :--- |
+| Household, station, viewer rows | `BTB_DATABASE_URL` (`out/btb.db`; Postgres in prod) | Until the owner deletes the household | `DELETE /households/me` |
+| Recovery key, session tokens, pairing codes | **Hashed only** (SHA-256) in the DB | Recovery/session: until delete or expiry; pairing codes: 1 day | `registry.sweep()` |
+| Household ID, role, dog name, location | DB row + that household's runtime memory | Until delete | `DELETE /households/me` |
+| Station public key (ECDSA P-256) | DB row | Until the station is revoked or the household is deleted | Revoke / delete |
+| Session logs (`session-*.jsonl`) | `<log_dir>/<household_id>/` | **Off by default.** When enabled, **7 days** (`web.log_retention_days`) | `registry.sweep()` |
+| Live video frames, features, audio | In memory and over the LAN socket only; never written unless session logs are on | Ephemeral | Never persisted by default |
+
+### The opt-in rules
+
+* **No AI interpretation by default.** A new household runs with a `DisabledInterpreter`: frames are
+  not sent to the operator's LLM provider and cost no quota. The owner turns it on in
+  **Members & access → Privacy → "Use AI interpretation"**.
+* **No external notifications by default.** Non-legacy households get a `DashboardOnlyNotifier`; they
+  can never send a Telegram/WhatsApp message, so the operator's tokens are not exposed to testers.
+* **No session logs by default.** A household writes `session-*.jsonl` under its own directory only
+  after the owner enables **"Save session logs"**, and those files are pruned after 7 days.
+
+### The retention sweep
+
+`HouseholdRegistry.sweep()` runs on a timer (`web.registry.sweep_every_s`, default hourly) and in
+households mode only. It:
+
+1. Deletes `session-*.jsonl` older than `web.log_retention_days` in **household directories only** —
+   it never touches any other file in the log root, and never crosses a household boundary.
+2. Expires spent/expired pairing codes.
+3. Revokes viewers whose `expires_at` has passed (soft-revoked with `revoked_at` for the audit trail).
+4. Evicts idle household runtimes (no station, no viewer) after `web.registry.idle_evict_s`; a
+   household with an active station or viewer is never evicted.
+
+A failed sweep never takes the server down: the background task logs and continues.
+
+### Operational notes
+
+* Render's free disk is ephemeral: on redeploy, `out/` and the SQLite database are lost, so stations
+  must be re-paired. This is expected, not a data-retention failure.
+* A tester who wants a household removed entirely uses **Settings → Delete household**, which drops
+  the runtime, closes its sockets, and removes the DB rows in one action.

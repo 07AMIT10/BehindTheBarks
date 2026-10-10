@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import logging
 import secrets
 import time
@@ -103,9 +104,27 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             # In households mode the legacy runtime serves no household, so its loops (and the
             # operator's LLM/notifier it carries) never run at all (T2.7/T2.9).
             await rt.start()
+        # T2.10 retention: prune old logs/codes/viewers and drop idle runtimes on a timer.
+        sweep_every_s = float((web.get("registry") or {}).get("sweep_every_s", 3600))
+        sweeper: asyncio.Task | None = None
+        if households_mode and sweep_every_s > 0:
+
+            async def _sweep_forever() -> None:
+                while True:
+                    await asyncio.sleep(sweep_every_s)
+                    try:
+                        await registry.sweep()
+                    except Exception:  # noqa: BLE001 - a failed sweep must not kill the server
+                        continue
+
+            sweeper = asyncio.create_task(_sweep_forever())
         try:
             yield
         finally:
+            if sweeper is not None:
+                sweeper.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await sweeper
             await registry.close()
             await rt.stop()
             hub.close()

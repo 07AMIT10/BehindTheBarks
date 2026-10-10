@@ -129,6 +129,57 @@ class HouseholdRegistry:
             return dict(cfg["web"].get("profile") or {}), False, False
 
     # -- lifecycle ------------------------------------------------------------------------------
+    async def sweep(self, now: float | None = None) -> dict[str, int | list[str]]:
+        """Retention pass (T2.10): old session logs, expired pairing codes, dead viewers, idle
+        runtimes. Every age is computed against the injected clock, so tests are exact.
+
+        Only `session-*.jsonl` inside a household directory is ever deleted: a household's logs are
+        its own, and nothing else in the log root is touched.
+        """
+        now = now if now is not None else self.clock()
+        stats: dict[str, int | list[str]] = {
+            "logs_deleted": 0, "pairing_codes_deleted": 0, "viewers_revoked": 0,
+            "runtimes_evicted": [],
+        }
+        stats["logs_deleted"] = self._sweep_logs(now)
+        if self.sessionmaker is not None:
+            try:
+                from backend.store import repo
+
+                with self.sessionmaker() as s:
+                    stats["pairing_codes_deleted"] = repo.expire_pairing_codes(s, 0.0, now=now)
+                    stats["viewers_revoked"] = repo.revoke_expired_viewers(s, now=now)
+                    s.commit()
+            except Exception:  # noqa: BLE001 - retention must never take the server down
+                pass
+        stats["runtimes_evicted"] = await self.evict_idle(now=now)
+        return stats
+
+    def _sweep_logs(self, now: float) -> int:
+        """Delete `<log_dir>/<hid>/session-*.jsonl` older than log_retention_days (default 7)."""
+        cfg = self.cfg.get("web", {}) if isinstance(self.cfg, dict) else {}
+        days = float(cfg.get("log_retention_days", 7) or 7)
+        root = Path(str(cfg.get("log_dir", "out")))
+        cutoff = now - days * 86_400.0
+        deleted = 0
+        try:
+            if not root.is_dir():
+                return 0
+            # Only household subdirectories, and only files literally named session-*.jsonl.
+            for household_dir in root.iterdir():
+                if not household_dir.is_dir():
+                    continue
+                for path in household_dir.glob("session-*.jsonl"):
+                    try:
+                        if path.stat().st_mtime < cutoff:
+                            path.unlink()
+                            deleted += 1
+                    except OSError:
+                        continue
+        except OSError:
+            return deleted
+        return deleted
+
     async def evict_idle(self, now: float | None = None) -> list[str]:
         """Stop and forget households with no station and no viewer for longer than idle_evict_s."""
         now = now if now is not None else self.clock()
