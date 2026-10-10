@@ -1258,25 +1258,27 @@ def _cell(text: str) -> str:
 # Findings that the checks do not fix (kept here so every regenerated report carries them).
 FINDINGS = [
     "Resolved (commit d15fb0a, android): uiautomator could not reach an idle state while monitoring ('could not get "
-    "idle state'). Every camera result posted a UI update and a full-screen invalidation. The overlay is now throttled "
-    "to 4 Hz and only sent on change, and the Stop, mode, viewers and Disconnect controls are in the dump while monitoring.",
-    "Resolved (harness): headless --dump-dom hung while the dashboard held the /video MJPEG <img> for a dropped phone. "
-    "scripts/dom.mjs (playwright-core on the system Chrome) waits for load, then for the page to render, then for the "
-    "expected text, with a 12 s cap.",
-    "Medium (dashboard, not changed here): after the phone drops, the backend reports connected=false at once, but the "
-    "dashboard shows 'Reconnecting to camera' only about 3-4 s later (it still shows 'Connected' at 2 s). Check 10 waits "
-    "up to 6 s for that text.",
-    "Low (dashboard, harness): the dashboard fills its state from the WebSocket after load. Until then it shows its "
-    "default 'Connected / LIVE' card, so a DOM read taken at load can be wrong. Checks 1, 9, 10 and 12 wait for the text "
-    "their state shows.",
-    "Medium (not exercised by the checks): the on-device prompt's notification path (app not in front) is not driven "
-    "here. Only the dialog path ran.",
+    "idle state'). The overlay is throttled to 4 Hz and only sent on change; the controls are in the dump while monitoring.",
+    "Resolved (harness): headless --dump-dom hung while the dashboard held the /video MJPEG <img> open. scripts/dom.mjs "
+    "(playwright-core on the system Chrome) waits for load, then the rendered page, then the expected text (12 s cap).",
+    "Not reproduced (2026-10-11, reconnect timing): after force-stop the backend's /status shows the phone disconnected "
+    "0.17 s later and the /ws status push arrives 0.13-0.14 s later; the dashboard DOM shows 'Reconnecting to camera' "
+    "0.17-0.21 s after the kill, in two runs. The 'Connected' label (WebSocket state) stays until the socket closes. "
+    "The earlier 3-4 s observation is not explained by the backend or the store; check 10 still waits up to 6 s.",
+    "Resolved (commit 9d53617): a paired station could not pair. The QR's pair_url already ends in /pair and the app "
+    "posted to /pair/pair (405). Check 13 covers the households pairing end to end.",
+    "Resolved (commits 02f7343, 4fb4dac): the server never learned how a raise prompt ended. The phone now sends "
+    "mode_result (allowed, denied or timeout); the mode sheet reports it.",
+    "Resolved (commit 4fb4dac): ModeController was read on the network thread and written on the main thread without "
+    "synchronisation. Every public entry point is now synchronised; a JVM concurrency test covers it.",
+    "Verified (check 16): the 'Sharing request' notification appears when the app is in the background; Allow and Keep "
+    "private from the shade both take effect. Notification channel and POST_NOTIFICATIONS were fine; no fix was needed.",
+    "Flaky (check 6, once in the final full run): the blackout window saw one preview in 3 s. The same check run alone "
+    "passed (previews +0). Not reproduced in a second run; the blackout check allows no previews at all.",
+    "Low: the station Dim restore is covered by JVM tests only; an instrumented ActivityScenario.recreate test would need "
+    "a live monitoring session on the phone and was not added.",
     "Low: the phone's status line showed 'Connecting to ws://...' while the backend reported the phone connected "
     "(screenshots during an earlier run). Not investigated.",
-    "Low: the server never learns that the person on the phone chose Keep private or let the prompt time out; the "
-    "dashboard's 60 s countdown ends on its own.",
-    "Low: ModeController is read on the network thread and mutated on the main thread (approval timeout) without "
-    "synchronisation. Same pattern as the existing mode code; not observed to fail.",
     "Low: the phone-side effect of a dashboard treat (chime, rules) is not observable over the API or logcat; check 7 "
     "covers the server side only.",
 ]
