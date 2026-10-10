@@ -226,6 +226,8 @@ class RemoteSession:
             return self._treat(data, now)
         if kind == "mode_state":
             return self._mode_state(data)
+        if kind == "kick_viewers":
+            return self._kick_viewers()
         model = EVENT_MODELS.get(kind) if isinstance(kind, str) else None
         if model is None or not isinstance(data, dict):
             self.dropped += 1
@@ -269,6 +271,13 @@ class RemoteSession:
         if hasattr(self.pipeline, "set_station_cap"):
             self.pipeline.set_station_cap(cap)
         return "mode_state"
+
+    def _kick_viewers(self) -> str:
+        """T3.4: station requested to disconnect all remote viewers."""
+        tracker = getattr(self.runtime, "tracker", None)
+        if tracker:
+            tracker.kick_all(cooldown_s=60.0)
+        return "kick_viewers"
 
     def handle(self, data: bytes) -> str | None:
         """Dispatch one binary message: 0x01 + JPEG preview. Returns "preview" or None."""

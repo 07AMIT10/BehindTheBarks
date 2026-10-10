@@ -107,11 +107,11 @@ adb install -r android/app/build/outputs/apk/release/app-release.apk
 See detailed specification in `docs/privacy_architecture_and_threat_model.md`.
 
 1. **Zero Silent Watching (Anti-Lurking Invariant)**:
-   - A remote browser must never stream `/video` silently. The on-device Android station plays an audible chime on viewer connection and displays active viewer count (`👁️ N Viewers Active`).
+   - A remote browser must never stream `/video` silently. The on-device Android station plays an audible chime (`ToneGenerator` ACK + BEEP2) on viewer connection and displays active viewer count (`👁️ N viewers watching`) on-screen and in notifications. Viewers can be kicked instantly via station button or notification action.
 2. **Kinematic-First Modality Separation**:
-   - Remote access defaults to behavioral telemetry (emotion state, tail wag frequency, meal events, and skeletal wireframe). Raw optical room video is a privileged secondary tier requiring explicit time-bounded access.
+   - Remote access defaults to behavioral telemetry (emotion state, tail wag frequency, meal events, and skeletal wireframe). Raw optical room video is a privileged secondary tier requiring explicit time-bounded access. (Implemented viewing modes: `blackout`, `privacy`, `limited`, `full`).
 3. **Session Inactivity Watchdog**:
-   - All active video streams automatically pause after 180 seconds of continuous viewing.
+   - All active video streams automatically pause after 180 seconds of continuous viewing (`StreamWatchdog`) or immediately when the tab is hidden, requiring explicit tap to resume.
 4. **Local Hardware Shutter**:
-   - The station phone possesses absolute sovereignty over media delivery. Activating "Family Privacy" immediately mutes the camera and audio buffers at the local hardware level, returning a privacy slate to remote viewers.
+   - The station phone possesses absolute sovereignty over media delivery. Setting "Family Privacy" / Blackout immediately mutes camera and audio buffers at the local hardware level, returning a privacy slate to remote viewers.
 

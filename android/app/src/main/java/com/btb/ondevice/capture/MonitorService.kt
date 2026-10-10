@@ -61,6 +61,8 @@ interface MonitorServiceListener {
     fun onModeStateChanged(effectiveWire: String) {}
     /** T3.2: the owner asked for more exposure than the phone allows: prompt, default deny. */
     fun onModeApprovalRequested(requestedWire: String) {}
+    /** T3.4: active remote viewer count changed. */
+    fun onViewersCountChanged(videoViewers: Int, audioViewers: Int) {}
 }
 
 class MonitorService : Service(), LifecycleOwner {
@@ -94,6 +96,12 @@ class MonitorService : Service(), LifecycleOwner {
     private val lastPreviewSendMs = AtomicLong(0L)
     private val isScanningQr = AtomicBoolean(false)
     private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
+    private var currentVideoViewers: Int = 0
+    private var currentAudioViewers: Int = 0
+    private var currentStatusText: String = "Monitoring room with camera & audio..."
+
+    /** T3.4: station requests to disconnect all active remote viewers immediately. */
+    fun disconnectViewers(): Boolean = uploader?.sendKickViewers() ?: false
 
     fun setScanningQr(enabled: Boolean) {
         isScanningQr.set(enabled)
@@ -164,6 +172,7 @@ class MonitorService : Service(), LifecycleOwner {
             android.util.Log.w("MonitorService", "ignoring unknown policy mode=$mode")
             return
         }
+        val prevVideoViewers = modeController.policy.videoViewers
         modeController.onPolicy(
             Policy(
                 mode = parsed,
@@ -176,6 +185,13 @@ class MonitorService : Service(), LifecycleOwner {
             )
         )
         publishModeState("policy")
+        currentVideoViewers = videoViewers
+        currentAudioViewers = audioViewers
+        if (prevVideoViewers == 0 && videoViewers > 0) {
+            playViewerChime()
+        }
+        updateNotification()
+        listener?.onViewersCountChanged(videoViewers, audioViewers)
     }
 
     /** T3.2: the owner asked for more exposure. Lowering applies now; raising waits for the device. */
@@ -206,6 +222,10 @@ class MonitorService : Service(), LifecycleOwner {
         if (action == ACTION_STOP) {
             stopMonitoring()
             stopSelf()
+            return START_NOT_STICKY
+        }
+        if (action == ACTION_KICK_VIEWERS) {
+            disconnectViewers()
             return START_NOT_STICKY
         }
 
@@ -446,6 +466,26 @@ class MonitorService : Service(), LifecycleOwner {
         }
     }
 
+    /** T3.4: two-tone chime (TONE_PROP_ACK then TONE_PROP_BEEP2) when viewer count goes 0 -> >0. */
+    private fun playViewerChime() {
+        try {
+            val toneGen = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 100)
+            toneGen.startTone(android.media.ToneGenerator.TONE_PROP_ACK, 200)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                try {
+                    toneGen.startTone(android.media.ToneGenerator.TONE_PROP_BEEP2, 250)
+                } catch (_: Exception) {}
+            }, 220)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                try {
+                    toneGen.release()
+                } catch (_: Exception) {}
+            }, 600)
+        } catch (e: Exception) {
+            Log.w("MonitorService", "Failed to play viewer chime: ${e.message}")
+        }
+    }
+
     private fun updateUiOverlay(frame: FrameEvent, rules: RulesLabel?, width: Int = 0, height: Int = 0) {
         val l = listener ?: return
         val det = frame.bbox
@@ -580,14 +620,42 @@ class MonitorService : Service(), LifecycleOwner {
             PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
         )
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val displayText = if (currentVideoViewers > 0) {
+            val s = if (currentVideoViewers == 1) "1 viewer watching" else "$currentVideoViewers viewers watching"
+            "$s · $statusText"
+        } else {
+            statusText
+        }
+
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Behind the Barks Monitor")
-            .setContentText(statusText)
+            .setContentText(displayText)
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setOngoing(true)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPendingIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
+
+        if (currentVideoViewers > 0) {
+            val kickIntent = Intent(this, MonitorService::class.java).apply {
+                action = ACTION_KICK_VIEWERS
+            }
+            val kickPendingIntent = PendingIntent.getService(
+                this,
+                1,
+                kickIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+            )
+            builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Disconnect viewers", kickPendingIntent)
+        }
+
+        return builder.build()
+    }
+
+    private fun updateNotification(newStatusText: String? = null) {
+        if (!isRunning.get()) return
+        if (newStatusText != null) currentStatusText = newStatusText
+        val nm = getSystemService(NotificationManager::class.java)
+        nm?.notify(NOTIFICATION_ID, buildNotification(currentStatusText))
     }
 
     private fun stopMonitoring() {
@@ -655,6 +723,7 @@ class MonitorService : Service(), LifecycleOwner {
         const val NOTIFICATION_ID = 4040
         const val ACTION_START = "com.btb.ondevice.action.START"
         const val ACTION_STOP = "com.btb.ondevice.action.STOP"
+        const val ACTION_KICK_VIEWERS = "com.btb.ondevice.action.KICK_VIEWERS"
         const val EXTRA_SERVER_URL = "extra_server_url"
         const val EXTRA_DEVICE_NAME = "extra_device_name"
         const val EXTRA_TOKEN = "extra_token"

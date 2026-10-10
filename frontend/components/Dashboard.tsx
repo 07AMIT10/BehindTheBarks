@@ -239,6 +239,7 @@ export default function Dashboard() {
                 privacyMode={privacyMode}
                 onTogglePrivacy={() => void setPrivacy()}
                 token={token}
+                maxIdleSec={state.status?.max_idle_s}
               />
             </div>
             <div className="[grid-area:card]">

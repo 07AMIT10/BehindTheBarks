@@ -61,6 +61,9 @@ class MainActivity : Activity() {
     private lateinit var flipButton: Button
     private lateinit var privacyButton: Button
     private lateinit var collapseButton: Button
+    private lateinit var viewersBadge: TextView
+    private lateinit var disconnectViewersButton: Button
+    private lateinit var ambientViewersText: TextView
 
     private lateinit var prefs: SharedPreferences
 
@@ -128,6 +131,12 @@ class MainActivity : Activity() {
                             }
                             null -> Unit
                         }
+                    }
+                }
+
+                override fun onViewersCountChanged(videoViewers: Int, audioViewers: Int) {
+                    runOnUiThread {
+                        updateViewersUi(videoViewers)
                     }
                 }
             })
@@ -425,6 +434,34 @@ class MainActivity : Activity() {
         toolsRow.addView(privacyButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         controlsPanel.addView(toolsRow)
 
+        // T3.4: viewer indicator badge and disconnect action
+        val viewersRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 6, 0, 0)
+        }
+        viewersBadge = TextView(this).apply {
+            text = "👁️ 0 viewers watching"
+            setTextColor(Color.parseColor("#4FC3F7"))
+            textSize = 12f
+            visibility = View.GONE
+        }
+        viewersRow.addView(viewersBadge, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        disconnectViewersButton = Button(this).apply {
+            text = "Disconnect"
+            textSize = 11f
+            setBackgroundColor(Color.parseColor("#D32F2F"))
+            setTextColor(Color.WHITE)
+            visibility = View.GONE
+            setOnClickListener {
+                monitorService?.disconnectViewers()
+                Toast.makeText(this@MainActivity, "Viewers disconnected", Toast.LENGTH_SHORT).show()
+            }
+        }
+        viewersRow.addView(disconnectViewersButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        controlsPanel.addView(viewersRow)
+
         root.addView(controlsPanel)
 
         // 5. Ambient / Station Mode Fullscreen Overlay (pitch black to save power & prevent OLED burn-in)
@@ -471,6 +508,16 @@ class MainActivity : Activity() {
             setPadding(0, 0, 0, 24)
         }
         ambientContent.addView(ambientEmotionText)
+
+        ambientViewersText = TextView(this).apply {
+            text = ""
+            setTextColor(Color.parseColor("#4FC3F7"))
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 12)
+            visibility = View.GONE
+        }
+        ambientContent.addView(ambientViewersText)
 
         val ambientHint = TextView(this).apply {
             text = "Display dimmed to reduce power & thermals\nTap anywhere to wake"
@@ -970,6 +1017,22 @@ class MainActivity : Activity() {
         flipButton.text = "🔄 Flip"
         statusTextView.text = "● Idle · Ready"
         overlayView.updateState(OverlayState())
+        updateViewersUi(0)
+    }
+
+    private fun updateViewersUi(count: Int) {
+        if (count > 0) {
+            val label = if (count == 1) "👁️ 1 viewer watching" else "👁️ $count viewers watching"
+            viewersBadge.text = label
+            viewersBadge.visibility = View.VISIBLE
+            disconnectViewersButton.visibility = View.VISIBLE
+            ambientViewersText.text = label
+            ambientViewersText.visibility = View.VISIBLE
+        } else {
+            viewersBadge.visibility = View.GONE
+            disconnectViewersButton.visibility = View.GONE
+            ambientViewersText.visibility = View.GONE
+        }
     }
 
     private fun updateTorchButton(on: Boolean) {

@@ -16,6 +16,7 @@ MESSAGE_TYPES = ("frame", "audio", "rules", "emotion", "llm", "notification", "t
 
 
 KICKED = object()  # sentinel a kicked viewer's /ws loop watches for (T2.6)
+DISCONNECTED_ALL = object()  # sentinel when viewers are disconnected by station/owner (T3.4, close 4411)
 
 
 class Hub:
@@ -55,6 +56,24 @@ class Hub:
             except asyncio.QueueFull:
                 pass
         return len(queues)
+
+    def kick_all_viewers(self, include_owners: bool = False) -> int:
+        """Disconnect viewers (code 4411) when requested by station or owner (T3.4)."""
+        kicked_count = 0
+        for q, meta in list(self._queue_meta.items()):
+            if include_owners or meta.get("role") != "owner":
+                self._clients.discard(q)
+                self._queue_meta.pop(q, None)
+                for vid, qs in list(self._viewers.items()):
+                    qs.discard(q)
+                    if not qs:
+                        del self._viewers[vid]
+                try:
+                    q.put_nowait(DISCONNECTED_ALL)
+                except asyncio.QueueFull:
+                    pass
+                kicked_count += 1
+        return kicked_count
 
     def unsubscribe(self, q: asyncio.Queue) -> None:
         self._clients.discard(q)

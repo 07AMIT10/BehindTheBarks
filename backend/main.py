@@ -13,6 +13,7 @@ import contextlib
 import logging
 import secrets
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -42,7 +43,8 @@ STATION_AUTH_PREFIX = b"btb-auth-v1|"  # the signed challenge message: nonce | s
 SESSION_MAX_AGE_S = 31_536_000  # a year: the recovery key, not a password reset, is the escape hatch
 HOUSEHOLD_CREATES_PER_HOUR = 5  # web.auth.household_creates_per_hour overrides it
 from backend.web.event_log import EventLog
-from backend.web.hub import KICKED, Hub
+from backend.web.hub import DISCONNECTED_ALL, KICKED, Hub
+from backend.web.tracker import CLOSE_VIEWERS_KICKED, parse_ua_label
 from backend.web.ingest import CLOSE_BAD_HELLO, CLOSE_BUSY, CLOSE_REPLACED, HelloError, parse_hello
 from backend.web.ingest_events import (MAX_SKEW_S, PROTO_STATION, RemoteSession, bind_pipeline,
                                        parse_remote_hello)
@@ -100,9 +102,10 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         registry = HouseholdRegistry(cfg, clock=rt.clock,
                                      idle_evict_s=float((web.get("registry") or {}).get("idle_evict_s", 600)),
                                      sessionmaker=app.state.db_session)
-        registry.use_legacy(rt, hub, rt.pipeline)
+        lr = registry.use_legacy(rt, hub, rt.pipeline)
         app.state.registry = registry
         app.state.hub, app.state.rt, app.state.demo = hub, rt, demo
+        app.state.tracker = lr.tracker
         if not households_mode:
             # In households mode the legacy runtime serves no household, so its loops (and the
             # operator's LLM/notifier it carries) never run at all (T2.7/T2.9).
@@ -218,7 +221,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             s.commit()
             return Ctx(household_id=viewer.household_id, role=viewer.role, viewer_id=viewer.id,
                        runtime=lr.runtime, hub=lr.hub, pipeline=lr.pipeline, request=req,
-                       policy=lr.policy, mode_ceiling=viewer.mode_ceiling or "full")
+                       policy=lr.policy, tracker=lr.tracker, mode_ceiling=viewer.mode_ceiling or "full")
 
 
 
@@ -231,9 +234,10 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         verify_request_auth(req)
         lr = app.state.registry.peek(LEGACY)
         policy = getattr(lr, "policy", None) or getattr(lr.runtime, "policy", None)
+        tracker = getattr(lr, "tracker", None) or getattr(lr.runtime, "tracker", None)
         return Ctx(household_id=LEGACY, role="owner", viewer_id=None,
                    runtime=lr.runtime, hub=lr.hub, pipeline=lr.pipeline, request=req,
-                   policy=policy, mode_ceiling="full")
+                   policy=policy, tracker=tracker, mode_ceiling="full")
 
     class _BadPair(Exception):
         """An otherwise-invalid /pair attempt: counted, then answered with the same 400 body."""
@@ -718,6 +722,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         st["station_cap"] = station_cap
         st["effective_mode"] = effective
         st["privacy_mode"] = effective == "blackout"
+        st["max_idle_s"] = float(web.get("video", {}).get("max_idle_s", 180.0))
+        st["viewers"] = ctx.tracker.viewer_counts if ctx.tracker else {"video": 0, "audio": 0}
         st["mode_info"] = {
             "household_mode": h_mode,
             "station_cap": station_cap,
@@ -944,42 +950,70 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             raise HTTPException(400, "rules must be an object")
         return {"sent": bool(push(rules))}
 
+    @app.post("/viewers/disconnect-all")
+    async def disconnect_all_viewers(ctx: Ctx = Depends(auth_ctx)) -> dict:
+        """T3.4: owner disconnects all viewers; imposes a 60s cooldown against /video."""
+        if ctx.role != ROLE_OWNER:
+            raise HTTPException(status_code=403, detail="only the owner can disconnect viewers")
+        tracker = ctx.tracker
+        count = tracker.kick_all(cooldown_s=60.0) if tracker else 0
+        return {"ok": True, "disconnected": count, "cooldown_s": 60}
+
     @app.get("/video")
     async def video(ctx: Ctx = Depends(auth_ctx), max_frames: int = 0) -> StreamingResponse:
+        tracker = ctx.tracker
+        if tracker and tracker.is_kicked():
+            raise HTTPException(status_code=403, detail="Viewers disconnected by station")
+
         period = 1.0 / float(web["video"]["fps"])
         # A tab left open on a household with no camera must not spin forever: stop after this much
         # silence (also makes ?max_frames=N terminate when no frame ever arrives).
         idle_s = float(web["video"].get("idle_timeout_s", 30.0))
 
+        stream_id = str(uuid.uuid4())
+        ua = ctx.request.headers.get("user-agent", "") if ctx.request else ""
+        label = parse_ua_label(ua)
+        if tracker:
+            try:
+                tracker.enter_video(stream_id, viewer_id=ctx.viewer_id, label=label)
+            except Exception:
+                raise HTTPException(status_code=403, detail="Viewers disconnected by station")
+
         async def gen():
             sent = 0
             last_frame_at = time.monotonic()
-            while max_frames <= 0 or sent < max_frames:
-                station_cap = getattr(ctx.pipeline, "station_cap", "full")
-                policy = ctx.policy or getattr(ctx.runtime, "policy", None)
-                h_mode = policy.household_mode if policy else getattr(ctx.pipeline, "_policy_mode", "full")
-                eff_mode = min_mode(station_cap, h_mode, getattr(ctx, "mode_ceiling", "full"))
+            try:
+                while max_frames <= 0 or sent < max_frames:
+                    if tracker and tracker.is_kicked():
+                        return
+                    station_cap = getattr(ctx.pipeline, "station_cap", "full")
+                    policy = ctx.policy or getattr(ctx.runtime, "policy", None)
+                    h_mode = policy.household_mode if policy else getattr(ctx.pipeline, "_policy_mode", "full")
+                    eff_mode = min_mode(station_cap, h_mode, getattr(ctx, "mode_ceiling", "full"))
 
-                if getattr(ctx.pipeline, "_idle", False):
-                    jpeg = None
-                elif eff_mode == "blackout":
-                    jpeg = getattr(ctx.pipeline, "_privacy_jpeg", None) or build_privacy_slate()
-                elif eff_mode == "privacy":
-                    jpeg = build_events_only_slate()
-                elif eff_mode == "limited":
-                    raw = getattr(ctx.pipeline, "raw_frame_jpeg", ctx.pipeline.latest_frame_jpeg)()
-                    jpeg = limit_jpeg(raw) if raw else None
-                else:  # full
-                    jpeg = getattr(ctx.pipeline, "raw_frame_jpeg", ctx.pipeline.latest_frame_jpeg)()
+                    if getattr(ctx.pipeline, "_idle", False):
+                        jpeg = None
+                    elif eff_mode == "blackout":
+                        jpeg = getattr(ctx.pipeline, "_privacy_jpeg", None) or build_privacy_slate()
+                    elif eff_mode == "privacy":
+                        jpeg = build_events_only_slate()
+                    elif eff_mode == "limited":
+                        raw = getattr(ctx.pipeline, "raw_frame_jpeg", ctx.pipeline.latest_frame_jpeg)()
+                        jpeg = limit_jpeg(raw) if raw else None
+                    else:  # full
+                        jpeg = getattr(ctx.pipeline, "raw_frame_jpeg", ctx.pipeline.latest_frame_jpeg)()
 
-                if jpeg:
-                    yield b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + str(len(jpeg)).encode() \
-                        + b"\r\n\r\n" + jpeg + b"\r\n"
-                    sent += 1
-                    last_frame_at = time.monotonic()
-                elif time.monotonic() - last_frame_at > idle_s:
-                    return
-                await asyncio.sleep(period)
+                    if jpeg:
+                        yield b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + str(len(jpeg)).encode() \
+                            + b"\r\n\r\n" + jpeg + b"\r\n"
+                        sent += 1
+                        last_frame_at = time.monotonic()
+                    elif time.monotonic() - last_frame_at > idle_s:
+                        return
+                    await asyncio.sleep(period)
+            finally:
+                if tracker:
+                    tracker.leave_video(stream_id)
 
         return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
 
@@ -993,13 +1027,22 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             return
         await sock.accept()
         q = app.state.hub.subscribe(role="owner")
+        tracker = getattr(app.state, "tracker", None)
+        if tracker:
+            tracker.enter_ws(q, viewer_id="owner", label="Owner")
         try:
             await sock.send_json({"type": "status", "seq": 0, "data": app.state.rt.status()})
             while True:
-                await sock.send_json(await q.get())
+                msg = await q.get()
+                if msg is DISCONNECTED_ALL:
+                    await sock.close(code=CLOSE_VIEWERS_KICKED, reason="viewers disconnected by station")
+                    return
+                await sock.send_json(msg)
         except (WebSocketDisconnect, RuntimeError):
             pass
         finally:
+            if tracker:
+                tracker.leave_ws(q)
             app.state.hub.unsubscribe(q)
 
     async def _ws_households(sock: WebSocket) -> None:
@@ -1020,6 +1063,10 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             return
         lr = await app.state.registry.get(viewer.household_id)
         q = lr.hub.subscribe(viewer_id=viewer.id, role=viewer.role)
+        ua = sock.headers.get("user-agent", "")
+        label = viewer.role if viewer.role == "owner" else parse_ua_label(ua)
+        if lr.tracker:
+            lr.tracker.enter_ws(q, viewer_id=viewer.id, label=label)
         try:
             status_data = dict(lr.runtime.status())
             eff = lr.policy.compute_effective(getattr(lr.pipeline, "station_cap", "full"), viewer)
@@ -1034,6 +1081,9 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 if msg is KICKED:  # the owner revoked this viewer (T2.6)
                     await sock.close(code=CLOSE_REVOKED, reason="your access was revoked")
                     return
+                if msg is DISCONNECTED_ALL:  # station or owner kicked viewers (T3.4)
+                    await sock.close(code=CLOSE_VIEWERS_KICKED, reason="viewers disconnected by station")
+                    return
                 if msg.get("type") == "status" and isinstance(msg.get("data"), dict):
                     data = dict(msg["data"])
                     eff = lr.policy.compute_effective(getattr(lr.pipeline, "station_cap", "full"), viewer)
@@ -1047,6 +1097,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         except (WebSocketDisconnect, RuntimeError):
             pass
         finally:
+            if lr.tracker:
+                lr.tracker.leave_ws(q)
             lr.hub.unsubscribe(q)
 
     @app.websocket("/ingest")

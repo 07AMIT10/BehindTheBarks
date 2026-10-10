@@ -106,11 +106,13 @@ flowchart TD
 
 | Component | Responsibility | Status |
 | :--- | :--- | :--- |
-| `backend/main.py` | Track active `/video` subscribers; dispatch `viewer` downlinks. | Planned |
-| `backend/web/remote_pipeline.py` | Maintain `_active_viewers` count and fire downlinks on connect/disconnect. | Planned |
-| `android/.../EventUploader.kt` | Parse `viewer` downlink messages from WebSocket. | Ready for hookup |
-| `android/.../MonitorService.kt` | Play `playViewerConnectedChime()` and update overlay with active viewer count. | Ready for hookup |
-| `frontend/components/VideoPanel.tsx` | Implement 3-minute inactivity watchdog and Kinematic Mode toggle. | Planned |
+| `backend/main.py` | Track active `/video` subscribers; kick cooldown enforcement; dispatch downlinks. | Implemented (T3.4) |
+| `backend/web/tracker.py` | Maintain active viewers count, kick cooldown, and fire debounced downlinks. | Implemented (T3.4) |
+| `android/.../EventUploader.kt` | Parse `policy` downlinks and send `kick_viewers` uplinks. | Implemented (T3.4) |
+| `android/.../MonitorService.kt` | Play two-tone chime on 0->>0 viewers, notification action & kick handling. | Implemented (T3.4) |
+| `android/.../ui/MainActivity.kt` | Active viewer count indicator & "Disconnect" action button. | Implemented (T3.4) |
+| `frontend/components/VideoPanel.tsx` | Implement 3-minute inactivity watchdog overlay and tab visibility pause. | Implemented (T3.4) |
+| `frontend/lib/watchdog.ts` | Pure timer watchdog engine with user activity reset. | Implemented (T3.4) |
 
 ---
 

@@ -489,6 +489,20 @@ class EventUploader(
         return sendEnvelope("mode_state", """{"cap":"$cap","effective":"$effective","reason":"$escaped"}""")
     }
 
+    /** T3.4: station requests to disconnect all active remote viewers immediately. */
+    fun sendKickViewers(): Boolean {
+        if (connectionState != ConnectionState.CONNECTED) return false
+        val json = buildJsonObject {
+            put("type", "kick_viewers")
+        }.toString()
+        val ws = synchronized(lock) { webSocket } ?: return false
+        return try {
+            ws.send(json)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     fun sendPreview(jpeg: ByteArray, ts: Double = clock()): Boolean {
         if (connectionState != ConnectionState.CONNECTED) {
             return false

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { FrameEvent } from "@/lib/contracts";
 import { durationLabel, hhmmss } from "@/lib/format";
 import { drawOverlay, fitContain, type Layers } from "@/lib/overlay";
+import { StreamWatchdog } from "@/lib/watchdog";
 
 type Props = {
   http: string;
@@ -17,6 +18,7 @@ type Props = {
   privacyMode?: boolean;
   onTogglePrivacy?: () => void;
   token?: string | null;
+  maxIdleSec?: number;
 };
 
 const chip = "flex h-[30px] items-center rounded-lg px-3 text-[12px]";
@@ -34,6 +36,7 @@ export default function VideoPanel({
   privacyMode = false,
   onTogglePrivacy,
   token,
+  maxIdleSec = 180,
 }: Props) {
   const boxRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -42,6 +45,52 @@ export default function VideoPanel({
   const [retryKey, setRetryKey] = useState(0);
   const [videoOk, setVideoOk] = useState(false);
   const [size, setSize] = useState({ w: 0, h: 0 });
+  const [watchdogPaused, setWatchdogPaused] = useState(false);
+  const [resumeKey, setResumeKey] = useState(0);
+  const watchdogRef = useRef<StreamWatchdog | null>(null);
+
+  useEffect(() => {
+    if (idle || paused || privacyMode) {
+      watchdogRef.current?.stop();
+      return;
+    }
+
+    const wd = new StreamWatchdog(
+      {
+        onPause: () => setWatchdogPaused(true),
+        onResume: () => setWatchdogPaused(false),
+      },
+      { maxIdleSec }
+    );
+    watchdogRef.current = wd;
+    wd.start();
+
+    const onActivity = () => wd.recordActivity();
+    const onVisibility = () => wd.handleVisibilityChange();
+
+    window.addEventListener("mousemove", onActivity, { passive: true });
+    window.addEventListener("mousedown", onActivity, { passive: true });
+    window.addEventListener("keydown", onActivity, { passive: true });
+    window.addEventListener("touchstart", onActivity, { passive: true });
+    window.addEventListener("scroll", onActivity, { passive: true });
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      wd.stop();
+      window.removeEventListener("mousemove", onActivity);
+      window.removeEventListener("mousedown", onActivity);
+      window.removeEventListener("keydown", onActivity);
+      window.removeEventListener("touchstart", onActivity);
+      window.removeEventListener("scroll", onActivity);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [idle, paused, privacyMode, maxIdleSec]);
+
+  const handleResumeWatchdog = useCallback(() => {
+    setWatchdogPaused(false);
+    setResumeKey((k) => k + 1);
+    watchdogRef.current?.resume();
+  }, []);
 
   useEffect(() => {
     const box = boxRef.current;
@@ -178,7 +227,7 @@ export default function VideoPanel({
   // When the backend restarts, Chrome ends the MJPEG stream without an error event, so the <img> would
   // freeze on its last frame. Keying the stream on `paused` opens a fresh stream once we're live again.
   const tokenParam = token ? `&token=${encodeURIComponent(token)}` : "";
-  const streamId = `${retryKey}${paused ? "p" : ""}${idle ? "i" : ""}`;
+  const streamId = `${retryKey}${paused ? "p" : ""}${idle ? "i" : ""}${watchdogPaused ? "w" : ""}${resumeKey}`;
   const videoSrc = `${http}/video?k=${streamId}${tokenParam}`;
 
   // Monitoring is stopped on purpose (or has never started): no /video request at all, and a plain
@@ -224,11 +273,13 @@ export default function VideoPanel({
           }`,
         }}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element -- MJPEG stream, next/image can't handle it */}
-        <img ref={imgRef} key={streamId} src={videoSrc} alt=""
-          crossOrigin="anonymous"
-          onLoad={() => setVideoOk(true)} onError={onError}
-          className="h-full w-full object-contain" />
+        {!watchdogPaused && (
+          /* eslint-disable-next-line @next/next/no-img-element -- MJPEG stream, next/image can't handle it */
+          <img ref={imgRef} key={streamId} src={videoSrc} alt=""
+            crossOrigin="anonymous"
+            onLoad={() => setVideoOk(true)} onError={onError}
+            className="h-full w-full object-contain" />
+        )}
         <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
       </div>
 
@@ -254,7 +305,33 @@ export default function VideoPanel({
         </div>
       )}
 
-      {(paused || !videoOk) && !privacyMode && (
+      {watchdogPaused && !privacyMode && !idle && (
+        <div
+          onClick={handleResumeWatchdog}
+          className="absolute inset-0 z-30 flex cursor-pointer flex-col items-center justify-center gap-3 p-6 text-center text-[#D6D8DB]"
+          style={{ background: "rgba(18, 20, 26, 0.95)", backdropFilter: "blur(12px)" }}
+        >
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#7FE3E8]/10 text-[#7FE3E8] ring-1 ring-[#7FE3E8]/30">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="6" y="4" width="4" height="16" />
+              <rect x="14" y="4" width="4" height="16" />
+            </svg>
+          </div>
+          <div className="text-lg font-bold text-white">Stream paused to protect household privacy</div>
+          <p className="max-w-xs text-xs text-[#9CA3AF]">
+            Inactivity watchdog paused the live feed. Tap anywhere to resume.
+          </p>
+          <button
+            type="button"
+            onClick={handleResumeWatchdog}
+            className="mt-1 rounded-lg bg-[#7FE3E8] px-4 py-1.5 text-xs font-bold text-[#12141A] shadow-lg hover:bg-[#7FE3E8]/90 transition-colors active:scale-95"
+          >
+            Tap to resume
+          </button>
+        </div>
+      )}
+
+      {(paused || !videoOk) && !privacyMode && !watchdogPaused && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center text-[#D6D8DB]" style={scrim}>
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#7FE3E8" strokeWidth="2" strokeLinecap="round"
             style={{ animation: "spin 1.2s linear infinite" }} aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
