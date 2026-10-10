@@ -1,6 +1,10 @@
 import type { Toast } from "./toasts";
 import type { AudioLabel, Emotion, EmotionState, Features, FrameEvent } from "./contracts";
 
+/** T3.1: ascending exposure. A viewer sees min(station cap, household mode, their ceiling). */
+export type ViewMode = "blackout" | "privacy" | "limited" | "full";
+
+
 export type EnvelopeType = "frame" | "audio" | "rules" | "emotion" | "llm" | "notification" | "treat" | "status";
 
 export type Envelope = {
@@ -19,6 +23,9 @@ export type PipelineStatus = {
   audio_ok: boolean;
   torch?: boolean;
   privacy_mode?: boolean;
+  station_cap?: ViewMode;   // T3.1: what the phone allows
+  effective_mode?: ViewMode; // T3.1: min(cap, household policy, viewer ceiling)
+  policy_mode?: ViewMode;   // T3.1: what the household owner selected
 };
 
 export type PhoneStatus = {
@@ -53,6 +60,8 @@ export type Status = {
   modes?: string[]; // Plan 4: ["live", "demo"] when demo clips exist
   mode?: "live" | "demo"; // Plan 4
   privacy_mode?: boolean;
+  station_cap?: ViewMode;
+  effective_mode?: ViewMode;
 };
 
 export type Span = {

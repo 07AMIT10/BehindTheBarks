@@ -22,6 +22,8 @@ import time
 from collections import deque
 from typing import Any, Awaitable, Callable
 
+
+from backend.web.modes import DEFAULT_PREVIEW, ModeError, min_mode, parse_mode  # T3.1
 log = logging.getLogger("remote-pipeline")
 
 DOWNLINK_QUEUE = 64
@@ -91,6 +93,10 @@ class RemotePipeline:
         self._last_torch_ts = 0.0
         self._last_flip_ts = 0.0
         self._last_treat_ts = 0.0
+        # T3.1: the station cap is what the phone allows (it reports it); the policy mode is what
+        # the household owner chose. The effective mode is the lower of the two -- the phone always wins.
+        self._station_cap = "full"
+        self._policy_mode = "full"
         self._privacy_mode = False
         self._privacy_jpeg: bytes = _build_privacy_slate()
 
@@ -168,6 +174,23 @@ class RemotePipeline:
         log.info("remote: sent camera flip to phone (%s)", "sent" if sent else "no phone")
         return sent
 
+    def set_policy(self, mode: str, *, preview: dict | None = None, audio: bool | None = None,
+                   viewers: dict | None = None) -> bool:
+        """T3.1: send one `policy` downlink (mode + preview params + audio + viewer counts), then
+        the legacy `privacy` downlink so an old APK still mutes. Returns whether a phone took it.
+
+        `mode` is validated here: an unknown mode raises rather than reaching the phone."""
+        mode = parse_mode(mode)  # ModeError propagates: a bad mode must never be sent
+        self._policy_mode = mode
+        data = {"mode": mode, "preview": dict(preview or DEFAULT_PREVIEW),
+                "audio": bool(audio), "viewers": dict(viewers or {"video": 0, "audio": 0})}
+        sent = self._post({"type": "policy", "data": data})
+        # Legacy compatibility: old APKs only understand `privacy`. New APKs act on `policy` and
+        # ignore `privacy` once they have seen a `policy`, so sending both is safe.
+        self._post({"type": "privacy", "data": {"enabled": self.effective_mode == "blackout"}})
+        log.info("remote: sent policy=%s to phone (%s)", mode, "sent" if sent else "no phone")
+        return sent
+
     def set_privacy(self, enabled: bool) -> bool:
         """Enable or disable family privacy mode remotely (mutes mic & replaces video with privacy slate)."""
         self._privacy_mode = bool(enabled)
@@ -176,7 +199,21 @@ class RemotePipeline:
         return sent
 
     def get_privacy(self) -> bool:
-        return self._privacy_mode
+        """Legacy boolean view: True only when the effective mode is the total mute."""
+        return self.effective_mode == "blackout"
+
+    @property
+    def effective_mode(self) -> str:
+        """min(station cap, household policy). The phone's cap can only lower exposure here."""
+        return min_mode(self._station_cap, self._policy_mode)
+
+    @property
+    def station_cap(self) -> str:
+        return self._station_cap
+
+    def set_station_cap(self, cap: str) -> None:
+        """Called by the session when the phone reports a new cap (T3.1/T3.2)."""
+        self._station_cap = parse_mode(cap)
 
     # -- phone session --------------------------------------------------------------------------
     def attach(self, session: Any, send: Callable[[dict], Awaitable[None]] | None) -> None:
@@ -305,6 +342,9 @@ class RemotePipeline:
             "treats": len(self._treats),
             "torch": self._torch_enabled,
             "privacy_mode": self._privacy_mode,
+            "station_cap": self._station_cap,
+            "effective_mode": self.effective_mode,
+            "policy_mode": self._policy_mode,
         }
 
     def _metrics(self, now: float) -> dict:

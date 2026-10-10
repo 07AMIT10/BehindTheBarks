@@ -50,6 +50,8 @@ KIND_PREVIEW = 0x01
 EVENT_MODELS: dict[str, type] = {"frame": FrameEvent, "audio": AudioEvent, "rules": RulesLabel}
 
 AUDIO_OK_S = 2.0  # an AudioEvent within this many seconds means "the mic is alive", as in Pipeline
+from backend.web.modes import ModeError, parse_mode  # T3.1
+
 MAX_SKEW_S = 60.0  # an envelope whose rebased ts is further than this from our clock is dropped
 MIN_EPOCH = 1_000_000_000.0   # 2001-09-09: below this the phone sent something other than seconds
 MAX_EPOCH = 4_102_444_800.0   # 2100-01-01: above this, most likely milliseconds
@@ -190,6 +192,9 @@ class RemoteSession:
         self.offset.seed(self.server_time_at_hello, hello.phone_time)
         self._fps = FpsMeter(fps_window_s)
         self._preview_fps = FpsMeter(fps_window_s)
+        # T3.1: what the person holding the phone allows, and what it says it is actually doing.
+        self.station_cap = "full"          # an un-upgraded station is assumed full until it says otherwise
+        self.effective_mode: str | None = None
 
     @property
     def events(self) -> int:
@@ -219,6 +224,8 @@ class RemoteSession:
         data = msg.get("data")
         if kind == "treat":
             return self._treat(data, now)
+        if kind == "mode_state":
+            return self._mode_state(data)
         model = EVENT_MODELS.get(kind) if isinstance(kind, str) else None
         if model is None or not isinstance(data, dict):
             self.dropped += 1
@@ -245,6 +252,21 @@ class RemoteSession:
         self.last_event_ts = now
         self._fps.add(now)
         return kind
+
+    def _mode_state(self, data: object) -> str | None:
+        """T3.1: `{"type":"mode_state","data":{cap,effective,reason}}`. An unknown mode is a bad
+        message, never a silent default: it is counted in `dropped` and the previous cap stands."""
+        if not isinstance(data, dict) or "cap" not in data or "effective" not in data:
+            self.dropped += 1
+            return None
+        try:
+            cap = parse_mode(data.get("cap"))
+            effective = parse_mode(data.get("effective"))
+        except ModeError:
+            self.dropped += 1
+            return None
+        self.station_cap, self.effective_mode = cap, effective
+        return "mode_state"
 
     def handle(self, data: bytes) -> str | None:
         """Dispatch one binary message: 0x01 + JPEG preview. Returns "preview" or None."""
@@ -336,6 +358,7 @@ class RemoteSession:
             "ping_due_s": self.ping_due_s(now),
             "last_event_age_s": self._age(self.last_event_ts, now),
             "last_frame_age_s": self._age(self.last_frame_ts, now),
+            "station_cap": self.station_cap, "effective_mode": self.effective_mode,
         }
 
     def metrics(self, now: float) -> dict:
@@ -350,6 +373,7 @@ class RemoteSession:
             "last_frame_age_s": self._age(self.last_frame_ts, now),
             "last_preview_age_s": self._age(self.last_preview_ts, now),
             "audio_ok": self.last_audio_ts is not None and now - self.last_audio_ts <= AUDIO_OK_S,
+            "station_cap": self.station_cap, "effective_mode": self.effective_mode,
         }
 
 

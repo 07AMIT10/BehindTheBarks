@@ -44,6 +44,15 @@ interface EventUploaderListener {
     fun onPrivacyDownlink(enabled: Boolean) {}
     /** T2.5: the server refused the station's identity (4401) or revoked it (4410): pair again. */
     fun onPairingInvalid(reason: String) {}
+    /** T3.1: the server's viewing policy for this household. The phone still applies its own cap:
+     *  the effective mode is min(local cap, [mode]). */
+    fun onPolicyDownlink(
+        mode: String, previewFps: Int, previewMaxEdge: Int, previewQuality: Int,
+        audio: Boolean, videoViewers: Int, audioViewers: Int,
+    ) {}
+    /** T3.1: the owner asked for a higher mode than the phone currently allows. Raising exposure
+     *  always needs an on-device decision ([onPolicyDownlink] must not be used to bypass it). */
+    fun onModeRequest(mode: String, from: String) {}
 }
 
 /**
@@ -298,6 +307,27 @@ class EventUploader(
                     val enabled = root["data"]?.jsonObject?.get("enabled")?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true
                     listener?.onPrivacyDownlink(enabled)
                 }
+                "policy" -> {
+                    val data = root["data"]?.jsonObject
+                    val mode = data?.get("mode")?.jsonPrimitive?.content ?: return
+                    val preview = data?.get("preview")?.jsonObject
+                    val viewers = data?.get("viewers")?.jsonObject
+                    listener?.onPolicyDownlink(
+                        mode = mode,
+                        previewFps = preview?.get("fps")?.jsonPrimitive?.content?.toIntOrNull() ?: 2,
+                        previewMaxEdge = preview?.get("max_edge")?.jsonPrimitive?.content?.toIntOrNull() ?: 320,
+                        previewQuality = preview?.get("quality")?.jsonPrimitive?.content?.toIntOrNull() ?: 60,
+                        audio = data?.get("audio")?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
+                        videoViewers = viewers?.get("video")?.jsonPrimitive?.content?.toIntOrNull() ?: 0,
+                        audioViewers = viewers?.get("audio")?.jsonPrimitive?.content?.toIntOrNull() ?: 0,
+                    )
+                }
+                "mode_request" -> {
+                    val data = root["data"]?.jsonObject
+                    val mode = data?.get("mode")?.jsonPrimitive?.content ?: return
+                    val from = data?.get("from")?.jsonPrimitive?.content ?: "owner"
+                    listener?.onModeRequest(mode, from)
+                }
             }
         } catch (e: Exception) {
             android.util.Log.e("EventUploader", "Error handling server text: ${e.message}", e)
@@ -449,6 +479,14 @@ class EventUploader(
             if (sent) return true
         }
         return spool?.enqueue("treat", ts, jsonPayload) ?: false
+    }
+
+    /** T3.1: tell the server what this station currently allows and is actually doing. Sent after any
+     *  change to the local cap and on connect, so the dashboard's mode is never a guess. */
+    fun sendModeState(cap: String, effective: String, reason: String): Boolean {
+        if (connectionState != ConnectionState.CONNECTED) return false
+        val escaped = reason.replace("\\", "\\\\").replace("\"", "\\\"")
+        return sendEnvelope("mode_state", """{"cap":"$cap","effective":"$effective","reason":"$escaped"}""")
     }
 
     fun sendPreview(jpeg: ByteArray, ts: Double = clock()): Boolean {

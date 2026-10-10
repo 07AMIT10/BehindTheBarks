@@ -198,6 +198,18 @@ are untouched; only the producer of the envelopes moves. (Plan:
   4. text `{"type": "bye"}` — a deliberate stop (the app's Stop Monitoring), sent immediately before
      its close frame. The session is marked `stopped`, so the phone is forgotten even if the close
      frame itself never reaches the wire.
+  5. **T3.1 viewing modes.** `MODE_ORDER` is `blackout < privacy < limited < full`; a viewer sees
+     `min(station_cap, household_mode, viewer.mode_ceiling)`.
+     * phone → server `{"type": "mode_state", "data": {"cap", "effective", "reason"}}`, sent on
+       connect and after any cap change. An unknown mode string is counted in `dropped` and the
+       previous cap stands — a bad message never guesses a mode.
+     * server → phone `{"type": "policy", "data": {"mode", "preview": {"fps", "max_edge", "quality"},
+       "audio", "viewers": {"video", "audio"}}}`. The legacy `{"type": "privacy", "data": {"enabled"}}`
+       is still sent immediately after it so old APKs keep muting; new APKs ignore `privacy` once
+       they have seen a `policy`.
+     * server → phone `{"type": "mode_request", "data": {"mode", "from": "owner"}}` when the owner asks
+       for **more** exposure than the station allows. Raising always needs an on-device decision
+       (T3.2); lowering applies immediately from anywhere.
   5. binary `0x01` + JPEG preview (≤ 2 fps, ~320 px long side, quality ~0.6). Stamped at server receipt
      like `/ingest`; it feeds `pipeline.latest_frame_jpeg()`, not the rules.
 - **Clocks:** `data.ts` is the phone's clock and every other timer (`no_dog_unknown_s`, `llm_stale_s`,

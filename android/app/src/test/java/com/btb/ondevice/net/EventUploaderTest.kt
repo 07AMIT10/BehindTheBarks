@@ -485,4 +485,118 @@ class EventUploaderTest {
         assertThat(uploader.connectionState).isEqualTo(ConnectionState.TERMINATED)
         assertThat(server.requestCount).isEqualTo(1)  // no reconnect after a revoke
     }
+
+    @Test
+    fun `policy downlink carries mode preview audio and viewer counts to the listener`() = runBlocking {
+        val connected = CompletableDeferred<Unit>()
+        val gotPolicy = CompletableDeferred<List<Any>>()
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (text.contains(""""type":"hello"""")) {
+                    webSocket.send("""{"type":"hello_ack","server_time":1700000000.0}""")
+                    webSocket.send(
+                        """{"type":"policy","data":{"mode":"limited",""" +
+                        """"preview":{"fps":3,"max_edge":480,"quality":70},""" +
+                        """"audio":true,"viewers":{"video":2,"audio":1}}}"""
+                    )
+                }
+            }
+        }))
+
+        val uploader = EventUploader(
+            serverUrl = server.url("/ingest-events").toString(),
+            deviceName = "test-galaxy",
+            spool = spool,
+            listener = object : EventUploaderListener {
+                override fun onStateChanged(state: ConnectionState) {
+                    if (state == ConnectionState.CONNECTED) connected.complete(Unit)
+                }
+                override fun onPolicyDownlink(
+                    mode: String, previewFps: Int, previewMaxEdge: Int, previewQuality: Int,
+                    audio: Boolean, videoViewers: Int, audioViewers: Int,
+                ) {
+                    gotPolicy.complete(listOf(mode, previewFps, previewMaxEdge, previewQuality, audio, videoViewers, audioViewers))
+                }
+            }
+        )
+        uploader.start()
+        withTimeout(5000) { connected.await() }
+        val p = withTimeout(5000) { gotPolicy.await() }
+        assertThat(p[0]).isEqualTo("limited")
+        assertThat(p[1]).isEqualTo(3)
+        assertThat(p[2]).isEqualTo(480)
+        assertThat(p[3]).isEqualTo(70)
+        assertThat(p[4]).isEqualTo(true)
+        assertThat(p[5]).isEqualTo(2)
+        assertThat(p[6]).isEqualTo(1)
+        uploader.stop()
+    }
+
+    @Test
+    fun `mode_request downlink is forwarded with the requesting role`() = runBlocking {
+        val connected = CompletableDeferred<Unit>()
+        val gotRequest = CompletableDeferred<Pair<String, String>>()
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (text.contains(""""type":"hello"""")) {
+                    webSocket.send("""{"type":"hello_ack","server_time":1700000000.0}""")
+                    webSocket.send("""{"type":"mode_request","data":{"mode":"full","from":"owner"}}""")
+                }
+            }
+        }))
+
+        val uploader = EventUploader(
+            serverUrl = server.url("/ingest-events").toString(),
+            deviceName = "test-galaxy",
+            spool = spool,
+            listener = object : EventUploaderListener {
+                override fun onStateChanged(state: ConnectionState) {
+                    if (state == ConnectionState.CONNECTED) connected.complete(Unit)
+                }
+                override fun onModeRequest(mode: String, from: String) {
+                    gotRequest.complete(mode to from)
+                }
+            }
+        )
+        uploader.start()
+        withTimeout(5000) { connected.await() }
+        val (mode, from) = withTimeout(5000) { gotRequest.await() }
+        assertThat(mode).isEqualTo("full")
+        assertThat(from).isEqualTo("owner")
+        uploader.stop()
+    }
+
+    @Test
+    fun `sendModeState reports the station cap and effective mode upstream`() = runBlocking {
+        val connected = CompletableDeferred<Unit>()
+        val modeState = CompletableDeferred<String>()
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                when {
+                    text.contains(""""type":"hello"""") ->
+                        webSocket.send("""{"type":"hello_ack","server_time":1700000000.0}""")
+                    text.contains(""""type":"mode_state"""") -> modeState.complete(text)
+                }
+            }
+        }))
+
+        val uploader = EventUploader(
+            serverUrl = server.url("/ingest-events").toString(),
+            deviceName = "test-galaxy",
+            spool = spool,
+            listener = object : EventUploaderListener {
+                override fun onStateChanged(state: ConnectionState) {
+                    if (state == ConnectionState.CONNECTED) connected.complete(Unit)
+                }
+            }
+        )
+        uploader.start()
+        withTimeout(5000) { connected.await() }
+        assertThat(uploader.sendModeState("privacy", "privacy", "station")).isTrue()
+        val sent = withTimeout(5000) { modeState.await() }
+        assertThat(sent).contains(""""cap":"privacy"""")
+        assertThat(sent).contains(""""effective":"privacy"""")
+        assertThat(sent).contains(""""reason":"station"""")
+        uploader.stop()
+    }
 }
