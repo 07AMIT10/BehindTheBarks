@@ -42,6 +42,7 @@ from typing import Any, Awaitable, Callable
 
 from backend.contracts import AudioEvent, FrameEvent, RulesLabel
 from backend.web.ingest import CLOSE_BAD_HELLO, CLOSE_BUSY, CLOSE_REPLACED, FpsMeter, HelloError, MAX_DEVICE_LEN
+from backend.web.resource_alerts import evaluate_resource_alerts
 
 PROTO = 1
 PROTO_STATION = 2  # households mode: the hello carries a paired station_id and signs a challenge
@@ -326,6 +327,18 @@ class RemoteSession:
         stored["server_ts"] = now
         self.latest_telemetry = stored
         self.telemetry_history.append(stored)
+
+        alerts = evaluate_resource_alerts(stored, list(self.telemetry_history))
+        if alerts:
+            dev = getattr(getattr(self, "hello", None), "device", "station")
+            for alert in alerts:
+                log.warning("station %s resource alert: %s", dev, alert)
+            if hasattr(self.runtime, "hub") and self.runtime.hub is not None:
+                self.runtime.hub.publish(
+                    "notification",
+                    {"kind": "resource_alert", "text": f"{dev}: {'; '.join(alerts)}", "alerts": alerts},
+                    meta={"station": getattr(getattr(self, "hello", None), "station_id", None)}
+                )
         return "telemetry"
 
     def handle(self, data: bytes) -> str | None:

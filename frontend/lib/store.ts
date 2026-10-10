@@ -106,8 +106,22 @@ function applyStationEnvelope(sv: StationView, env: Envelope, at: number, touchS
     case "treat":
       return { ...base, treats: [...base.treats, (env.data as { ts: number }).ts] };
     case "notification": {
-      const d = env.data as { state: EmotionState; status: NotificationItem["status"]; detail: string };
-      const item: NotificationItem = { id: env.seq, ts: d.state.ts, state: d.state, status: d.status, detail: d.detail ?? "", read: false };
+      const d = env.data as {
+        kind?: string;
+        text?: string;
+        state?: EmotionState;
+        status?: NotificationItem["status"];
+        detail?: string;
+      };
+      if (!d.state) return base;
+      const item: NotificationItem = {
+        id: env.seq,
+        ts: d.state.ts,
+        state: d.state,
+        status: d.status || "dashboard_only",
+        detail: d.detail ?? "",
+        read: false,
+      };
       return { ...base, notifications: [...base.notifications, item].slice(-NOTIFICATIONS_MAX) };
     }
     case "status": {
@@ -191,11 +205,28 @@ function applyEnvelope(s: DashboardState, env: Envelope, at: number, touchSpans:
 
   let toasts = s.toasts;
   if (env.type === "notification" && live) {
-    const d = env.data as { state: EmotionState; status: NotificationItem["status"]; detail: string };
-    const item: NotificationItem = { id: env.seq, ts: d.state.ts, state: d.state, status: d.status, detail: d.detail ?? "", read: false };
-    const dog = s.status?.profile?.dog_name ?? "Your dog";
-    const title = nextSv.name && nextSv.name !== "Default" ? `${dog} in ${nextSv.name}` : dog;
-    toasts = toastFromNotification(s.toasts, item, title, at);
+    const d = env.data as {
+      kind?: string;
+      text?: string;
+      state?: EmotionState;
+      status?: NotificationItem["status"];
+      detail?: string;
+    };
+    if (d.kind === "resource_alert") {
+      toasts = systemToast(s.toasts, d.text || "Station resource budget alert", at);
+    } else if (d.state) {
+      const item: NotificationItem = {
+        id: env.seq,
+        ts: d.state.ts,
+        state: d.state,
+        status: d.status || "dashboard_only",
+        detail: d.detail ?? "",
+        read: false,
+      };
+      const dog = s.status?.profile?.dog_name ?? "Your dog";
+      const title = nextSv.name && nextSv.name !== "Default" ? `${dog} in ${nextSv.name}` : dog;
+      toasts = toastFromNotification(s.toasts, item, title, at);
+    }
   } else if (env.type === "status") {
     const d = env.data as Status;
     const isFull = "pipeline" in d && "profile" in d;

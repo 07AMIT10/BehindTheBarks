@@ -216,4 +216,13 @@ describe("toasts in the reducer", () => {
     expect(s.notifications).toHaveLength(1);
     expect(s.toasts).toHaveLength(0);
   });
+  it("resource_alert notification creates a system toast", () => {
+    const resourceEnv = env(
+      "notification",
+      { kind: "resource_alert", text: "Station-1: High temperature: 43.5°C" },
+      10
+    );
+    const s = reduce(withProfile, { kind: "envelope", env: resourceEnv, at: 1_000 });
+    expect(s.toasts[0]).toMatchObject({ kind: "system", title: "Station-1: High temperature: 43.5°C" });
+  });
 });
