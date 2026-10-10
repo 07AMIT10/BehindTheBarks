@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import sessionmaker
@@ -24,6 +24,8 @@ from backend.fusion.llm_interpreter import LLMInterpreter
 from backend.demo.clips import load_demo_clips
 from backend.notify import build_notifier
 from backend.store import db as store_db
+from backend.web.auth import Ctx
+from backend.web.registry import LEGACY, HouseholdRegistry
 from backend.web.event_log import EventLog
 from backend.web.hub import Hub
 from backend.web.ingest import CLOSE_BAD_HELLO, CLOSE_BUSY, CLOSE_REPLACED, HelloError, parse_hello
@@ -74,11 +76,19 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         rt = Runtime(cfg, pipeline or build_pipeline(cfg),
                      interpreter or LLMInterpreter(LLMSettings.from_config(cfg)),
                      notifier or build_notifier(cfg), hub, demo_clips=demo)
+        # One Runtime per household (T2.2); the legacy household is the injected one, so
+        # app.state.rt / app.state.hub and every existing test keep working unchanged.
+        registry = HouseholdRegistry(cfg, clock=rt.clock,
+                                     idle_evict_s=float((web.get("registry") or {}).get("idle_evict_s", 600)),
+                                     sessionmaker=app.state.db_session)
+        registry.use_legacy(rt, hub, rt.pipeline)
+        app.state.registry = registry
         app.state.hub, app.state.rt, app.state.demo = hub, rt, demo
         await rt.start()
         try:
             yield
         finally:
+            await registry.close()
             await rt.stop()
             hub.close()
 
@@ -135,12 +145,13 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
 
     rate_limits: dict[str, float] = {}
 
-    def check_rate_limit(action: str, min_interval_s: float) -> None:
+    def check_rate_limit(action: str, min_interval_s: float, hid: str = LEGACY) -> None:
         if not rate_limits_enabled:
             return
+        key = f"{hid}:{action}"  # one household's burst never limits another's
         clock_fn = getattr(getattr(app.state, "rt", None), "clock", time.time)
         now = clock_fn()
-        last = rate_limits.get(action, 0.0)
+        last = rate_limits.get(key, 0.0)
         elapsed = now - last
         if elapsed < min_interval_s:
             wait_s = round(min_interval_s - elapsed, 2)
@@ -148,7 +159,16 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 status_code=429,
                 detail=f"Rate limit exceeded for {action}. Please wait {wait_s}s before retrying."
             )
-        rate_limits[action] = now
+        rate_limits[key] = now
+
+    def auth_ctx(req: Request) -> Ctx:
+        """The pin-mode context: today's auth check, then the legacy household (T2.2).
+
+        FastAPI calls this as a dependency, so the route bodies never verify auth themselves."""
+        verify_request_auth(req)
+        lr = app.state.registry.peek(LEGACY)
+        return Ctx(household_id=LEGACY, role="owner", viewer_id=None,
+                   runtime=lr.runtime, hub=lr.hub, pipeline=lr.pipeline)
 
     @app.get("/auth/status")
     async def auth_status() -> dict:
@@ -169,54 +189,47 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         return {"ok": True}
 
     @app.get("/status")
-    async def status(req: Request) -> dict:
-        verify_request_auth(req)
-        return app.state.rt.status()
+    async def status(ctx: Ctx = Depends(auth_ctx)) -> dict:
+        return ctx.runtime.status()
 
     @app.get("/events")
-    async def events(req: Request, since: int = 0) -> dict:
-        verify_request_auth(req)
-        return {"events": app.state.hub.history(since), "timeline": app.state.rt.timeline()}
+    async def events(ctx: Ctx = Depends(auth_ctx), since: int = 0) -> dict:
+        return {"events": ctx.hub.history(since), "timeline": ctx.runtime.timeline()}
 
     @app.post("/treat")
-    async def treat(req: Request) -> dict:
-        verify_request_auth(req)
-        check_rate_limit("treat", 3.5)
-        return {"ts": app.state.rt.treat()}
+    async def treat(ctx: Ctx = Depends(auth_ctx)) -> dict:
+        check_rate_limit("treat", 3.5, ctx.household_id)
+        return {"ts": ctx.runtime.treat()}
 
     @app.post("/torch")
-    async def set_torch(req: Request, body: dict | None = None) -> dict:
-        verify_request_auth(req)
-        check_rate_limit("torch", 1.2)
-        fn = getattr(app.state.rt.pipeline, "set_torch", None)
+    async def set_torch(ctx: Ctx = Depends(auth_ctx), body: dict | None = None) -> dict:
+        check_rate_limit("torch", 1.2, ctx.household_id)
+        fn = getattr(ctx.pipeline, "set_torch", None)
         if fn is None:
             raise HTTPException(400, "web.pipeline must be 'remote' to control torch")
         if body is not None and "enabled" in body:
             enabled = bool(body["enabled"])
         else:
-            get_fn = getattr(app.state.rt.pipeline, "get_torch", None)
+            get_fn = getattr(ctx.pipeline, "get_torch", None)
             enabled = not (get_fn() if get_fn is not None else False)
         sent = bool(fn(enabled))
         return {"ok": True, "enabled": enabled, "sent": sent}
 
     @app.get("/torch")
-    async def get_torch(req: Request) -> dict:
-        verify_request_auth(req)
-        get_fn = getattr(app.state.rt.pipeline, "get_torch", None)
+    async def get_torch(ctx: Ctx = Depends(auth_ctx)) -> dict:
+        get_fn = getattr(ctx.pipeline, "get_torch", None)
         enabled = False if get_fn is None else bool(get_fn())
         return {"enabled": enabled}
 
     @app.get("/profile")
-    async def get_profile(req: Request) -> dict:
+    async def get_profile(ctx: Ctx = Depends(auth_ctx)) -> dict:
         """The pet profile every viewer sees: header, captions, toasts."""
-        verify_request_auth(req)
-        return dict(cfg["web"].get("profile") or {})
+        return dict(ctx.runtime.cfg["web"].get("profile") or {})
 
     @app.put("/profile")
-    async def put_profile(req: Request, body: dict | None = None) -> dict:
+    async def put_profile(ctx: Ctx = Depends(auth_ctx), body: dict | None = None) -> dict:
         """Save the viewer's pet name/location/zone label and broadcast it to every dashboard."""
-        verify_request_auth(req)
-        check_rate_limit("profile", 0.5)
+        check_rate_limit("profile", 0.5, ctx.household_id)
         store = getattr(app.state, "profile_store", None)
         if store is None or not isinstance(body, dict):
             raise HTTPException(400, "a JSON body with dog_name/location/zone_label is required")
@@ -224,23 +237,21 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             saved = store.save(body)
         except ValueError as err:
             raise HTTPException(400, str(err)) from None
-        cfg["web"]["profile"] = saved  # Runtime.status() reads this dict: no restart needed
-        app.state.rt.hub.publish("status", {"profile": saved})  # every open dashboard, live
+        ctx.runtime.cfg["web"]["profile"] = saved  # Runtime.status() reads this dict: no restart needed
+        ctx.hub.publish("status", {"profile": saved})  # every open dashboard, live
         return saved
 
     @app.post("/camera/flip")
-    async def camera_flip(req: Request) -> dict:
-        verify_request_auth(req)
-        check_rate_limit("flip", 2.5)
-        fn = getattr(app.state.rt.pipeline, "flip_camera", None)
+    async def camera_flip(ctx: Ctx = Depends(auth_ctx)) -> dict:
+        check_rate_limit("flip", 2.5, ctx.household_id)
+        fn = getattr(ctx.pipeline, "flip_camera", None)
         if fn is None:
             raise HTTPException(400, "web.pipeline must be 'remote' to flip camera")
         return {"ok": True, "sent": bool(fn())}
 
     @app.post("/privacy")
-    async def set_privacy(req: Request, body: dict | None = None) -> dict:
-        verify_request_auth(req)
-        pipeline = app.state.rt.pipeline
+    async def set_privacy(ctx: Ctx = Depends(auth_ctx), body: dict | None = None) -> dict:
+        pipeline = ctx.pipeline
         fn = getattr(pipeline, "set_privacy", None)
         if fn is None:
             raise HTTPException(400, "web.pipeline must be 'remote' to control privacy mode")
@@ -253,9 +264,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         return {"ok": True, "privacy_mode": enabled, "sent": sent}
 
     @app.get("/privacy")
-    async def get_privacy(req: Request) -> dict:
-        verify_request_auth(req)
-        pipeline = app.state.rt.pipeline
+    async def get_privacy(ctx: Ctx = Depends(auth_ctx)) -> dict:
+        pipeline = ctx.pipeline
         get_fn = getattr(pipeline, "get_privacy", None)
         enabled = False if get_fn is None else bool(get_fn())
         return {"privacy_mode": enabled}
@@ -291,40 +301,37 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         return tl
 
     @app.post("/mode")
-    async def set_mode(req: Request, body: dict) -> dict:
-        verify_request_auth(req)
+    async def set_mode(ctx: Ctx = Depends(auth_ctx), body: dict | None = None) -> dict:
         try:
-            return {"mode": app.state.rt.set_mode(body.get("mode"))}
+            return {"mode": ctx.runtime.set_mode((body or {}).get("mode"))}
         except ValueError as exc:
             raise HTTPException(400, str(exc))
 
     @app.post("/demo/notify")
-    async def demo_notify(req: Request, body: dict) -> dict:
-        verify_request_auth(req)
-        return await app.state.rt.demo_notify(body.get("clip", ""), float(body.get("t", 0.0)))
+    async def demo_notify(ctx: Ctx = Depends(auth_ctx), body: dict | None = None) -> dict:
+        payload = body or {}
+        return await ctx.runtime.demo_notify(payload.get("clip", ""), float(payload.get("t", 0.0)))
 
     @app.post("/phone/config")
-    async def phone_config(req: Request, body: dict) -> dict:
-        verify_request_auth(req)
+    async def phone_config(ctx: Ctx = Depends(auth_ctx), body: dict | None = None) -> dict:
         """Push data.rules overrides to the phone, so retuning needs no APK rebuild (web.pipeline:
         remote only). With no `rules`, the server's own data.rules section is sent."""
-        push = getattr(app.state.rt.pipeline, "push_config", None)
+        push = getattr(ctx.pipeline, "push_config", None)
         if push is None:
             raise HTTPException(400, "web.pipeline must be 'remote' to push phone config")
-        rules = body.get("rules")
+        rules = (body or {}).get("rules")
         if rules is not None and not isinstance(rules, dict):
             raise HTTPException(400, "rules must be an object")
         return {"sent": bool(push(rules))}
 
     @app.get("/video")
-    async def video(req: Request, max_frames: int = 0) -> StreamingResponse:
-        verify_request_auth(req)
+    async def video(ctx: Ctx = Depends(auth_ctx), max_frames: int = 0) -> StreamingResponse:
         period = 1.0 / float(web["video"]["fps"])
 
         async def gen():
             sent = 0
             while max_frames <= 0 or sent < max_frames:
-                jpeg = app.state.rt.pipeline.latest_frame_jpeg()
+                jpeg = ctx.pipeline.latest_frame_jpeg()
                 if jpeg:
                     yield b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + str(len(jpeg)).encode() \
                         + b"\r\n\r\n" + jpeg + b"\r\n"
