@@ -1,0 +1,1179 @@
+[
+ {
+  "cid": "large:0.85:port:a",
+  "profile": "large",
+  "font": "0.85",
+  "orient": "port",
+  "screen": "idle",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "large-f0.85-port-a-idle.jpg",
+  "detail": "status line '● Idle · Ready', expected Idle"
+ },
+ {
+  "cid": "large:0.85:port:b",
+  "profile": "large",
+  "font": "0.85",
+  "orient": "port",
+  "screen": "monitoring",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [
+   "Stop Monitoring reachable after 0 swipe(s)"
+  ],
+  "shot": "large-f0.85-port-b-monitoring.jpg",
+  "detail": "backend connected=True, status line '● Live · Connected to Server'"
+ },
+ {
+  "cid": "large:0.85:port:c",
+  "profile": "large",
+  "font": "0.85",
+  "orient": "port",
+  "screen": "mode-chooser",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "large-f0.85-port-c-mode-chooser.jpg",
+  "detail": "tapped in-app mode control at 879,1339 after 0 swipes"
+ },
+ {
+  "cid": "large:0.85:port:d",
+  "profile": "large",
+  "font": "0.85",
+  "orient": "port",
+  "screen": "approval",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "large-f0.85-port-d-approval.jpg",
+  "detail": "lowered: tapped in-app mode control at 879,1339 after 0 swipes; tapped 'privacy' row of t; POST /mode full -> pending; prompt seen=True"
+ },
+ {
+  "cid": "large:1.0:port:a",
+  "profile": "large",
+  "font": "1.0",
+  "orient": "port",
+  "screen": "idle",
+  "ok": true,
+  "offenders": [],
+  "warnings": [
+   "'Start Monitoring' is 216x48dp (target 48dp)"
+  ],
+  "notes": [],
+  "shot": "large-f1.0-port-a-idle.jpg",
+  "detail": "status line '● Idle · Ready', expected Idle"
+ },
+ {
+  "cid": "large:1.0:port:b",
+  "profile": "large",
+  "font": "1.0",
+  "orient": "port",
+  "screen": "monitoring",
+  "ok": true,
+  "offenders": [],
+  "warnings": [
+   "'Stop Monitoring' is 216x48dp (target 48dp)"
+  ],
+  "notes": [
+   "Stop Monitoring reachable after 0 swipe(s)"
+  ],
+  "shot": "large-f1.0-port-b-monitoring.jpg",
+  "detail": "backend connected=True, status line '● Live · Connected to Server'"
+ },
+ {
+  "cid": "large:1.0:port:c",
+  "profile": "large",
+  "font": "1.0",
+  "orient": "port",
+  "screen": "mode-chooser",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "large-f1.0-port-c-mode-chooser.jpg",
+  "detail": "tapped in-app mode control at 879,1358 after 0 swipes"
+ },
+ {
+  "cid": "large:1.0:port:d",
+  "profile": "large",
+  "font": "1.0",
+  "orient": "port",
+  "screen": "approval",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "large-f1.0-port-d-approval.jpg",
+  "detail": "lowered: tapped in-app mode control at 879,1358 after 0 swipes; tapped 'privacy' row of t; POST /mode full -> pending; prompt seen=True"
+ },
+ {
+  "cid": "large:1.3:port:a",
+  "profile": "large",
+  "font": "1.3",
+  "orient": "port",
+  "screen": "idle",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "large-f1.3-port-a-idle.jpg",
+  "detail": "status line '● Idle · Ready', expected Idle"
+ },
+ {
+  "cid": "large:1.3:port:b",
+  "profile": "large",
+  "font": "1.3",
+  "orient": "port",
+  "screen": "monitoring",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [
+   "Stop Monitoring reachable after 0 swipe(s)"
+  ],
+  "shot": "large-f1.3-port-b-monitoring.jpg",
+  "detail": "backend connected=True, status line '● Live · Connected to Server'"
+ },
+ {
+  "cid": "large:1.3:port:c",
+  "profile": "large",
+  "font": "1.3",
+  "orient": "port",
+  "screen": "mode-chooser",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "large-f1.3-port-c-mode-chooser.jpg",
+  "detail": "tapped in-app mode control at 879,1413 after 0 swipes"
+ },
+ {
+  "cid": "large:1.3:port:d",
+  "profile": "large",
+  "font": "1.3",
+  "orient": "port",
+  "screen": "approval",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "large-f1.3-port-d-approval.jpg",
+  "detail": "lowered: tapped in-app mode control at 879,1413 after 0 swipes; tapped 'privacy' row of t; POST /mode full -> pending; prompt seen=True"
+ },
+ {
+  "cid": "large:1.5:port:a",
+  "profile": "large",
+  "font": "1.5",
+  "orient": "port",
+  "screen": "idle",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "large-f1.5-port-a-idle.jpg",
+  "detail": "status line '● Idle · Ready', expected Idle"
+ },
+ {
+  "cid": "large:1.5:port:b",
+  "profile": "large",
+  "font": "1.5",
+  "orient": "port",
+  "screen": "monitoring",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [
+   "Stop Monitoring reachable after 0 swipe(s)"
+  ],
+  "shot": "large-f1.5-port-b-monitoring.jpg",
+  "detail": "backend connected=True, status line '● Live · Connected to Server'"
+ },
+ {
+  "cid": "large:1.5:port:c",
+  "profile": "large",
+  "font": "1.5",
+  "orient": "port",
+  "screen": "mode-chooser",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "large-f1.5-port-c-mode-chooser.jpg",
+  "detail": "tapped in-app mode control at 879,1607 after 0 swipes"
+ },
+ {
+  "cid": "large:1.5:port:d",
+  "profile": "large",
+  "font": "1.5",
+  "orient": "port",
+  "screen": "approval",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "large-f1.5-port-d-approval.jpg",
+  "detail": "lowered: tapped in-app mode control at 879,1607 after 0 swipes; tapped 'privacy' row of t; POST /mode full -> pending; prompt seen=True"
+ },
+ {
+  "cid": "native:0.85:port:a",
+  "profile": "native",
+  "font": "0.85",
+  "orient": "port",
+  "screen": "idle",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "native-f0.85-port-a-idle.jpg",
+  "detail": "status line '● Idle · Ready', expected Idle"
+ },
+ {
+  "cid": "native:0.85:port:b",
+  "profile": "native",
+  "font": "0.85",
+  "orient": "port",
+  "screen": "monitoring",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [
+   "Stop Monitoring reachable after 0 swipe(s)"
+  ],
+  "shot": "native-f0.85-port-b-monitoring.jpg",
+  "detail": "backend connected=True, status line '● Live · Connected to Server'"
+ },
+ {
+  "cid": "native:0.85:port:c",
+  "profile": "native",
+  "font": "0.85",
+  "orient": "port",
+  "screen": "mode-chooser",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "native-f0.85-port-c-mode-chooser.jpg",
+  "detail": "tapped in-app mode control at 585,954 after 0 swipes"
+ },
+ {
+  "cid": "native:0.85:port:d",
+  "profile": "native",
+  "font": "0.85",
+  "orient": "port",
+  "screen": "approval",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "native-f0.85-port-d-approval.jpg",
+  "detail": "lowered: tapped in-app mode control at 585,954 after 0 swipes; tapped 'privacy' row of th; POST /mode full -> pending; prompt seen=True"
+ },
+ {
+  "cid": "native:1.0:land:a",
+  "profile": "native",
+  "font": "1.0",
+  "orient": "land",
+  "screen": "idle",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "native-f1.0-land-a-idle.jpg",
+  "detail": "status line '● Idle · Ready', expected Idle"
+ },
+ {
+  "cid": "native:1.0:land:b",
+  "profile": "native",
+  "font": "1.0",
+  "orient": "land",
+  "screen": "monitoring",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "native-f1.0-land-b-monitoring.jpg",
+  "detail": "after rotation"
+ },
+ {
+  "cid": "native:1.0:land:c",
+  "profile": "native",
+  "font": "1.0",
+  "orient": "land",
+  "screen": "mode-chooser",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "native-f1.0-land-c-mode-chooser.jpg",
+  "detail": "tapped in-app mode control at 1191,606 after 0 swipes"
+ },
+ {
+  "cid": "native:1.0:land:d",
+  "profile": "native",
+  "font": "1.0",
+  "orient": "land",
+  "screen": "approval",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "native-f1.0-land-d-approval.jpg",
+  "detail": "prompt seen=True"
+ },
+ {
+  "cid": "native:1.0:port:a",
+  "profile": "native",
+  "font": "1.0",
+  "orient": "port",
+  "screen": "idle",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "native-f1.0-port-a-idle.jpg",
+  "detail": "status line '● Idle · Ready', expected Idle"
+ },
+ {
+  "cid": "native:1.0:port:b",
+  "profile": "native",
+  "font": "1.0",
+  "orient": "port",
+  "screen": "monitoring",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [
+   "Stop Monitoring reachable after 0 swipe(s)"
+  ],
+  "shot": "native-f1.0-port-b-monitoring.jpg",
+  "detail": "backend connected=True, status line '● Live · Connected to Server'"
+ },
+ {
+  "cid": "native:1.0:port:c",
+  "profile": "native",
+  "font": "1.0",
+  "orient": "port",
+  "screen": "mode-chooser",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "native-f1.0-port-c-mode-chooser.jpg",
+  "detail": "tapped in-app mode control at 585,969 after 0 swipes"
+ },
+ {
+  "cid": "native:1.0:port:d",
+  "profile": "native",
+  "font": "1.0",
+  "orient": "port",
+  "screen": "approval",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "native-f1.0-port-d-approval.jpg",
+  "detail": "lowered: tapped in-app mode control at 585,969 after 0 swipes; tapped 'privacy' row of th; POST /mode full -> pending; prompt seen=True"
+ },
+ {
+  "cid": "native:1.0:port:dim",
+  "profile": "native",
+  "font": "1.0",
+  "orient": "port",
+  "screen": "station-dim",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "native-f1.0-port-dim-station.jpg",
+  "detail": "dim hides controls=True; tap wakes=True"
+ },
+ {
+  "cid": "native:1.0:rotate:r",
+  "profile": "native",
+  "font": "1.0",
+  "orient": "rotate",
+  "screen": "rotation",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "",
+  "detail": "events 439 -> 477; UI still monitoring=True; Stop Monitoring reached after 1 swipe(s)"
+ },
+ {
+  "cid": "native:1.3:port:a",
+  "profile": "native",
+  "font": "1.3",
+  "orient": "port",
+  "screen": "idle",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "native-f1.3-port-a-idle.jpg",
+  "detail": "status line '● Idle · Ready', expected Idle"
+ },
+ {
+  "cid": "native:1.3:port:b",
+  "profile": "native",
+  "font": "1.3",
+  "orient": "port",
+  "screen": "monitoring",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [
+   "Stop Monitoring reachable after 0 swipe(s)"
+  ],
+  "shot": "native-f1.3-port-b-monitoring.jpg",
+  "detail": "backend connected=True, status line '● Live · Connected to Server'"
+ },
+ {
+  "cid": "native:1.3:port:c",
+  "profile": "native",
+  "font": "1.3",
+  "orient": "port",
+  "screen": "mode-chooser",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "native-f1.3-port-c-mode-chooser.jpg",
+  "detail": "tapped in-app mode control at 585,1064 after 0 swipes"
+ },
+ {
+  "cid": "native:1.3:port:d",
+  "profile": "native",
+  "font": "1.3",
+  "orient": "port",
+  "screen": "approval",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "native-f1.3-port-d-approval.jpg",
+  "detail": "lowered: tapped in-app mode control at 585,1064 after 0 swipes; tapped 'privacy' row of t; POST /mode full -> pending; prompt seen=True"
+ },
+ {
+  "cid": "native:1.5:land:a",
+  "profile": "native",
+  "font": "1.5",
+  "orient": "land",
+  "screen": "idle",
+  "ok": true,
+  "offenders": [],
+  "warnings": [
+   "'Start Monitoring' is 326x47dp (target 48dp)"
+  ],
+  "notes": [],
+  "shot": "native-f1.5-land-a-idle.jpg",
+  "detail": "status line '● Idle · Ready', expected Idle"
+ },
+ {
+  "cid": "native:1.5:land:b",
+  "profile": "native",
+  "font": "1.5",
+  "orient": "land",
+  "screen": "monitoring",
+  "ok": true,
+  "offenders": [],
+  "warnings": [
+   "'Stop Monitoring' is 326x47dp (target 48dp)"
+  ],
+  "notes": [],
+  "shot": "native-f1.5-land-b-monitoring.jpg",
+  "detail": "after rotation"
+ },
+ {
+  "cid": "native:1.5:land:c",
+  "profile": "native",
+  "font": "1.5",
+  "orient": "land",
+  "screen": "mode-chooser",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [
+   "'🔇 Privacy\nBarks and behaviour only' partly scrolled out of view (visible 360x78dp), size not judged"
+  ],
+  "shot": "native-f1.5-land-c-mode-chooser.jpg",
+  "detail": "tapped in-app mode control at 1191,606 after 0 swipes"
+ },
+ {
+  "cid": "native:1.5:land:d",
+  "profile": "native",
+  "font": "1.5",
+  "orient": "land",
+  "screen": "approval",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "native-f1.5-land-d-approval.jpg",
+  "detail": "prompt seen=True"
+ },
+ {
+  "cid": "native:1.5:port:a",
+  "profile": "native",
+  "font": "1.5",
+  "orient": "port",
+  "screen": "idle",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "native-f1.5-port-a-idle.jpg",
+  "detail": "status line '● Idle · Ready', expected Idle"
+ },
+ {
+  "cid": "native:1.5:port:b",
+  "profile": "native",
+  "font": "1.5",
+  "orient": "port",
+  "screen": "monitoring",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [
+   "Stop Monitoring reachable after 0 swipe(s)"
+  ],
+  "shot": "native-f1.5-port-b-monitoring.jpg",
+  "detail": "backend connected=True, status line '● Live · Connected to Server'"
+ },
+ {
+  "cid": "native:1.5:port:c",
+  "profile": "native",
+  "font": "1.5",
+  "orient": "port",
+  "screen": "mode-chooser",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "native-f1.5-port-c-mode-chooser.jpg",
+  "detail": "tapped in-app mode control at 585,1147 after 0 swipes"
+ },
+ {
+  "cid": "native:1.5:port:d",
+  "profile": "native",
+  "font": "1.5",
+  "orient": "port",
+  "screen": "approval",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "native-f1.5-port-d-approval.jpg",
+  "detail": "lowered: tapped in-app mode control at 585,1147 after 0 swipes; tapped 'privacy' row of t; POST /mode full -> pending; prompt seen=True"
+ },
+ {
+  "cid": "native:1.5:rotate:r",
+  "profile": "native",
+  "font": "1.5",
+  "orient": "rotate",
+  "screen": "rotation",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "",
+  "detail": "events 441 -> 481; UI still monitoring=True; Stop Monitoring reached after 1 swipe(s)"
+ },
+ {
+  "cid": "small:0.85:port:a",
+  "profile": "small",
+  "font": "0.85",
+  "orient": "port",
+  "screen": "idle",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "small-f0.85-port-a-idle.jpg",
+  "detail": "status line '● Idle · Ready', expected Idle"
+ },
+ {
+  "cid": "small:0.85:port:b",
+  "profile": "small",
+  "font": "0.85",
+  "orient": "port",
+  "screen": "monitoring",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [
+   "Stop Monitoring reachable after 0 swipe(s)"
+  ],
+  "shot": "small-f0.85-port-b-monitoring.jpg",
+  "detail": "backend connected=True, status line '● Live · Connected to Server'"
+ },
+ {
+  "cid": "small:0.85:port:c",
+  "profile": "small",
+  "font": "0.85",
+  "orient": "port",
+  "screen": "mode-chooser",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "small-f0.85-port-c-mode-chooser.jpg",
+  "detail": "tapped in-app mode control at 388,774 after 0 swipes"
+ },
+ {
+  "cid": "small:0.85:port:d",
+  "profile": "small",
+  "font": "0.85",
+  "orient": "port",
+  "screen": "approval",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "small-f0.85-port-d-approval.jpg",
+  "detail": "lowered: tapped in-app mode control at 388,774 after 0 swipes; tapped 'privacy' row of th; POST /mode full -> pending; prompt seen=True"
+ },
+ {
+  "cid": "small:1.0:port:a",
+  "profile": "small",
+  "font": "1.0",
+  "orient": "port",
+  "screen": "idle",
+  "ok": true,
+  "offenders": [],
+  "warnings": [
+   "'Start Monitoring' is 162x47dp (target 48dp)"
+  ],
+  "notes": [
+   "'🔦 Light' partly scrolled out of view (visible 91x45dp), size not judged",
+   "'🔄 Flip' partly scrolled out of view (visible 91x45dp), size not judged",
+   "'🛡️ Full' partly scrolled out of view (visible 91x45dp), size not judged"
+  ],
+  "shot": "small-f1.0-port-a-idle.jpg",
+  "detail": "status line '● Idle · Ready', expected Idle"
+ },
+ {
+  "cid": "small:1.0:port:b",
+  "profile": "small",
+  "font": "1.0",
+  "orient": "port",
+  "screen": "monitoring",
+  "ok": true,
+  "offenders": [],
+  "warnings": [
+   "'Stop Monitoring' is 162x47dp (target 48dp)"
+  ],
+  "notes": [
+   "'🔦 Light' partly scrolled out of view (visible 91x45dp), size not judged",
+   "'🔄 Flip' partly scrolled out of view (visible 91x45dp), size not judged",
+   "'👁️ Full' partly scrolled out of view (visible 91x45dp), size not judged",
+   "Stop Monitoring reachable after 0 swipe(s)"
+  ],
+  "shot": "small-f1.0-port-b-monitoring.jpg",
+  "detail": "backend connected=True, status line '● Live · Connected to Server'"
+ },
+ {
+  "cid": "small:1.0:port:c",
+  "profile": "small",
+  "font": "1.0",
+  "orient": "port",
+  "screen": "mode-chooser",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "small-f1.0-port-c-mode-chooser.jpg",
+  "detail": "tapped in-app mode control at 388,820 after 0 swipes"
+ },
+ {
+  "cid": "small:1.0:port:d",
+  "profile": "small",
+  "font": "1.0",
+  "orient": "port",
+  "screen": "approval",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "small-f1.0-port-d-approval.jpg",
+  "detail": "lowered: tapped in-app mode control at 388,820 after 0 swipes; tapped 'privacy' row of th; POST /mode full -> pending; prompt seen=True"
+ },
+ {
+  "cid": "small:1.3:port:a",
+  "profile": "small",
+  "font": "1.3",
+  "orient": "port",
+  "screen": "idle",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "small-f1.3-port-a-idle.jpg",
+  "detail": "status line '● Idle · Ready', expected Idle"
+ },
+ {
+  "cid": "small:1.3:port:b",
+  "profile": "small",
+  "font": "1.3",
+  "orient": "port",
+  "screen": "monitoring",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [
+   "Stop Monitoring reachable after 0 swipe(s)"
+  ],
+  "shot": "small-f1.3-port-b-monitoring.jpg",
+  "detail": "backend connected=True, status line '● Live · Connected to Server'"
+ },
+ {
+  "cid": "small:1.3:port:c",
+  "profile": "small",
+  "font": "1.3",
+  "orient": "port",
+  "screen": "mode-chooser",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "small-f1.3-port-c-mode-chooser.jpg",
+  "detail": "tapped in-app mode control at 388,762 after 1 swipes"
+ },
+ {
+  "cid": "small:1.3:port:d",
+  "profile": "small",
+  "font": "1.3",
+  "orient": "port",
+  "screen": "approval",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "small-f1.3-port-d-approval.jpg",
+  "detail": "lowered: tapped in-app mode control at 388,762 after 0 swipes; tapped 'privacy' row of th; POST /mode full -> pending; prompt seen=True"
+ },
+ {
+  "cid": "small:1.5:port:a",
+  "profile": "small",
+  "font": "1.5",
+  "orient": "port",
+  "screen": "idle",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [
+   "'Start Monitoring' partly scrolled out of view (visible 162x16dp), size not judged",
+   "'🌙 Station Dim' partly scrolled out of view (visible 113x16dp), size not judged"
+  ],
+  "shot": "small-f1.5-port-a-idle.jpg",
+  "detail": "status line '● Idle · Ready', expected Idle"
+ },
+ {
+  "cid": "small:1.5:port:b",
+  "profile": "small",
+  "font": "1.5",
+  "orient": "port",
+  "screen": "monitoring",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [
+   "'Stop Monitoring' partly scrolled out of view (visible 162x16dp), size not judged",
+   "'🌙 Station Dim' partly scrolled out of view (visible 113x16dp), size not judged",
+   "Stop Monitoring reachable after 0 swipe(s)"
+  ],
+  "shot": "small-f1.5-port-b-monitoring.jpg",
+  "detail": "backend connected=True, status line '● Live · Connected to Server'"
+ },
+ {
+  "cid": "small:1.5:port:c",
+  "profile": "small",
+  "font": "1.5",
+  "orient": "port",
+  "screen": "mode-chooser",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [
+   "'⛔ Blackout\nNothing leaves the phone' partly scrolled out of view (visible 260x87dp), size not judged"
+  ],
+  "shot": "small-f1.5-port-c-mode-chooser.jpg",
+  "detail": "tapped in-app mode control at 388,762 after 1 swipes"
+ },
+ {
+  "cid": "small:1.5:port:d",
+  "profile": "small",
+  "font": "1.5",
+  "orient": "port",
+  "screen": "approval",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "small-f1.5-port-d-approval.jpg",
+  "detail": "lowered: tapped in-app mode control at 388,762 after 0 swipes; tapped 'privacy' row of th; POST /mode full -> pending; prompt seen=True"
+ },
+ {
+  "cid": "tablet:0.85:port:a",
+  "profile": "tablet",
+  "font": "0.85",
+  "orient": "port",
+  "screen": "idle",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "tablet-f0.85-port-a-idle.jpg",
+  "detail": "status line '● Idle · Ready', expected Idle"
+ },
+ {
+  "cid": "tablet:0.85:port:b",
+  "profile": "tablet",
+  "font": "0.85",
+  "orient": "port",
+  "screen": "monitoring",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [
+   "Stop Monitoring reachable after 0 swipe(s)"
+  ],
+  "shot": "tablet-f0.85-port-b-monitoring.jpg",
+  "detail": "backend connected=True, status line '● Live · Connected to Server'"
+ },
+ {
+  "cid": "tablet:0.85:port:c",
+  "profile": "tablet",
+  "font": "0.85",
+  "orient": "port",
+  "screen": "mode-chooser",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "tablet-f0.85-port-c-mode-chooser.jpg",
+  "detail": "tapped in-app mode control at 888,817 after 0 swipes"
+ },
+ {
+  "cid": "tablet:0.85:port:d",
+  "profile": "tablet",
+  "font": "0.85",
+  "orient": "port",
+  "screen": "approval",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "tablet-f0.85-port-d-approval.jpg",
+  "detail": "lowered: tapped in-app mode control at 888,817 after 0 swipes; tapped 'privacy' row of th; POST /mode full -> pending; prompt seen=True"
+ },
+ {
+  "cid": "tablet:1.0:land:a",
+  "profile": "tablet",
+  "font": "1.0",
+  "orient": "land",
+  "screen": "idle",
+  "ok": true,
+  "offenders": [],
+  "warnings": [
+   "'Start Monitoring' is 327x47dp (target 48dp)"
+  ],
+  "notes": [],
+  "shot": "tablet-f1.0-land-a-idle.jpg",
+  "detail": "status line '● Idle · Ready', expected Idle"
+ },
+ {
+  "cid": "tablet:1.0:land:b",
+  "profile": "tablet",
+  "font": "1.0",
+  "orient": "land",
+  "screen": "monitoring",
+  "ok": true,
+  "offenders": [],
+  "warnings": [
+   "'Stop Monitoring' is 327x47dp (target 48dp)"
+  ],
+  "notes": [],
+  "shot": "tablet-f1.0-land-b-monitoring.jpg",
+  "detail": "after rotation"
+ },
+ {
+  "cid": "tablet:1.0:land:c",
+  "profile": "tablet",
+  "font": "1.0",
+  "orient": "land",
+  "screen": "mode-chooser",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "tablet-f1.0-land-c-mode-chooser.jpg",
+  "detail": "tapped in-app mode control at 1301,767 after 0 swipes"
+ },
+ {
+  "cid": "tablet:1.0:land:d",
+  "profile": "tablet",
+  "font": "1.0",
+  "orient": "land",
+  "screen": "approval",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "tablet-f1.0-land-d-approval.jpg",
+  "detail": "prompt seen=True"
+ },
+ {
+  "cid": "tablet:1.0:port:a",
+  "profile": "tablet",
+  "font": "1.0",
+  "orient": "port",
+  "screen": "idle",
+  "ok": true,
+  "offenders": [],
+  "warnings": [
+   "'Start Monitoring' is 327x47dp (target 48dp)"
+  ],
+  "notes": [],
+  "shot": "tablet-f1.0-port-a-idle.jpg",
+  "detail": "status line '● Idle · Ready', expected Idle"
+ },
+ {
+  "cid": "tablet:1.0:port:b",
+  "profile": "tablet",
+  "font": "1.0",
+  "orient": "port",
+  "screen": "monitoring",
+  "ok": true,
+  "offenders": [],
+  "warnings": [
+   "'Stop Monitoring' is 327x47dp (target 48dp)"
+  ],
+  "notes": [
+   "Stop Monitoring reachable after 0 swipe(s)"
+  ],
+  "shot": "tablet-f1.0-port-b-monitoring.jpg",
+  "detail": "backend connected=True, status line '● Live · Connected to Server'"
+ },
+ {
+  "cid": "tablet:1.0:port:c",
+  "profile": "tablet",
+  "font": "1.0",
+  "orient": "port",
+  "screen": "mode-chooser",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "tablet-f1.0-port-c-mode-chooser.jpg",
+  "detail": "tapped in-app mode control at 888,829 after 0 swipes"
+ },
+ {
+  "cid": "tablet:1.0:port:d",
+  "profile": "tablet",
+  "font": "1.0",
+  "orient": "port",
+  "screen": "approval",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "tablet-f1.0-port-d-approval.jpg",
+  "detail": "lowered: tapped in-app mode control at 888,829 after 0 swipes; tapped 'privacy' row of th; POST /mode full -> pending; prompt seen=True"
+ },
+ {
+  "cid": "tablet:1.0:rotate:r",
+  "profile": "tablet",
+  "font": "1.0",
+  "orient": "rotate",
+  "screen": "rotation",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "",
+  "detail": "events 460 -> 498; UI still monitoring=True; Stop Monitoring reached after 0 swipe(s)"
+ },
+ {
+  "cid": "tablet:1.3:port:a",
+  "profile": "tablet",
+  "font": "1.3",
+  "orient": "port",
+  "screen": "idle",
+  "ok": true,
+  "offenders": [],
+  "warnings": [
+   "'Start Monitoring' is 327x47dp (target 48dp)"
+  ],
+  "notes": [],
+  "shot": "tablet-f1.3-port-a-idle.jpg",
+  "detail": "status line '● Idle · Ready', expected Idle"
+ },
+ {
+  "cid": "tablet:1.3:port:b",
+  "profile": "tablet",
+  "font": "1.3",
+  "orient": "port",
+  "screen": "monitoring",
+  "ok": true,
+  "offenders": [],
+  "warnings": [
+   "'Stop Monitoring' is 327x47dp (target 48dp)"
+  ],
+  "notes": [
+   "Stop Monitoring reachable after 0 swipe(s)"
+  ],
+  "shot": "tablet-f1.3-port-b-monitoring.jpg",
+  "detail": "backend connected=True, status line '● Live · Connected to Server'"
+ },
+ {
+  "cid": "tablet:1.3:port:c",
+  "profile": "tablet",
+  "font": "1.3",
+  "orient": "port",
+  "screen": "mode-chooser",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "tablet-f1.3-port-c-mode-chooser.jpg",
+  "detail": "tapped in-app mode control at 888,856 after 0 swipes"
+ },
+ {
+  "cid": "tablet:1.3:port:d",
+  "profile": "tablet",
+  "font": "1.3",
+  "orient": "port",
+  "screen": "approval",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "tablet-f1.3-port-d-approval.jpg",
+  "detail": "lowered: tapped in-app mode control at 888,856 after 0 swipes; tapped 'privacy' row of th; POST /mode full -> pending; prompt seen=True"
+ },
+ {
+  "cid": "tablet:1.5:land:a",
+  "profile": "tablet",
+  "font": "1.5",
+  "orient": "land",
+  "screen": "idle",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "tablet-f1.5-land-a-idle.jpg",
+  "detail": "status line '● Idle · Ready', expected Idle"
+ },
+ {
+  "cid": "tablet:1.5:land:b",
+  "profile": "tablet",
+  "font": "1.5",
+  "orient": "land",
+  "screen": "monitoring",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "tablet-f1.5-land-b-monitoring.jpg",
+  "detail": "after rotation"
+ },
+ {
+  "cid": "tablet:1.5:land:c",
+  "profile": "tablet",
+  "font": "1.5",
+  "orient": "land",
+  "screen": "mode-chooser",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "tablet-f1.5-land-c-mode-chooser.jpg",
+  "detail": "tapped in-app mode control at 1301,819 after 0 swipes"
+ },
+ {
+  "cid": "tablet:1.5:land:d",
+  "profile": "tablet",
+  "font": "1.5",
+  "orient": "land",
+  "screen": "approval",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "tablet-f1.5-land-d-approval.jpg",
+  "detail": "prompt seen=True"
+ },
+ {
+  "cid": "tablet:1.5:port:a",
+  "profile": "tablet",
+  "font": "1.5",
+  "orient": "port",
+  "screen": "idle",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "tablet-f1.5-port-a-idle.jpg",
+  "detail": "status line '● Idle · Ready', expected Idle"
+ },
+ {
+  "cid": "tablet:1.5:port:b",
+  "profile": "tablet",
+  "font": "1.5",
+  "orient": "port",
+  "screen": "monitoring",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [
+   "Stop Monitoring reachable after 0 swipe(s)"
+  ],
+  "shot": "tablet-f1.5-port-b-monitoring.jpg",
+  "detail": "backend connected=True, status line '● Live · Connected to Server'"
+ },
+ {
+  "cid": "tablet:1.5:port:c",
+  "profile": "tablet",
+  "font": "1.5",
+  "orient": "port",
+  "screen": "mode-chooser",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "tablet-f1.5-port-c-mode-chooser.jpg",
+  "detail": "tapped in-app mode control at 888,881 after 0 swipes"
+ },
+ {
+  "cid": "tablet:1.5:port:d",
+  "profile": "tablet",
+  "font": "1.5",
+  "orient": "port",
+  "screen": "approval",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "tablet-f1.5-port-d-approval.jpg",
+  "detail": "lowered: tapped in-app mode control at 888,881 after 0 swipes; tapped 'privacy' row of th; POST /mode full -> pending; prompt seen=True"
+ },
+ {
+  "cid": "tablet:1.5:rotate:r",
+  "profile": "tablet",
+  "font": "1.5",
+  "orient": "rotate",
+  "screen": "rotation",
+  "ok": true,
+  "offenders": [],
+  "warnings": [],
+  "notes": [],
+  "shot": "",
+  "detail": "events 460 -> 499; UI still monitoring=True; Stop Monitoring reached after 0 swipe(s)"
+ }
+]

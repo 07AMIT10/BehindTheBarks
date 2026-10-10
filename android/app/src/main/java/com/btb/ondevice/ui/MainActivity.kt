@@ -22,6 +22,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -239,6 +240,8 @@ class MainActivity : Activity() {
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
+            // Keep the first and last controls clear of the status bar and navigation bar (edge to edge).
+            fitsSystemWindows = true
             isVerticalScrollBarEnabled = true
             addView(centredColumn, FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -311,7 +314,8 @@ class MainActivity : Activity() {
         urlActionsRow.addView(pairQrBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
 
         // The paired household, and a way out of it.
-        val householdRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(0), dp(8), dp(0), dp(0)) }
+        // Stacked, not side by side: a wrapping label beside a weighted button is cut off at large font sizes.
+        val householdRow = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(0), dp(8), dp(0), dp(0)) }
         val householdLabel = TextView(this).apply { textSize = 11f }
         val unpairBtn = Button(this).apply {
             text = "Unpair"
@@ -320,7 +324,7 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             setOnClickListener { unpairStation() }
         }
-        householdRow.addView(householdLabel, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        householdRow.addView(householdLabel, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         householdRow.addView(unpairBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         householdRef = householdLabel
         refreshHouseholdLabel()
@@ -584,6 +588,18 @@ class MainActivity : Activity() {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
 
+    /** The framework's AlertDialog buttons are 36dp tall; the touch target is 48dp. */
+    private fun sizeDialogButtons(dialog: AlertDialog) {
+        for (which in intArrayOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL)) {
+            dialog.getButton(which)?.let { button ->
+                button.minHeight = dp(MIN_TOUCH_DP)
+                button.minWidth = dp(MIN_TOUCH_DP)
+            }
+        }
+    }
+
+    private fun AlertDialog.Builder.showSized(): AlertDialog = show().also { sizeDialogButtons(it) }
+
     /** Every tappable control is at least 48dp in both directions (the Material touch target). */
     private fun enforceTouchTargets(view: View) {
         if (view is Button || view is EditText || view.isClickable) {
@@ -661,7 +677,7 @@ class MainActivity : Activity() {
                         if (applyToken) prefs.edit().putString(KEY_TOKEN, linkToken).apply()
                     }
                     .setNegativeButton("Ignore", null)
-                    .show()
+                    .showSized()
             }
         }
 
@@ -843,7 +859,7 @@ class MainActivity : Activity() {
                 } catch (_: Exception) {}
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .showSized()
     }
 
     private fun checkPermissionsAndStart() {
@@ -882,7 +898,7 @@ class MainActivity : Activity() {
                             }
                         }
                         .setNegativeButton("Later", null)
-                        .show()
+                        .showSized()
                 }
             }
         }
@@ -895,7 +911,7 @@ class MainActivity : Activity() {
                 .setTitle("🐾 Station Setup Tip")
                 .setMessage("Android disables camera hardware when the physical power button is pressed.\n\nInstead, tap '🌙 Station Dim' — it turns the screen pitch-black to save power while keeping the camera live.")
                 .setPositiveButton("Got it!", null)
-                .show()
+                .showSized()
         }
     }
 
@@ -921,7 +937,7 @@ class MainActivity : Activity() {
                 }
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .showSized()
     }
 
     private fun showCloudPrompt() {
@@ -952,7 +968,7 @@ class MainActivity : Activity() {
                 }
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .showSized()
     }
 
     private fun handlePaste() {
@@ -1162,16 +1178,21 @@ class MainActivity : Activity() {
             "👁️ Full\nLive video",
         )
         val current = monitorService?.effectiveMode() ?: com.btb.ondevice.capture.ViewMode.FULL
+        // Each row is a touch target of at least 48dp (the framework rows are only about 40dp at large fonts).
+        val rows = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_single_choice, labels) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View =
+                super.getView(position, convertView, parent).also { it.minimumHeight = dp(MIN_TOUCH_DP) }
+        }
         android.app.AlertDialog.Builder(this)
             .setTitle("What may be shared?")
-            .setSingleChoiceItems(labels, modes.indexOf(current)) { dialog, which ->
+            .setSingleChoiceItems(rows, modes.indexOf(current)) { dialog, which ->
                 monitorService?.setStationCapFromDevice(modes[which])
                 updatePrivacyButton(modes[which] == com.btb.ondevice.capture.ViewMode.BLACKOUT)
                 setModeButton(modes[which])
                 dialog.dismiss()
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .showSized()
     }
 
     private fun modeButtonLabel(mode: com.btb.ondevice.capture.ViewMode): String = when (mode) {
@@ -1229,7 +1250,10 @@ class MainActivity : Activity() {
             .setNegativeButton("Keep private") { _, _ -> monitorService?.keepPendingPrivate() }
             .setCancelable(false)
             .create()
-            .also { it.show() }
+            .also {
+                it.show()
+                sizeDialogButtons(it)
+            }
     }
 
     private fun dismissApprovalDialog() {

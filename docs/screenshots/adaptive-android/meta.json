@@ -1,0 +1,15 @@
+{
+ "when": "2026-10-11 03:20",
+ "commit": "the commit that adds this matrix, on top of d15fb0a (layout and accessibility) and c356fb3 (harness)",
+ "device": "SM-E075F (Galaxy A07), Android 16, serial R9ZY80PKWTW; physical 720x1600 @300",
+ "notes": [
+  "Found and fixed (android/ui): the framework AlertDialog buttons were 36dp tall (approval prompt, Station tips, mode chooser Cancel), now 48dp; mode chooser rows were 25-41dp at large fonts, now at least 48dp; the household label beside the Unpair button was cut off at font 1.5 (now stacked); the controls column is a ScrollView capped at 600dp and centred, so tablets and landscape scroll instead of cropping; the scroll view respects the status and navigation bars (fitsSystemWindows); every button and EditText has a 48dp minimum.",
+  "Rotation: the activity is recreated by a rotation. The service keeps monitoring (backend connected and running, events increasing, the UI reattaches and still shows Stop Monitoring). Checked in four rotations (native and tablet, font 1.0 and 1.5).",
+  "Landscape: the controls are taller than the 384dp-high screen at native and tablet-like sizes, so they scroll. Stop Monitoring and the mode control are reached by a swipe (0 to 1 swipes in the matrix); uiautomator lists only what is on screen, so the matrix scrolls to a control before it taps.",
+  "Warnings: Start Monitoring and Stop Monitoring measure 47dp in the dump at some profiles (one pixel below the 48dp target, above the 44dp floor). Not changed; the minimum is set to 48dp in code.",
+  "Clipping was judged from the screenshots (the dump always carries the full text). Viewed by hand: small 1.5 monitoring and mode chooser, tablet landscape 1.5 approval, native landscape 1.5 monitoring. In the small 1.5 chooser the first row (Blackout) is partly under the list's top edge until the list scrolls; it is reachable by scrolling.",
+  "Pruned: landscape runs only at font 1.0 and 1.5 for native and tablet-like (16 portrait configurations cover every profile and font scale; 4 landscape configurations).",
+  "Station Dim: native, font 1.0, portrait. The dim overlay hides the controls and a tap restores them (dim check cell).",
+  "Dialog cells (c, d) judge only the dialog panel: the main window under a modal dialog is covered and is not judged."
+ ]
+}
