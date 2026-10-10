@@ -49,7 +49,7 @@ export default function StatusBar({ connected, everConnected, reconnectAttempt, 
         )}
       </div>
       {Boolean(status?.pipeline_status?.torch) && (
-        <div className="flex items-center gap-1.5 rounded-full bg-yellow-500/10 px-2 py-0.5 text-[11px] font-semibold text-yellow-300 border border-yellow-500/30">
+        <div className="flex items-center gap-1.5 rounded-full bg-yellow-500/10 px-2 py-0.5 text-[12px] font-semibold text-yellow-300 border border-yellow-500/30">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2v1"/><path d="M12 7a5 5 0 0 0-5 5c0 2 1.5 3.5 2.5 4.5.5.5.5 1.5.5 1.5h4s0-1 .5-1.5c1-1 2.5-2.5 2.5-4.5a5 5 0 0 0-5-5z"/></svg>
           Light ON
         </div>
@@ -64,7 +64,7 @@ export default function StatusBar({ connected, everConnected, reconnectAttempt, 
             <button key={m} type="button" aria-pressed={active} disabled={disabled || active}
               title={m === "demo" && !demoAvailable ? "Demo mode arrives with the demo clips" : undefined}
               onClick={() => onMode?.(m)}
-              className={`flex h-7 items-center gap-1.5 rounded-sm px-3 text-[12px] font-semibold ${active ? "bg-surface text-text shadow-sm" : "text-muted"} disabled:cursor-default ${disabled && !active ? "opacity-50" : ""}`}>
+              className={`flex h-11 md:h-8 items-center gap-1.5 rounded-sm px-3 text-[12px] font-semibold ${active ? "bg-surface text-text shadow-sm" : "text-muted"} disabled:cursor-default ${disabled && !active ? "opacity-50" : ""}`}>
               {m === "live" && <span className="h-1.5 w-1.5 rounded-full" style={{ background: "var(--accent)" }} />}
               {m === "live" ? "Live" : "Demo"}
             </button>

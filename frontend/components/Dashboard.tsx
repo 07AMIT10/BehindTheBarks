@@ -154,7 +154,7 @@ export default function Dashboard() {
             type="button"
             onClick={() => { setPairOpenCount((n) => n + 1); setIsPairingOpen(true); mintPairing("station"); }}
             title="Pair Phone Station"
-            className="flex h-9 items-center gap-1.5 px-3 rounded-lg border border-accent/40 bg-accent/10 text-accent hover:bg-accent/20 text-xs font-semibold transition-colors"
+            className="flex h-11 md:h-9 min-w-11 md:min-w-0 items-center gap-1.5 px-3 rounded-lg border border-accent/40 bg-accent/10 text-accent-ink hover:bg-accent/20 text-xs font-semibold transition-colors"
           >
             <span>📱</span>
             <span className="hidden sm:inline">
@@ -166,7 +166,7 @@ export default function Dashboard() {
             onClick={() => setProfileOpen((n) => (n ?? 0) + 1)}
             title="Edit pet profile"
             aria-label="Edit pet profile"
-            className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
+            className="flex h-11 w-11 md:h-9 md:w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
           </button>
@@ -177,7 +177,7 @@ export default function Dashboard() {
                 onClick={() => setMembersOpen(true)}
                 title="Household members"
                 aria-label="Household members"
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
+                className="flex h-11 w-11 md:h-9 md:w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
               </button>
@@ -186,7 +186,7 @@ export default function Dashboard() {
                 onClick={() => setDeleteOpen(true)}
                 title="Delete household"
                 aria-label="Delete household"
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-red-500/40 text-red-300 hover:text-white transition-colors"
+                className="flex h-11 w-11 md:h-9 md:w-9 items-center justify-center rounded-lg border border-red-500/40 text-red-300 hover:text-white transition-colors"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
               </button>
@@ -195,7 +195,7 @@ export default function Dashboard() {
                 onClick={() => void logoutHousehold()}
                 title="Sign out"
                 aria-label="Sign out"
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
+                className="flex h-11 w-11 md:h-9 md:w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></svg>
               </button>
@@ -206,7 +206,7 @@ export default function Dashboard() {
               type="button"
               onClick={logout}
               title="Lock Dashboard / Sign out"
-              className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
+              className="flex h-11 w-11 md:h-9 md:w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
@@ -227,7 +227,7 @@ export default function Dashboard() {
 
             return (
               <div
-                className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-mono transition-colors ${
+                className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[12px] font-mono transition-colors ${
                   activeBClass === "critical"
                     ? "border-red-500/40 bg-red-500/20 text-red-400 font-semibold"
                     : activeBClass === "low"
@@ -277,7 +277,7 @@ export default function Dashboard() {
               onClick={() => setDebugOpen(true)}
               title="Diagnostics & Debug Mode"
               aria-label="Diagnostics & Debug Mode"
-              className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
+              className="flex h-11 w-11 md:h-9 md:w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
             >
               <svg
                 width="16"
@@ -315,7 +315,7 @@ export default function Dashboard() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="text-body font-bold text-text">Household Cameras</span>
-                <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-semibold text-muted">
+                <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[12px] font-semibold text-muted">
                   {stations.length}
                 </span>
               </div>
@@ -358,7 +358,7 @@ export default function Dashboard() {
                   setShowGrid(true);
                   backend.reportFocus(undefined, "grid");
                 }}
-                className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1 text-small font-semibold text-text hover:bg-surface-2 transition-colors"
+                className="flex min-h-11 md:min-h-8 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1 text-small font-semibold text-text hover:bg-surface-2 transition-colors"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" />
@@ -410,7 +410,7 @@ export default function Dashboard() {
           {/* Phones get a disclosure for the timeline; desktop shows it inline. */}
           <div id="timeline">
             <button type="button" aria-expanded={timelineOpen} onClick={() => setTimelineOpen((v) => !v)}
-              className="mb-2 flex w-full items-center justify-between rounded-md border border-border bg-surface px-4 py-2.5 text-small font-semibold text-text lg:hidden">
+              className="mb-2 flex min-h-11 w-full items-center justify-between rounded-md border border-border bg-surface px-4 py-2.5 text-small font-semibold text-text lg:hidden">
               Timeline
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
                 style={{ transform: timelineOpen ? "rotate(180deg)" : "none" }}>

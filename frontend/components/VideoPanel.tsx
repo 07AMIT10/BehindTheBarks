@@ -35,7 +35,7 @@ type Props = {
   station?: string;
 };
 
-const chip = "flex h-[30px] items-center rounded-lg px-3 text-[12px]";
+const chip = "flex h-11 md:h-8 items-center rounded-lg px-3 text-[12px]";
 const scrim = { background: "var(--overlay-scrim)" };
 
 export default function VideoPanel({
@@ -265,8 +265,8 @@ export default function VideoPanel({
     return (
       <section aria-label="Live video of the feeding area"
         className="relative h-full min-h-0 overflow-hidden rounded-xl bg-[#1B1D1F] sm:min-h-[320px] lg:min-h-[480px]">
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center text-[#D6D8DB]" data-testid="blackout-paused">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/5 text-[#9CA3AF] ring-1 ring-white/10">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 py-3 text-center text-[#D6D8DB] sm:gap-3 sm:p-6" data-testid="blackout-paused">
+          <div className="hidden h-14 w-14 items-center justify-center rounded-2xl bg-white/5 text-[#9CA3AF] ring-1 ring-white/10 sm:flex">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M2 8.5A2.5 2.5 0 0 1 4.5 6h2l1.6-2h7.8L17.5 6h2A2.5 2.5 0 0 1 22 8.5v7A2.5 2.5 0 0 1 19.5 18h-15A2.5 2.5 0 0 1 2 15.5z" />
               <path d="M3 3l18 18" />
@@ -283,8 +283,8 @@ export default function VideoPanel({
     return (
       <section aria-label="Live video of the feeding area"
         className="relative h-full min-h-0 overflow-hidden rounded-xl bg-[#1B1D1F] sm:min-h-[320px] lg:min-h-[480px]">
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center text-[#D6D8DB]">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/5 text-[#9CA3AF] ring-1 ring-white/10">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 py-3 text-center text-[#D6D8DB] sm:gap-3 sm:p-6">
+          <div className="hidden h-14 w-14 items-center justify-center rounded-2xl bg-white/5 text-[#9CA3AF] ring-1 ring-white/10 sm:flex">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M2 8.5A2.5 2.5 0 0 1 4.5 6h2l1.6-2h7.8L17.5 6h2A2.5 2.5 0 0 1 22 8.5v7A2.5 2.5 0 0 1 19.5 18h-15A2.5 2.5 0 0 1 2 15.5z" />
               <path d="M3 3l18 18" />
@@ -296,7 +296,7 @@ export default function VideoPanel({
           </p>
           {onPair && (
             <button type="button" onClick={onPair}
-              className="mt-1 flex h-11 items-center gap-2 rounded-lg bg-accent px-4 text-[14px] font-bold text-accent-fg transition-colors hover:bg-accent/90 active:scale-95">
+              className="mt-1 flex h-11 shrink-0 items-center gap-2 rounded-lg bg-accent px-4 text-[14px] font-bold text-accent-fg transition-colors hover:bg-accent/90 active:scale-95">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
               Pair a phone
             </button>
@@ -349,8 +349,8 @@ export default function VideoPanel({
       )}
 
       {(effectiveMode === "blackout" || (privacyMode && !effectiveMode)) && (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 p-6 text-center text-[#D6D8DB]" style={{ background: "rgba(18, 20, 26, 0.9)", backdropFilter: "blur(12px)" }}>
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-red-500/10 text-red-400 ring-1 ring-red-500/30">
+        <div className="absolute inset-x-0 top-0 bottom-14 z-10 flex flex-col items-center justify-center gap-2 px-4 py-3 text-center text-[#D6D8DB] sm:inset-0 sm:gap-3 sm:p-6" style={{ background: "rgba(18, 20, 26, 0.9)", backdropFilter: "blur(12px)" }}>
+          <div className="hidden h-14 w-14 items-center justify-center rounded-2xl bg-red-500/10 text-red-400 ring-1 ring-red-500/30 sm:flex">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           </div>
           <div className="text-lg font-bold text-white">Blackout Active</div>
@@ -358,15 +358,15 @@ export default function VideoPanel({
             Live camera preview & microphone are muted at the station. Tap below to adjust.
           </p>
           <button type="button" onClick={() => (onSetMode ? setModeSheetOpen(true) : onTogglePrivacy?.())}
-            className="mt-1 rounded-lg bg-red-600/80 px-4 py-1.5 text-xs font-semibold text-white shadow-lg hover:bg-red-500 transition-colors active:scale-95">
+            className="mt-1 flex min-h-11 items-center rounded-lg bg-red-600/80 px-4 py-1.5 text-xs font-semibold text-white shadow-lg hover:bg-red-500 transition-colors active:scale-95 md:min-h-8">
             {onSetMode ? "Change Mode" : "Resume Monitoring"}
           </button>
         </div>
       )}
 
       {effectiveMode === "privacy" && (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 p-6 text-center text-[#D6D8DB]" style={{ background: "rgba(18, 20, 26, 0.9)", backdropFilter: "blur(12px)" }}>
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-400 ring-1 ring-amber-500/30">
+        <div className="absolute inset-x-0 top-0 bottom-14 z-10 flex flex-col items-center justify-center gap-2 px-4 py-3 text-center text-[#D6D8DB] sm:inset-0 sm:gap-3 sm:p-6" style={{ background: "rgba(18, 20, 26, 0.9)", backdropFilter: "blur(12px)" }}>
+          <div className="hidden h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-400 ring-1 ring-amber-500/30 sm:flex">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24M1 1l22 22"/></svg>
           </div>
           <div className="text-lg font-bold text-white">Privacy Mode Active</div>
@@ -374,7 +374,7 @@ export default function VideoPanel({
             Telemetry, barks, and behavior analysis active. Optical room video is disabled.
           </p>
           <button type="button" onClick={() => (onSetMode ? setModeSheetOpen(true) : onTogglePrivacy?.())}
-            className="mt-1 rounded-lg bg-amber-600/80 px-4 py-1.5 text-xs font-semibold text-white shadow-lg hover:bg-amber-500 transition-colors active:scale-95">
+            className="mt-1 flex min-h-11 items-center rounded-lg bg-amber-600/80 px-4 py-1.5 text-xs font-semibold text-white md:min-h-8 shadow-lg hover:bg-amber-500 transition-colors active:scale-95">
             Change Mode
           </button>
         </div>
@@ -407,7 +407,7 @@ export default function VideoPanel({
       )}
 
       {(paused || !videoOk) && !privacyMode && !watchdogPaused && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center text-[#D6D8DB]" style={scrim}>
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 py-3 text-center text-[#D6D8DB] sm:gap-3 sm:p-6" style={scrim}>
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#7FE3E8" strokeWidth="2" strokeLinecap="round"
             style={{ animation: "spin 1.2s linear infinite" }} aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
           <div className="text-heading font-semibold text-white">{dropped ? "Reconnecting to camera…" : paused ? "Reconnecting…" : "Waiting for video…"}</div>
@@ -418,13 +418,13 @@ export default function VideoPanel({
       {/* Top status bar: Live indicator + Rotate button + Dog status */}
       <div className="absolute inset-x-3 top-3 flex items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-          <div className={`${chip} gap-1.5 sm:gap-2 font-bold tracking-[0.06em] text-white text-[11px] sm:text-[12px]`} style={scrim}>
+          <div className={`${chip} gap-1.5 sm:gap-2 font-bold tracking-[0.06em] text-white text-[12px] sm:text-[12px]`} style={scrim}>
             <span className="h-2 w-2 rounded-full" style={{ background: "var(--live)" }} />LIVE
             <span className="font-mono font-normal tracking-normal text-[#D6D8DB]">{hhmmss(nowSec)}</span>
           </div>
-          <div className={`${chip} text-[#D6D8DB] text-[11px] sm:text-[12px] hidden sm:flex`} style={scrim}>{location} · bowl cam</div>
+          <div className={`${chip} text-[#D6D8DB] text-[12px] sm:text-[12px] hidden sm:flex`} style={scrim}>{location} · bowl cam</div>
           {noDog && (
-            <div className={`${chip} gap-1 text-white text-[11px] sm:text-[12px]`} style={scrim}>
+            <div className={`${chip} gap-1 text-white text-[12px] sm:text-[12px]`} style={scrim}>
               No dog in view{lastDogTs && <span className="font-mono text-[#A0A5AD]">· {durationLabel(nowSec - lastDogTs)}</span>}
             </div>
           )}
@@ -435,7 +435,7 @@ export default function VideoPanel({
             type="button"
             onClick={rotateVideo}
             title={`Rotate stream 90° clockwise (current: ${rotation}°)`}
-            className="flex h-[30px] items-center gap-1.5 rounded-lg px-2.5 text-[11px] sm:text-[12px] font-semibold text-[#D6D8DB] hover:text-white transition-all active:scale-95 border border-white/10"
+            className="flex h-11 md:h-8 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-semibold text-[#D6D8DB] hover:text-white transition-all active:scale-95 border border-white/10"
             style={scrim}
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -447,8 +447,8 @@ export default function VideoPanel({
       </div>
 
       {/* Bottom controls bar: responsive and mobile-adaptive */}
-      <div className="absolute inset-x-2 bottom-2 flex flex-wrap items-center justify-between gap-1.5 sm:inset-x-4 sm:bottom-4 sm:gap-2">
-        <div className={`${chip} hidden gap-2 text-[#D6D8DB] text-[11px] sm:text-[12px] sm:flex`} style={scrim}>
+      <div className="absolute inset-x-2 bottom-2 z-20 flex flex-wrap items-center justify-between gap-1.5 sm:inset-x-4 sm:bottom-4 sm:gap-2">
+        <div className={`${chip} hidden gap-2 text-[#D6D8DB] text-[12px] sm:text-[12px] sm:flex`} style={scrim}>
           <span>Pose {kp} kp</span>
           <span>Face {facePts} pts</span>
         </div>
@@ -456,18 +456,18 @@ export default function VideoPanel({
         <div className="flex flex-wrap items-center gap-1.5">
           <div role="group" aria-label="Camera controls" className="hidden gap-0.5 rounded-md p-1 sm:flex" style={scrim}>
             <button type="button" onClick={takeSnapshot} title="Save instant photo"
-              className="flex h-[28px] sm:h-[30px] items-center gap-1 rounded-sm px-2 sm:px-2.5 text-[11px] sm:text-[12px] font-semibold text-[#D6D8DB] hover:text-white transition-colors active:scale-95">
+              className="flex h-11 md:h-8 items-center gap-1 rounded-sm px-2 sm:px-2.5 text-[12px] sm:text-[12px] font-semibold text-[#D6D8DB] hover:text-white transition-colors active:scale-95">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
               <span className="hidden sm:inline">Photo</span>
             </button>
             <button type="button" aria-pressed={torchOn} onClick={toggleTorch} title={torchOn ? "Turn off room light" : "Turn on room light"}
-              className="flex h-[28px] sm:h-[30px] items-center gap-1 rounded-sm px-2 sm:px-2.5 text-[11px] sm:text-[12px] font-semibold transition-all active:scale-95"
+              className="flex h-11 md:h-8 items-center gap-1 rounded-sm px-2 sm:px-2.5 text-[12px] sm:text-[12px] font-semibold transition-all active:scale-95"
               style={torchOn ? { background: "rgba(255, 235, 59, 0.22)", color: "#FFF59D", boxShadow: "0 0 8px rgba(255, 235, 59, 0.35)" } : { color: "#A0A5AD" }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2v1"/><path d="M12 7a5 5 0 0 0-5 5c0 2 1.5 3.5 2.5 4.5.5.5.5 1.5.5 1.5h4s0-1 .5-1.5c1-1 2.5-2.5 2.5-4.5a5 5 0 0 0-5-5z"/></svg>
               <span>{torchOn ? "Light ON" : "Light"}</span>
             </button>
             <button type="button" onClick={flipCamera} disabled={flipping} title="Switch between front and back camera"
-              className="flex h-[28px] sm:h-[30px] items-center gap-1 rounded-sm px-2 sm:px-2.5 text-[11px] sm:text-[12px] font-semibold text-[#D6D8DB] hover:text-white transition-all active:scale-95 disabled:opacity-50">
+              className="flex h-11 md:h-8 items-center gap-1 rounded-sm px-2 sm:px-2.5 text-[12px] sm:text-[12px] font-semibold text-[#D6D8DB] hover:text-white transition-all active:scale-95 disabled:opacity-50">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.0 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.0 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
               <span className="hidden sm:inline">Flip</span>
             </button>
@@ -476,7 +476,7 @@ export default function VideoPanel({
                 type="button"
                 onClick={() => setModeSheetOpen(true)}
                 title={`Viewing mode: ${effectiveMode ?? "full"}. Click to change.`}
-                className="flex h-[28px] sm:h-[30px] items-center gap-1.5 rounded-sm px-2 sm:px-2.5 text-[11px] sm:text-[12px] font-semibold transition-all active:scale-95"
+                className="flex h-11 md:h-8 items-center gap-1.5 rounded-sm px-2 sm:px-2.5 text-[12px] sm:text-[12px] font-semibold transition-all active:scale-95"
                 style={
                   effectiveMode === "blackout"
                     ? { background: "rgba(239, 68, 68, 0.25)", color: "#FCA5A5", border: "1px solid rgba(239, 68, 68, 0.5)" }
@@ -493,7 +493,7 @@ export default function VideoPanel({
             ) : onTogglePrivacy ? (
               <button type="button" aria-pressed={privacyMode} onClick={onTogglePrivacy}
                 title={privacyMode ? "Disable Privacy Mode (Resume monitoring)" : "Enable Privacy Mode (Mute camera & mic)"}
-                className="flex h-[28px] sm:h-[30px] items-center gap-1 rounded-sm px-2 sm:px-2.5 text-[11px] sm:text-[12px] font-semibold transition-all active:scale-95"
+                className="flex h-11 md:h-8 items-center gap-1 rounded-sm px-2 sm:px-2.5 text-[12px] sm:text-[12px] font-semibold transition-all active:scale-95"
                 style={privacyMode ? { background: "rgba(239, 68, 68, 0.25)", color: "#FCA5A5", border: "1px solid rgba(239, 68, 68, 0.5)" } : { color: "#A0A5AD" }}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                 <span>{privacyMode ? "Privacy ON" : "Privacy"}</span>
@@ -504,7 +504,7 @@ export default function VideoPanel({
           <div role="group" aria-label="Overlay layers" className="hidden gap-0.5 rounded-md p-1 sm:flex" style={scrim}>
             {(["box", "skeleton", "face"] as const).map((k) => (
               <button key={k} type="button" aria-pressed={layers[k]} onClick={() => toggle(k)}
-                className="h-[28px] sm:h-[30px] rounded-sm px-2 sm:px-2.5 text-[11px] sm:text-[12px] font-semibold transition-colors"
+                className="h-11 md:h-8 rounded-sm px-2 sm:px-2.5 text-[12px] font-semibold transition-colors"
                 style={layers[k] ? { background: "rgba(127,227,232,.18)", color: "#BFF2F4" } : { color: "#A0A5AD" }}>
                 {k === "box" ? "Box" : k === "skeleton" ? "Skel" : "Face"}
               </button>

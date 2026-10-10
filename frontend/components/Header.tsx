@@ -11,17 +11,17 @@ function Logo({ size }: { size: number }) {
 
 export default function Header({ dogName, location, children }: Props) {
   return (
-    <header className="flex h-[52px] items-center gap-3 lg:h-12 lg:gap-6">
+    <header className="flex h-[52px] items-center gap-2 lg:h-12 lg:gap-6">
       <div className="hidden items-center gap-3 lg:flex">
         <Logo size={32} />
         <div className="flex flex-col">
           <div className="text-[19px] font-bold tracking-[-0.01em] leading-tight text-text">WagWatch</div>
-          <div className="text-[11px] font-medium text-accent tracking-wide uppercase">Behind The Barks</div>
+          <div className="text-[12px] font-medium text-accent tracking-wide uppercase">Behind The Barks</div>
         </div>
       </div>
       <div className="hidden h-7 w-px bg-border lg:block" />
       <div className="flex items-center gap-2 lg:hidden"><Logo size={28} /></div>
-      <div className="flex min-w-0 flex-col gap-0.5">
+      <div className="flex min-w-[6.5rem] flex-1 flex-col gap-0.5 lg:min-w-0 lg:flex-none">
         <div className="truncate text-heading font-bold lg:text-body lg:font-semibold text-text">{dogName}</div>
         <div className="truncate text-[12px] text-muted lg:text-small">
           {location ? (
@@ -35,7 +35,7 @@ export default function Header({ dogName, location, children }: Props) {
         </div>
       </div>
       <div className="grow" />
-      <div className="flex items-center gap-2">{children}</div>
+      <div className="flex max-w-[55%] items-center gap-1.5 overflow-x-auto p-1 [&>*]:shrink-0 lg:max-w-none lg:gap-2 lg:overflow-visible lg:p-0">{children}</div>
     </header>
   );
 }

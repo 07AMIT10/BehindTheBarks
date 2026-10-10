@@ -36,7 +36,7 @@ export default function ToastStack({ toasts, onDismiss, onView }: Props) {
                 <div className="flex items-baseline gap-2">
                   <div className="min-w-0 grow truncate text-[14px] font-bold">
                     {t.emotion ? <>{words.join(" ")} <span style={{ color: `var(--${t.emotion}-fg)` }}>{last}</span></> : t.title}
-                    {t.count > 1 && <span className="ml-1.5 rounded-full bg-surface-2 px-1.5 text-[11px] font-semibold text-muted">×{t.count}</span>}
+                    {t.count > 1 && <span className="ml-1.5 rounded-full bg-surface-2 px-1.5 text-[12px] font-semibold text-muted">×{t.count}</span>}
                   </div>
                   <div className="font-mono text-[12px] text-muted">{hhmm(t.ts)}</div>
                 </div>
@@ -44,8 +44,8 @@ export default function ToastStack({ toasts, onDismiss, onView }: Props) {
                 {line && <div className="text-[12px] text-muted" title={t.detail}>{line}</div>}
                 {t.kind === "negative" && (
                   <div className="mt-1.5 flex gap-2">
-                    <button type="button" onClick={() => onView(t.ts)} className="h-8 rounded-sm bg-accent px-3 text-[12px] font-semibold text-accent-fg">View moment</button>
-                    <button type="button" onClick={() => onDismiss(t.id)} className="h-8 rounded-sm border border-border px-3 text-[12px] font-semibold text-text">Dismiss</button>
+                    <button type="button" onClick={() => onView(t.ts)} className="h-11 md:h-8 rounded-sm bg-accent px-3 text-[12px] font-semibold text-accent-fg">View moment</button>
+                    <button type="button" onClick={() => onDismiss(t.id)} className="h-11 md:h-8 rounded-sm border border-border px-3 text-[12px] font-semibold text-text">Dismiss</button>
                   </div>
                 )}
               </div>

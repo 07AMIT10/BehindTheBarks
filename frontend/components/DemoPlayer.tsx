@@ -89,7 +89,7 @@ function DemoPlayerInner({ http, meta, dogName }: Props) {
             <video ref={videoRef} src={`${http}/demo/clips/${meta.id}/video`} controls playsInline preload="auto"
               className="absolute inset-0 h-full w-full object-contain" />
             <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
-            <div className="absolute left-4 top-4 flex h-[30px] items-center gap-2 rounded-lg px-3 text-[12px] font-bold tracking-[0.06em] text-white" style={{ background: "var(--overlay-scrim)" }}>
+            <div className="absolute left-4 top-4 flex h-11 md:h-8 items-center gap-2 rounded-lg px-3 text-[12px] font-bold tracking-[0.06em] text-white" style={{ background: "var(--overlay-scrim)" }}>
               <span className="h-2 w-2 rounded-full" style={{ background: "var(--live)" }} />DEMO
             </div>
           </section>
