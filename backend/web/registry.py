@@ -338,7 +338,11 @@ class HouseholdRegistry:
                     if lr.default_channel_id == sid:
                         lr.default_channel_id = next(iter(lr.channels.keys())) if lr.channels else None
 
-            busy = lr.stations > 0 or lr.viewers > 0 or lr.runtime.phone is not None or any(ch.runtime.phone is not None for ch in lr.channels.values())
+            # Explicit leases (lr.stations / lr.viewers) and live /ws subscribers keep a household
+            # alive; the subscriber count is what actually tracks an open dashboard.
+            busy = (lr.stations > 0 or lr.viewers > 0 or lr.hub.client_count > 0 or lr.runtime.phone is not None
+                    or any(ch.runtime.phone is not None or ch.hub.client_count > 0
+                           for ch in lr.channels.values()))
             if busy or now - lr.used_at <= self.idle_evict_s:
                 continue
             for ch in list(lr.channels.values()):

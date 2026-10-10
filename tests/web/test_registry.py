@@ -116,3 +116,16 @@ async def test_concurrent_first_requests_share_one_runtime(tmp_path):
     assert a is b
     assert reg.peek("hh-race") is a
     assert a.runtime._stopped is False
+
+
+async def test_a_household_with_a_connected_viewer_is_not_evicted(tmp_path):
+    """Idle eviction must not stop the runtime under an open /ws viewer: that socket would hang on
+    a dead hub while the dashboard shows stale data."""
+    reg, clock = make_registry(tmp_path)
+    lr = await reg.get("hh-watch")
+    q = lr.hub.subscribe(viewer_id="v1", role="viewer")
+    clock["t"] += 10_000.0  # far past idle_evict_s
+    assert await reg.evict_idle() == []
+    assert reg.peek("hh-watch") is lr
+    lr.hub.unsubscribe(q)
+    assert await reg.evict_idle() == ["hh-watch"]
