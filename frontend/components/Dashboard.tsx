@@ -9,6 +9,7 @@ import { spanAt } from "@/lib/timeline";
 import { useBackend } from "@/lib/useBackend";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useNow } from "@/lib/useNow";
+import { batteryDisplay, batteryLevelClass, isTelemetryStale } from "@/lib/battery";
 import AuthModal from "./AuthModal";
 import ClipList from "./ClipList";
 import DemoBanner from "./DemoBanner";
@@ -210,6 +211,61 @@ export default function Dashboard() {
               </svg>
             </button>
           )}
+          {(() => {
+            const focusedStationSummary = stations.find((st) => st.id === state.focusedStation);
+            const activeBatteryPct = focusedStationSummary?.phone?.battery_pct ?? focusedStationSummary?.battery ?? state.status?.phone?.battery_pct ?? null;
+            const activeIsCharging = Boolean(focusedStationSummary?.phone?.charging ?? state.status?.phone?.charging);
+            const activeLastAge = focusedStationSummary?.phone?.last_frame_age_s ?? state.status?.phone?.last_frame_age_s ?? null;
+            const activeIsStale = isTelemetryStale(activeLastAge);
+            const activeBClass = batteryLevelClass(activeBatteryPct, activeIsStale);
+            const activeBText = batteryDisplay(activeBatteryPct, activeIsStale);
+
+            if (activeBatteryPct === null && activeIsStale) return null;
+
+            return (
+              <div
+                className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-mono transition-colors ${
+                  activeBClass === "critical"
+                    ? "border-red-500/40 bg-red-500/20 text-red-400 font-semibold"
+                    : activeBClass === "low"
+                    ? "border-amber-500/40 bg-amber-500/20 text-amber-400 font-semibold"
+                    : "border-border bg-surface text-muted"
+                }`}
+                title={`Active station battery: ${activeBText}${activeIsCharging ? " (charging)" : ""}${activeIsStale ? " (stale)" : ""}`}
+              >
+                {activeIsCharging ? (
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    stroke="currentColor"
+                    strokeWidth="1"
+                    className="text-amber-400 animate-pulse"
+                    aria-label="Charging"
+                  >
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                  </svg>
+                ) : (
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <rect x="2" y="7" width="16" height="10" rx="2" ry="2" />
+                    <line x1="22" y1="11" x2="22" y2="13" />
+                  </svg>
+                )}
+                <span>{activeBText}</span>
+              </div>
+            );
+          })()}
           <ThemeToggle />
           <NotificationsBell notifications={state.notifications} dogName={profile.dog_name} onOpen={backend.readAll} />
         </Header>

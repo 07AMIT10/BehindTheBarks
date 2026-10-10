@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import type { StationSummary, StationView } from "@/lib/types";
 import { stationState } from "@/lib/phone";
+import { batteryDisplay, batteryLevelClass, isTelemetryStale } from "@/lib/battery";
 import EmotionIcon from "./EmotionIcon";
 
 type Props = {
@@ -72,25 +73,59 @@ export default function StationTile({
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
-          {station.battery !== null && station.battery !== undefined && (
-            <div className="flex items-center gap-1 rounded bg-black/20 px-1.5 py-0.5 text-[10px] font-mono text-muted">
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
+          {(() => {
+            const batteryPct = station.phone?.battery_pct ?? station.battery ?? null;
+            const isCharging = Boolean(station.phone?.charging);
+            const isStale = isTelemetryStale(station.phone?.last_frame_age_s);
+            const bClass = batteryLevelClass(batteryPct, isStale);
+            const bText = batteryDisplay(batteryPct, isStale);
+
+            if (batteryPct === null && isStale) return null;
+
+            return (
+              <div
+                className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-mono transition-colors ${
+                  bClass === "critical"
+                    ? "bg-red-500/20 text-red-400 font-semibold"
+                    : bClass === "low"
+                    ? "bg-amber-500/20 text-amber-400 font-semibold"
+                    : "bg-black/20 text-muted"
+                }`}
+                title={`Battery: ${bText}${isCharging ? " (charging)" : ""}${isStale ? " (stale)" : ""}`}
               >
-                <rect x="2" y="7" width="16" height="10" rx="2" ry="2" />
-                <line x1="22" y1="11" x2="22" y2="13" />
-              </svg>
-              <span>{station.battery}%</span>
-            </div>
-          )}
+                {isCharging ? (
+                  <svg
+                    width="11"
+                    height="11"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    stroke="currentColor"
+                    strokeWidth="1"
+                    className="text-amber-400 animate-pulse"
+                    aria-label="Charging"
+                  >
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                  </svg>
+                ) : (
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <rect x="2" y="7" width="16" height="10" rx="2" ry="2" />
+                    <line x1="22" y1="11" x2="22" y2="13" />
+                  </svg>
+                )}
+                <span>{bText}</span>
+              </div>
+            );
+          })()}
           <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
             {station.effective_mode}
           </span>

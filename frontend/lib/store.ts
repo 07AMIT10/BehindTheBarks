@@ -1,5 +1,6 @@
 import type { AudioEvent, EmotionState, FrameEvent } from "./contracts";
 import { dismissToast, expireToasts, systemToast, toastFromNotification } from "./toasts";
+import { shouldToast } from "./battery";
 import type { Action, DashboardState, Envelope, NotificationItem, Span, StationView, Status } from "./types";
 
 export const HISTORY_MAX = 24;
@@ -147,6 +148,38 @@ function withStatus(s: DashboardState, next: Status, at: number): DashboardState
   if (was?.enabled && now?.enabled && was.online !== now.online) {
     toasts = systemToast(toasts, now.online ? "AI back online · fused readings resumed" : "AI offline · rules only", at);
   }
+
+  // T6.2: Low battery alert toasts
+  const oldStations = s.status?.stations ?? [];
+  const newStations = next.stations ?? [];
+  if (newStations.length > 0) {
+    for (const newSt of newStations) {
+      const oldSt = oldStations.find((o) => o.id === newSt.id);
+      const prevPct = oldSt?.phone?.battery_pct ?? oldSt?.battery ?? null;
+      const nextPct = newSt.phone?.battery_pct ?? newSt.battery ?? null;
+      const charging = Boolean(newSt.phone?.charging);
+      const alert = shouldToast(prevPct, nextPct, charging);
+      if (alert) {
+        const label = newSt.name || "Station";
+        const msg = alert === "critical"
+          ? `${label} battery critical (${Math.round(nextPct!)}%)`
+          : `${label} battery low (${Math.round(nextPct!)}%)`;
+        toasts = systemToast(toasts, msg, at);
+      }
+    }
+  } else if (next.phone) {
+    const prevPct = s.status?.phone?.battery_pct ?? null;
+    const nextPct = next.phone.battery_pct ?? null;
+    const charging = Boolean(next.phone.charging);
+    const alert = shouldToast(prevPct, nextPct, charging);
+    if (alert) {
+      const msg = alert === "critical"
+        ? `Station battery critical (${Math.round(nextPct!)}%)`
+        : `Station battery low (${Math.round(nextPct!)}%)`;
+      toasts = systemToast(toasts, msg, at);
+    }
+  }
+
   return { ...s, status: next, toasts };
 }
 
