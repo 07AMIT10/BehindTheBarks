@@ -301,10 +301,16 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         kind = str((body or {}).get("kind") or KIND_STATION)
         if kind not in (KIND_STATION, KIND_VIEWER):
             raise HTTPException(status_code=400, detail="kind must be 'station' or 'viewer'")
+        ceiling = (body or {}).get("mode_ceiling")
+        if ceiling is not None:
+            try:
+                ceiling = parse_mode(ceiling)  # a stored ceiling is read on every /status and /video
+            except ModeError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
         with app.state.db_session() as s:
             code = store_repo.create_pairing_code(s, household_id=ctx.household_id, kind=kind,
                                                   created_by_viewer=ctx.viewer_id,
-                                                  mode_ceiling=(body or {}).get("mode_ceiling"),
+                                                  mode_ceiling=ceiling,
                                                   viewer_label=(body or {}).get("label"))
             s.commit()
         return {"code": code, "expires_in": int(store_repo.PAIRING_TTL_S), "qr": _pair_qr(ctx.request, code)}

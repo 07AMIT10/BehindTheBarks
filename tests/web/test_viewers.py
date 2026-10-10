@@ -135,3 +135,13 @@ def test_viewer_cannot_rename_the_dog(owner_and_viewer):
     assert c.put("/households/me/profile", json={"dog_name": "Hacked", "location": ""}).status_code == 403
     c.cookies.set(VIEWER_COOKIE, owner_cookie)
     assert c.get("/status").json()["profile"]["dog_name"] == "Rex"
+
+
+def test_a_viewer_invite_with_an_unknown_ceiling_is_refused(tmp_path):
+    """An unvalidated ceiling would be stored and then crash /status and /video on every read."""
+    with TestClient(app(tmp_path)) as c:
+        c.post("/households", json={})
+        bad = c.post("/households/me/pairing", json={"kind": "viewer", "mode_ceiling": "everything"})
+        assert bad.status_code == 400
+        ok = c.post("/households/me/pairing", json={"kind": "viewer", "mode_ceiling": "limited"})
+        assert ok.status_code == 200
