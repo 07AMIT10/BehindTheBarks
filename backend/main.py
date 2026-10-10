@@ -73,8 +73,11 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # In households mode the legacy runtime serves nothing and must not log: every session file
+        # belongs to a household directory (T2.7 isolation).
+        legacy_log = None if households_mode else EventLog(web["log_dir"])
         hub = Hub(client_queue=web["ws"]["client_queue"], history=web["ws"]["history"],
-                  frame_fps=web["ws"]["frame_fps"], log=EventLog(web["log_dir"]))
+                  frame_fps=web["ws"]["frame_fps"], log=legacy_log)
         demo = load_demo_clips(cfg)
         # The saved profile wins over the config, so Runtime.status() and captions see the user's values.
         profile_store = ProfileStore(web["log_dir"], defaults=cfg["web"].get("profile") or {})
@@ -96,7 +99,10 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         registry.use_legacy(rt, hub, rt.pipeline)
         app.state.registry = registry
         app.state.hub, app.state.rt, app.state.demo = hub, rt, demo
-        await rt.start()
+        if not households_mode:
+            # In households mode the legacy runtime serves no household, so its loops (and the
+            # operator's LLM/notifier it carries) never run at all (T2.7/T2.9).
+            await rt.start()
         try:
             yield
         finally:
@@ -765,15 +771,22 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     @app.get("/video")
     async def video(ctx: Ctx = Depends(auth_ctx), max_frames: int = 0) -> StreamingResponse:
         period = 1.0 / float(web["video"]["fps"])
+        # A tab left open on a household with no camera must not spin forever: stop after this much
+        # silence (also makes ?max_frames=N terminate when no frame ever arrives).
+        idle_s = float(web["video"].get("idle_timeout_s", 30.0))
 
         async def gen():
             sent = 0
+            last_frame_at = time.monotonic()
             while max_frames <= 0 or sent < max_frames:
                 jpeg = ctx.pipeline.latest_frame_jpeg()
                 if jpeg:
                     yield b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + str(len(jpeg)).encode() \
                         + b"\r\n\r\n" + jpeg + b"\r\n"
                     sent += 1
+                    last_frame_at = time.monotonic()
+                elif time.monotonic() - last_frame_at > idle_s:
+                    return
                 await asyncio.sleep(period)
 
         return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")

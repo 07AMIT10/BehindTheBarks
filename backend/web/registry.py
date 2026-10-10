@@ -16,11 +16,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from backend.notify.dashboard import DashboardOnlyNotifier
 from backend.web.event_log import EventLog
 from backend.web.hub import Hub
 from backend.web.runtime import Runtime
 
 LEGACY = "legacy"
+
+
+class DisabledInterpreter:
+    """A tester household's interpreter until its owner opts in (T2.9): no LLM, no API spend, no
+    room images leaving the host. Runtime only reads these two attributes when it is off."""
+
+    enabled = False
+    last_call = None
 
 
 @dataclass
@@ -83,15 +92,11 @@ class HouseholdRegistry:
             from backend.main import build_pipeline
 
             pipeline = build_pipeline(cfg)
-        interpreter = self.make_interpreter(cfg) if self.make_interpreter else None
-        notifier = self.make_notifier(cfg) if self.make_notifier else None
-        if interpreter is None or notifier is None:  # pragma: no cover
-            from backend.main import build_notifier
-            from backend.fusion.llm_interpreter import LLMInterpreter
-            from backend.web.settings import LLMSettings
-
-            interpreter = interpreter or LLMInterpreter(LLMSettings.from_config(cfg))
-            notifier = notifier or build_notifier(cfg)
+        # Tester households must never inherit the operator's LLM keys or Telegram/WhatsApp tokens
+        # (T2.9): a disabled interpreter and a dashboard-only notifier unless the caller injected
+        # factories on purpose (the legacy household's own objects are injected by create_app).
+        interpreter = self.make_interpreter(cfg) if self.make_interpreter else DisabledInterpreter()
+        notifier = self.make_notifier(cfg) if self.make_notifier else DashboardOnlyNotifier()
         rt = Runtime(cfg, pipeline, interpreter, notifier, hub, clock=self.clock)
         await rt.start()
         return HouseholdRuntime(household_id=hid, runtime=rt, hub=hub, pipeline=pipeline,
