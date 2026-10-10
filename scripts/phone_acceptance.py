@@ -24,6 +24,7 @@ import io
 import json
 import os
 import re
+import shutil
 import signal
 import socket
 import subprocess
@@ -88,13 +89,17 @@ def phone_battery() -> dict:
 
 
 def ui_xml() -> str:
-    for _ in range(3):
-        adb("shell", "uiautomator", "dump", "/sdcard/ui.xml")
+    """A fresh accessibility dump. uiautomator sometimes returns no root node while a window is
+    animating or changing, so retry for a few seconds before giving up."""
+    last = ""
+    for _ in range(6):
+        out = adb("shell", "uiautomator", "dump", "/sdcard/ui.xml")
         xml = adb("shell", "cat", "/sdcard/ui.xml")
         if "<hierarchy" in xml:
             return xml[xml.index("<hierarchy"):]
-        time.sleep(0.5)
-    raise RuntimeError("uiautomator dump produced no hierarchy")
+        last = out.strip()[:120]
+        time.sleep(1.0)
+    raise RuntimeError(f"uiautomator dump produced no hierarchy (last output: {last!r})")
 
 
 def ui_texts(xml: str) -> list[str]:
@@ -107,22 +112,27 @@ def ui_texts(xml: str) -> list[str]:
     return out
 
 
+def top_package() -> str:
+    """The package of the top resumed activity, as the activity manager reports it (the uiautomator
+    dump's first node can be a system window, so it is not used to decide what is in front)."""
+    out = adb("shell", "dumpsys", "activity", "activities")
+    m = re.search(r"topResumedActivity=\S+ \S+ (\S+?)/", out)
+    return m.group(1) if m else ""
+
+
 def bring_app_front() -> str:
     """Launch MainActivity without the START action (does not restart monitoring) when another app or
     the launcher has focus, so its UI can be read or tapped."""
-    def root_pkg() -> str:
-        xml = ui_xml()
-        return next((n.get("package", "") for n in ET.fromstring(xml).iter("node") if n.get("package")), "")
-
-    first = root_pkg()
+    first = top_package()
     if first == PKG:
         return "app already in front"
+    now = first
     for attempt in range(1, 4):
         adb("shell", "am", "start", "-n", f"{PKG}/.ui.MainActivity")
-        time.sleep(2.5)
-        now = root_pkg()
-        if now == PKG:
-            return f"launched MainActivity (foreground was {first!r}, attempt {attempt})"
+        ok, took, now = poll(lambda: (top_package() == PKG, top_package()), 6.0, interval=0.5)
+        if ok:
+            time.sleep(1.0)  # let the window draw before the dump
+            return f"launched MainActivity (foreground was {first!r}, attempt {attempt}, in front after {took:.1f} s)"
     return f"could not bring MainActivity to front (foreground was {first!r}, now {now!r})"
 
 
@@ -148,17 +158,59 @@ def screen_badge_pixels() -> int:
 
 def tap_text(label: str) -> str:
     """Tap the centre of the node whose text is `label`, located from a fresh uiautomator dump."""
-    for node in ET.fromstring(ui_xml()).iter("node"):
-        if node.get("text") != label:
-            continue
-        m = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", node.get("bounds", ""))
-        if not m:
-            continue
-        x1, y1, x2, y2 = map(int, m.groups())
-        x, y = (x1 + x2) // 2, (y1 + y2) // 2
-        adb("shell", "input", "tap", str(x), str(y))
-        return f"tapped {label!r} at {x},{y}"
-    raise LookupError(f"no node with text {label!r} in the UI dump")
+    return tap_node(lambda n: n.get("text") == label, repr(label))
+
+
+def tap_node(pred, what: str, attempts: int = 3) -> str:
+    """Tap the centre of the first node (fresh uiautomator dump) that satisfies pred. A dump that is
+    missing the node is retried: the dump is flaky while the monitoring screen animates."""
+    for attempt in range(attempts):
+        for node in ET.fromstring(ui_xml()).iter("node"):
+            if not pred(node):
+                continue
+            m = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", node.get("bounds", ""))
+            if not m:
+                continue
+            x1, y1, x2, y2 = map(int, m.groups())
+            x, y = (x1 + x2) // 2, (y1 + y2) // 2
+            adb("shell", "input", "tap", str(x), str(y))
+            return f"tapped {what} at {x},{y}" + (f" (attempt {attempt + 1})" if attempt else "")
+        time.sleep(1.5)
+    raise LookupError(f"no node matches {what} in the UI dump after {attempts} dumps")
+
+
+def _is_mode_control(node) -> bool:
+    """The in-app mode button (MainActivity privacyButton): a Button whose label ends in the mode name."""
+    return node.get("class", "").endswith("Button") and bool(re.search(r"(Blackout|Privacy|Limited|Full)$", node.get("text", "")))
+
+
+def set_device_cap(mode: str) -> str:
+    """Set the phone's OWN cap with the in-app control: tap the mode button, then the row of 'What may be
+    shared?' for that mode. This is the person-on-the-device path; nothing is granted remotely."""
+    row_text = {"privacy": "Barks and behaviour", "full": "Live video"}[mode]
+    fronted = bring_app_front()
+    tapped = tap_node(_is_mode_control, "in-app mode control")
+    time.sleep(1.0)
+    row = tap_node(lambda n: row_text in n.get("text", ""), f"'{mode}' row of the mode chooser")
+    ok, took, _ = poll(lambda: (station_cap() == mode, None), 8.0)
+    return f"{fronted}; {tapped}; {row}; station cap {mode} after {took:.1f} s={ok}"
+
+
+RAISE_QUESTION = "A remote viewer asks to raise sharing to {label}. Allow for 15 minutes?"
+
+
+def raise_prompt_visible(label: str) -> bool:
+    want = RAISE_QUESTION.format(label=label)
+    return any(want in t for t in ui_texts(ui_xml()))
+
+
+def wait_raise_prompt(label: str, timeout: float) -> tuple[bool, float]:
+    ok, took, _ = poll(lambda: (raise_prompt_visible(label), None), timeout, interval=0.5)
+    return ok, took
+
+
+def tap_dialog_button(label: str) -> str:
+    return tap_node(lambda n: n.get("text", "").strip().lower() == label.lower(), f"dialog button {label!r}")
 
 
 def logcat_lines(pattern: str) -> list[str]:
@@ -221,12 +273,24 @@ def find_key(obj, key: str):
 
 def dom(url: str = BASE + "/") -> str:
     """Dashboard text as rendered by headless Chrome, with <script> blocks removed."""
-    res = subprocess.run(
-        [CHROME, "--headless=new", "--no-sandbox", "--window-size=390,844",
-         "--virtual-time-budget=8000", "--dump-dom", url],
-        capture_output=True, text=True, timeout=90,
-    )
-    return SCRIPT_RE.sub("", res.stdout or "")
+    for attempt in range(3):  # headless Chrome occasionally hangs: a fresh profile and a killed process group per try
+        profile = tempfile.mkdtemp(prefix="btb-chrome-")
+        proc = subprocess.Popen(
+            [CHROME, "--headless=new", "--no-sandbox", "--window-size=390,844", f"--user-data-dir={profile}",
+             "--virtual-time-budget=8000", "--dump-dom", url],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, start_new_session=True,
+        )
+        try:
+            out, _ = proc.communicate(timeout=45)
+            return SCRIPT_RE.sub("", out or "")
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
+            if attempt == 2:
+                raise
+        finally:
+            shutil.rmtree(profile, ignore_errors=True)
+    return ""
 
 
 def poll(fn, timeout: float, interval: float = 0.5):
@@ -759,6 +823,91 @@ def c10_abrupt_drop(ctx: Ctx) -> tuple[str, str]:
     return (PASS if ok else FAIL), ev
 
 
+def c11_raise_approval(ctx: Ctx) -> tuple[str, str]:
+    """Owner raise above the device's cap -> on-phone prompt -> Allow raises for 15 min; Keep private does not.
+    Each half starts from a fresh session with the device cap lowered to Privacy by the in-app control.
+    The device cap is restored to Full at the end, because it is persisted and the next check recovers from it."""
+    parts: list[str] = [recover_full_session()]
+    ok, _ = ensure_connected()
+    if not ok:
+        return FAIL, "phone did not connect"
+    verdicts: list[str] = []
+    try:
+        # (a) Allow
+        parts.append(set_device_cap("privacy"))
+        code, body = http("POST", "/mode", {"mode": "full"})
+        pending = code == 200 and body.get("status") == "pending"
+        seen, took = wait_raise_prompt("Full", 5.0)
+        parts.append(f"allow: POST /mode full -> {body.get('status')}; prompt text found={seen} after {took:.1f} s")
+        if seen:
+            parts.append(tap_dialog_button("Allow"))
+        eff_ok, took2, _ = poll(lambda: (status().get("effective_mode") == "full", None), 8.0)
+        gone, _ = poll(lambda: (not raise_prompt_visible("Full"), None), 5.0, interval=0.7)
+        parts.append(f"allow: effective full={eff_ok} after {took2:.1f} s; prompt dismissed={gone}")
+        verdicts.append(PASS if (pending and seen and eff_ok and gone) else FAIL)
+
+        # (b) Keep private: a fresh request, lowered cap, and the owner's raise is refused on the phone
+        parts.append(set_device_cap("privacy"))
+        code, body = http("POST", "/mode", {"mode": "full"})
+        pending2 = code == 200 and body.get("status") == "pending"
+        seen2, took3 = wait_raise_prompt("Full", 5.0)
+        parts.append(f"keep: POST /mode full -> {body.get('status')}; prompt text found={seen2} after {took3:.1f} s")
+        if seen2:
+            parts.append(tap_dialog_button("Keep private"))
+        time.sleep(3.0)
+        eff2 = status().get("effective_mode")
+        gone2, _ = poll(lambda: (not raise_prompt_visible("Full"), None), 5.0, interval=0.7)
+        parts.append(f"keep: effective after 3 s={eff2}; prompt dismissed={gone2}")
+        verdicts.append(PASS if (pending2 and seen2 and eff2 == "privacy" and gone2) else FAIL)
+    except LookupError as exc:
+        verdicts.append(FAIL)
+        parts.append(f"UI control not found: {exc}")
+    finally:
+        restored = None
+        for _ in range(3):  # the device cap is persisted: leaving it at privacy would break the next check
+            try:
+                restored = set_device_cap("full")
+                break
+            except LookupError as exc:
+                restored = f"restore device cap failed: {exc}"
+                time.sleep(2.0)
+        parts.append("restore device cap: " + str(restored))
+        if restored and "failed" in restored:
+            verdicts.append(FAIL)
+    return (FAIL if FAIL in verdicts or not verdicts else PASS), "; ".join(parts)
+
+
+def c12_blackout_not_stalled(ctx: Ctx) -> tuple[str, str]:
+    """A deliberate blackout reads paused (never stalled) for 12 s, the dashboard shows the paused card and
+    not 'Reconnecting', and a remote restore to full is applied directly (the device cap is still full)."""
+    parts: list[str] = [recover_full_session()]
+    ok, _ = ensure_connected()
+    if not ok:
+        return FAIL, "phone did not connect"
+    code, body = http("POST", "/mode", {"mode": "blackout"})
+    t0 = time.monotonic()
+    states: list[str | None] = []
+    while time.monotonic() - t0 < 12.0:
+        states.append(pipe_state(status()))
+        time.sleep(0.5)
+    seen_states = sorted({str(s) for s in states})
+    all_paused = bool(states) and set(states) == {"paused"}
+    page = dom()
+    reconnecting = "Reconnecting" in page
+    paused_card = "Sharing is paused" in page
+    rcode, rbody = http("POST", "/mode", {"mode": "full"})
+    eff_ok, took, _ = poll(lambda: (status().get("effective_mode") == "full", None), 8.0)
+    running, took2, _ = poll(lambda: (pipe_state(status()) == "running", None), 10.0)
+    parts.append(f"blackout: POST /mode blackout -> {body.get('status')}; 12 s of /status samples: "
+                 f"{len(states)} samples, states {seen_states}, never stalled={'stalled' not in states}")
+    parts.append(f"dashboard: 'Reconnecting'={reconnecting}, paused card text={paused_card}")
+    parts.append(f"restore: POST /mode full -> {rbody.get('status')} (direct, not pending); effective full={eff_ok} "
+                 f"after {took:.1f} s; pipeline back to running={running} after {took2:.1f} s")
+    ok_all = (code == 200 and body.get("status") == "applied" and all_paused and not reconnecting
+              and paused_card and rbody.get("status") == "applied" and eff_ok and running)
+    return (PASS if ok_all else FAIL), "; ".join(parts)
+
+
 CHECKS = [
     (1, "fresh_server_idle", c1_fresh_server_idle),
     (2, "connect", c2_connect),
@@ -770,6 +919,8 @@ CHECKS = [
     (8, "server_restart_reconnect", c8_server_restart_reconnect),
     (9, "stop_is_clean", c9_stop_is_clean),
     (10, "abrupt_drop", c10_abrupt_drop),
+    (11, "raise_approval", c11_raise_approval),
+    (12, "blackout_not_stalled", c12_blackout_not_stalled),
 ]
 
 
@@ -806,6 +957,29 @@ def _cell(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ")
 
 
+# Findings that the checks do not fix (kept here so every regenerated report carries them).
+FINDINGS = [
+    "Medium (harness, phone): while monitoring is running, uiautomator cannot dump the WagWatch screen "
+    "('could not get idle state', intermittent). It blocks checks 9 and 11, which need the Stop and mode "
+    "controls. The same dump failure happens with the pre-session APK, so it is not from the raise work. "
+    "Root cause not isolated (the preview surface and per-frame text updates are the suspects).",
+    "Medium (dashboard or harness): headless Chrome --dump-dom hangs while the dashboard renders the /video "
+    "MJPEG <img> for a dropped phone (check 10). Idle and paused dashboards dump in about 2 s. Real browsers "
+    "are not affected; the product question is whether a dropped phone should keep a /video request open.",
+    "Medium (not exercised by the checks): the on-device prompt's notification path (app not in front) is "
+    "not driven here. Only the dialog path ran.",
+    "Low: the phone's status line showed 'Connecting to ws://...' while the backend reported the phone "
+    "connected (screenshots during this run). Not investigated.",
+    "Low: the server never learns that the person on the phone chose Keep private or let the prompt time out; "
+    "the dashboard's 60 s countdown ends on its own.",
+    "Low: ModeController is read on the network thread and mutated on the main thread (approval timeout) "
+    "without synchronisation. Same pattern as the existing mode code; not observed to fail.",
+    "Low: the viewer badge row is missing from the uiautomator dump (check 5 reads it from a screenshot).",
+    "Low: the phone-side effect of a dashboard treat (chime, rules) is not observable over the API or logcat; "
+    "check 7 covers the server side only.",
+]
+
+
 def write_report(path: Path, results: list[tuple[int, str, str, str]], meta: dict, log_path: Path,
                  started: dt.datetime) -> None:
     lines = [
@@ -825,6 +999,9 @@ def write_report(path: Path, results: list[tuple[int, str, str, str]], meta: dic
         lines.append(f"| {num} | {name} | {verdict} | {_cell(evidence)} |")
     counts = {v: sum(1 for r in results if r[2] == v) for v in (PASS, FAIL, SKIP)}
     lines += ["", f"Totals: PASS {counts[PASS]}, FAIL {counts[FAIL]}, SKIP {counts[SKIP]}.", ""]
+    lines += ["## Open findings (not fixed by the checks)", ""]
+    lines += [f"{i}. {f}" for i, f in enumerate(FINDINGS, 1)]
+    lines.append("")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines), encoding="utf-8")
 
