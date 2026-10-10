@@ -932,6 +932,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
         target_station = station or (body.get("station") if isinstance(body, dict) else None)
         ch = _resolve_channel(lr, target_station, ctx.household_id)
+        if target_station and ch is None:
+            raise HTTPException(404, f"station {target_station!r} is not active")
         rt = ch.runtime if ch else ctx.runtime
         return {"ts": rt.treat()}
 
@@ -941,6 +943,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
         target_station = station or (body.get("station") if isinstance(body, dict) else None)
         ch = _resolve_channel(lr, target_station, ctx.household_id)
+        if target_station and ch is None:
+            raise HTTPException(404, f"station {target_station!r} is not active")
         pipeline = ch.pipeline if ch else ctx.pipeline
         fn = getattr(pipeline, "set_torch", None)
         if fn is None:
@@ -957,6 +961,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     async def get_torch(ctx: Ctx = Depends(auth_ctx), station: str | None = None) -> dict:
         lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
         ch = _resolve_channel(lr, station, ctx.household_id)
+        if station and ch is None:
+            raise HTTPException(404, f"station {station!r} is not active")
         pipeline = ch.pipeline if ch else ctx.pipeline
         get_fn = getattr(pipeline, "get_torch", None)
         enabled = False if get_fn is None else bool(get_fn())
@@ -988,6 +994,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
         target_station = station or (body.get("station") if isinstance(body, dict) else None)
         ch = _resolve_channel(lr, target_station, ctx.household_id)
+        if target_station and ch is None:
+            raise HTTPException(404, f"station {target_station!r} is not active")
         pipeline = ch.pipeline if ch else ctx.pipeline
         fn = getattr(pipeline, "flip_camera", None)
         if fn is None:

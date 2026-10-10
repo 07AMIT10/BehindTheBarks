@@ -145,3 +145,18 @@ def test_a_viewer_invite_with_an_unknown_ceiling_is_refused(tmp_path):
         assert bad.status_code == 400
         ok = c.post("/households/me/pairing", json={"kind": "viewer", "mode_ceiling": "limited"})
         assert ok.status_code == 200
+
+
+def test_controls_for_an_offline_station_do_not_reach_the_default_station(tmp_path):
+    """A treat, torch or flip named for a paired station that is offline must not fall back to the
+    household's default station: that would fire on the wrong phone."""
+    with TestClient(app(tmp_path)) as c:
+        c.post("/households", json={})
+        code = c.post("/households/me/pairing", json={"kind": "station"}).json()["code"]
+        assert c.post("/pair", json={"code": code, "pubkey_spki_b64": spki_b64(),
+                                     "device_name": "Offline cam"}).status_code == 200
+        sid = [s for s in c.get("/households/me/members").json()["stations"]][0]["id"]
+        assert c.post(f"/treat?station={sid}").status_code == 404
+        assert c.post(f"/torch?station={sid}", json={"enabled": True}).status_code == 404
+        assert c.get(f"/torch?station={sid}").status_code == 404
+        assert c.post(f"/camera/flip?station={sid}").status_code == 404
