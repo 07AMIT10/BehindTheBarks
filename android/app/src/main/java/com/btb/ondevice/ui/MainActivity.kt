@@ -38,8 +38,6 @@ import com.btb.ondevice.capture.MonitorServiceListener
 import com.btb.ondevice.net.ConnectionState
 import com.btb.ondevice.net.PairResult
 import com.btb.ondevice.net.StationKey
-import com.btb.ondevice.net.StationPairing
-import kotlin.math.roundToInt
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import com.btb.ondevice.util.PairingTarget
@@ -75,7 +73,8 @@ class MainActivity : Activity() {
     private var isBound = false
     private var isMonitoring = false
     private var householdRef: TextView? = null
-    private var isAmbientMode = false
+    private val dim = StationDimState()
+    private val isAmbientMode: Boolean get() = dim.isOn
     private var uiResumed = false
     private var approvalDialog: AlertDialog? = null
 
@@ -119,25 +118,7 @@ class MainActivity : Activity() {
                 }
 
                 override fun onQrCodeDetected(rawText: String) {
-                    runOnUiThread {
-                        when (val target = QrDecoder.parsePairingText(rawText)) {
-                            is PairingTarget.Code -> pairStation(target)  // v2: signed identity (T2.5)
-                            is PairingTarget.Manual -> {
-                                val config = target.config
-                                urlEditText.setText(config.url)
-                                prefs.edit().putString(KEY_URL, config.url).apply()
-                                config.token?.let {
-                                    prefs.edit().putString(KEY_TOKEN, it).apply()
-                                }
-                                config.deviceName?.let {
-                                    deviceEditText.setText(it)
-                                    prefs.edit().putString(KEY_DEVICE, it).apply()
-                                }
-                                Toast.makeText(this@MainActivity, "✓ Paired to Dashboard!", Toast.LENGTH_LONG).show()
-                            }
-                            null -> Unit
-                        }
-                    }
+                    runOnUiThread { applyPairingPayload(rawText) }
                 }
 
                 override fun onViewersCountChanged(videoViewers: Int, audioViewers: Int) {
@@ -155,12 +136,19 @@ class MainActivity : Activity() {
                 override fun onModeApprovalResolved() {
                     runOnUiThread { dismissApprovalDialog() }
                 }
+
+                override fun onPairingInvalid(reason: String) {
+                    runOnUiThread { showRemovedFromHousehold() }
+                }
             })
             val service = monitorService
             if (service != null && service.isMonitoringNow()) {
                 // Reattached: a rotation or font change recreated this screen while the service kept running.
                 setMonitoringUi(true)
                 service.currentConnectionState()?.let { updateConnectionUi(it) }
+                if (dim.onSessionConfirmed(monitoring = true)) enterAmbientMode()
+            } else {
+                dim.onSessionLost()
             }
             val isPriv = monitorService?.isPrivacyMode() ?: false
             updatePrivacyButton(isPriv)
@@ -177,6 +165,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         actionBar?.hide()
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        dim.onRecreated(savedOn = savedInstanceState?.getBoolean(KEY_DIM_ON, false) == true)
 
         val root = FrameLayout(this).apply {
             layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
@@ -586,7 +575,7 @@ class MainActivity : Activity() {
         handleIntent(intent)
     }
 
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
+    private fun dp(value: Int): Int = TouchTarget.dpToPx(value, resources.displayMetrics.density)
 
     /** The framework's AlertDialog buttons are 36dp tall; the touch target is 48dp. */
     private fun sizeDialogButtons(dialog: AlertDialog) {
@@ -697,6 +686,14 @@ class MainActivity : Activity() {
             prefs.edit().putString(KEY_DEVICE, extraDevice).apply()
         }
 
+        // A pairing payload from the adb dev loop goes through the same path as a scanned QR (see applyPairingPayload).
+        // Removed from the intent so a recreation of this screen does not pair the one-time code twice.
+        val extraPair = intent?.getStringExtra(EXTRA_PAIR_PAYLOAD)
+        if (!extraPair.isNullOrBlank()) {
+            intent?.removeExtra(EXTRA_PAIR_PAYLOAD)
+            applyPairingPayload(extraPair)
+        }
+
         when (intent?.action) {
             ACTION_START -> {
                 if (!isMonitoring && !MonitorService.isServiceRunning) {
@@ -734,8 +731,7 @@ class MainActivity : Activity() {
     }
 
     private fun enterAmbientMode() {
-        if (!isMonitoring) return
-        isAmbientMode = true
+        if (!dim.turnOn(monitoring = isMonitoring)) return
         ambientOverlay.visibility = View.VISIBLE
         controlsScroll.visibility = View.GONE
         floatingPill.visibility = View.GONE
@@ -748,7 +744,7 @@ class MainActivity : Activity() {
     }
 
     private fun exitAmbientMode() {
-        isAmbientMode = false
+        dim.turnOff()
         ambientOverlay.visibility = View.GONE
         previewView.visibility = View.VISIBLE
 
@@ -976,25 +972,39 @@ class MainActivity : Activity() {
         val clip = clipboard?.primaryClip
         if (clip != null && clip.itemCount > 0) {
             val text = clip.getItemAt(0)?.text?.toString()?.trim() ?: ""
-            when (val target = QrDecoder.parsePairingText(text)) {
-                is PairingTarget.Manual -> {
-                    urlEditText.setText(target.config.url)
-                    prefs.edit().putString(KEY_URL, target.config.url).apply()
-                    target.config.token?.let {
-                        prefs.edit().putString(KEY_TOKEN, it).apply()
-                    }
-                    target.config.deviceName?.let {
-                        deviceEditText.setText(it)
-                        prefs.edit().putString(KEY_DEVICE, it).apply()
-                    }
-                    Toast.makeText(this, "✓ Pasted server config!", Toast.LENGTH_SHORT).show()
-                }
-                is PairingTarget.Code -> pairStation(target)
-                null -> Toast.makeText(this, "Clipboard is not a pairing payload", Toast.LENGTH_SHORT).show()
+            if (applyPairingPayload(text) == null) {
+                Toast.makeText(this, "Clipboard is not a pairing payload", Toast.LENGTH_SHORT).show()
             }
         } else {
             Toast.makeText(this, "Clipboard is empty", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /**
+     * The one path for a pairing payload, whatever delivered it: a dashboard QR scan from the monitor, the
+     * clipboard paste, or the debug intent extra `extra_pair_payload`. A v2 code pairs the station; a v1
+     * payload fills in the server settings. Returns the parsed target, or null when the text is not a payload.
+     */
+    private fun applyPairingPayload(rawText: String): PairingTarget? {
+        val target = QrDecoder.parsePairingText(rawText)
+        when (target) {
+            is PairingTarget.Code -> pairStation(target)  // v2: signed identity (T2.5)
+            is PairingTarget.Manual -> {
+                val config = target.config
+                urlEditText.setText(config.url)
+                prefs.edit().putString(KEY_URL, config.url).apply()
+                config.token?.let {
+                    prefs.edit().putString(KEY_TOKEN, it).apply()
+                }
+                config.deviceName?.let {
+                    deviceEditText.setText(it)
+                    prefs.edit().putString(KEY_DEVICE, it).apply()
+                }
+                Toast.makeText(this, "✓ Pasted server config!", Toast.LENGTH_SHORT).show()
+            }
+            null -> Unit
+        }
+        return target
     }
 
     /**
@@ -1005,22 +1015,33 @@ class MainActivity : Activity() {
         Toast.makeText(this, "Pairing station…", Toast.LENGTH_SHORT).show()
         MainScope().launch {
             val deviceName = prefs.getString(KEY_DEVICE, Build.MODEL) ?: Build.MODEL
-            val result = StationPairing.pair(target.pairUrl, target.code, deviceName, StationKey.getOrCreate())
-            when (result) {
+            when (val result = PairingFlow.pairAndSave(prefs, target, deviceName, StationKey.getOrCreate())) {
                 is PairResult.Ok -> {
-                    prefs.edit()
-                        .putString(KEY_STATION_ID, result.pairing.stationId)
-                        .putString(KEY_HOUSEHOLD_ID, result.pairing.householdId)
-                        .putString(KEY_PAIR_URL, target.pairUrl)
-                        .putString(KEY_URL, target.wsUrl)
-                        .apply()
                     urlEditText.setText(target.wsUrl)
+                    refreshHouseholdLabel()
                     Toast.makeText(this@MainActivity, "✓ Station paired — start monitoring", Toast.LENGTH_LONG).show()
                 }
                 PairResult.InvalidCode -> Toast.makeText(this@MainActivity, "That pairing code is expired or used", Toast.LENGTH_LONG).show()
                 is PairResult.Failed -> Toast.makeText(this@MainActivity, "Pairing failed: ${result.detail}", Toast.LENGTH_LONG).show()
             }
         }
+    }
+
+    /**
+     * The owner removed this station (close 4410) or the server refused its identity (4401). The server will
+     * not take it back, so the station forgets its pairing, stops monitoring, and says so. Start stays usable.
+     */
+    private fun showRemovedFromHousehold() {
+        prefs.edit()
+            .remove(StationPrefs.STATION_ID)
+            .remove(StationPrefs.HOUSEHOLD_ID)
+            .remove(StationPrefs.PAIR_URL)
+            .apply()
+        refreshHouseholdLabel()
+        if (isMonitoring) stopMonitoringService()
+        setMonitoringUi(false)
+        statusTextView.text = REMOVED_MESSAGE
+        statusTextView.setTextColor(Color.parseColor("#FF8A80"))
     }
 
     private fun refreshHouseholdLabel() {
@@ -1055,7 +1076,9 @@ class MainActivity : Activity() {
     private fun startMonitoringService() {
         val url = urlEditText.text.toString().trim()
         val device = deviceEditText.text.toString().trim()
-        val token = prefs.getString(KEY_TOKEN, null)
+        // A paired station (households, T2.5) identifies itself with its id and Keystore key, not the shared token.
+        val stationId = prefs.getString(KEY_STATION_ID, null)?.takeIf { it.isNotBlank() }
+        val token = if (stationId != null) null else prefs.getString(KEY_TOKEN, null)
 
         // Persist user inputs in preferences
         prefs.edit()
@@ -1071,6 +1094,9 @@ class MainActivity : Activity() {
             putExtra(MonitorService.EXTRA_DEVICE_NAME, device)
             if (!token.isNullOrBlank()) {
                 putExtra(MonitorService.EXTRA_TOKEN, token)
+            }
+            if (stationId != null) {
+                putExtra(MonitorService.EXTRA_STATION_ID, stationId)
             }
         }
 
@@ -1275,6 +1301,11 @@ class MainActivity : Activity() {
         super.onStop()
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(KEY_DIM_ON, dim.isOn)
+    }
+
     override fun onDestroy() {
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         if (isBound) {
@@ -1287,6 +1318,10 @@ class MainActivity : Activity() {
 
     companion object {
         const val ACTION_START = "com.btb.ondevice.action.START"
+        /** Debug-only (BuildConfig.DEBUG): a v2 pairing payload delivered by adb, identical to a scanned QR. */
+        const val EXTRA_PAIR_PAYLOAD = "extra_pair_payload"
+        const val KEY_DIM_ON = "station_dim_on"
+        const val REMOVED_MESSAGE = "Removed from household · pair again with Pair by QR"
         const val ACTION_STOP = "com.btb.ondevice.action.STOP"
         const val ACTION_TOGGLE_PRIVACY = "com.btb.ondevice.action.TOGGLE_PRIVACY"
         const val ACTION_TOGGLE_TORCH = "com.btb.ondevice.action.TOGGLE_TORCH"
@@ -1294,7 +1329,7 @@ class MainActivity : Activity() {
         const val ACTION_EXIT_AMBIENT = "com.btb.ondevice.action.EXIT_AMBIENT"
 
         private const val MAX_CONTENT_WIDTH_DP = 600
-        private const val MIN_TOUCH_DP = 48
+        private const val MIN_TOUCH_DP = TouchTarget.MIN_DP
 
         private const val PREFS_NAME = StationPrefs.NAME
         private const val KEY_URL = StationPrefs.URL

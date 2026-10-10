@@ -43,6 +43,15 @@ object StationPairing {
      * @param baseHttpUrl the dashboard origin (`https://host` or `http://host:8000`), not the ws URL
      * @param code the one-time code from the QR
      */
+    /**
+     * The endpoint for a pairing code. The QR carries the full `pair_url` (`http://host:8000/pair`), and an
+     * origin (`http://host:8000`) is accepted too; the path is never doubled.
+     */
+    fun pairEndpoint(urlOrOrigin: String): String {
+        val trimmed = urlOrOrigin.trimEnd('/')
+        return if (trimmed.endsWith("/pair")) trimmed else "$trimmed/pair"
+    }
+
     suspend fun pair(baseHttpUrl: String, code: String, deviceName: String, signer: Signer): PairResult =
         withContext(Dispatchers.IO) {
             val body = buildJsonObject {
@@ -51,7 +60,7 @@ object StationPairing {
                 put("device_name", deviceName)
             }.toString()
             val request = Request.Builder()
-                .url(baseHttpUrl.trimEnd('/') + "/pair")
+                .url(pairEndpoint(baseHttpUrl))
                 .post(body.toRequestBody(JSON))
                 .build()
             try {

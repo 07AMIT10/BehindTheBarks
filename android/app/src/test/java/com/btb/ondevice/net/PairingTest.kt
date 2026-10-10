@@ -103,4 +103,12 @@ class PairingTest {
         }
         assertThat(wrong).isFalse()
     }
+
+    @Test
+    fun `the QR pair_url is used as the endpoint and is never doubled`() {
+        assertThat(StationPairing.pairEndpoint("http://192.168.1.10:8000/pair")).isEqualTo("http://192.168.1.10:8000/pair")
+        assertThat(StationPairing.pairEndpoint("http://192.168.1.10:8000/pair/")).isEqualTo("http://192.168.1.10:8000/pair")
+        assertThat(StationPairing.pairEndpoint("https://host.example")).isEqualTo("https://host.example/pair")
+        assertThat(StationPairing.pairEndpoint("https://host.example/")).isEqualTo("https://host.example/pair")
+    }
 }

@@ -22,7 +22,6 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.btb.ondevice.net.PairResult
 import com.btb.ondevice.net.StationKey
-import com.btb.ondevice.net.StationPairing
 import com.btb.ondevice.util.PairingTarget
 import com.btb.ondevice.util.QrDecoder
 import kotlinx.coroutines.MainScope
@@ -128,14 +127,8 @@ class ScannerActivity : Activity(), LifecycleOwner {
         val deviceName = prefs.getString(StationPrefs.DEVICE, android.os.Build.MODEL) ?: android.os.Build.MODEL
         Toast.makeText(this, "Pairing station…", Toast.LENGTH_SHORT).show()
         scope.launch {
-            val result = StationPairing.pair(target.pairUrl, target.code, deviceName, StationKey.getOrCreate())
-            when (result) {
+            when (val result = PairingFlow.pairAndSave(prefs, target, deviceName, StationKey.getOrCreate())) {
                 is PairResult.Ok -> {
-                    prefs.edit()
-                        .putString(StationPrefs.STATION_ID, result.pairing.stationId)
-                        .putString(StationPrefs.HOUSEHOLD_ID, result.pairing.householdId)
-                        .putString(StationPrefs.URL, target.wsUrl)
-                        .apply()
                     Toast.makeText(this@ScannerActivity, "✓ Station paired — start monitoring", Toast.LENGTH_LONG).show()
                     finish()
                 }
