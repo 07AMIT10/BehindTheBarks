@@ -1151,15 +1151,15 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
         ch = _resolve_channel(lr, target_station, ctx.household_id)
 
+        if ctx.role != ROLE_OWNER:
+            raise HTTPException(403, "only the household owner can change the viewing mode")
+
         if raw_mode in ("live", "demo"):
             rt = ch.runtime if ch else ctx.runtime
             try:
                 return {"mode": rt.set_mode(raw_mode)}
             except ValueError as exc:
                 raise HTTPException(400, str(exc))
-
-        if ctx.role != ROLE_OWNER:
-            raise HTTPException(403, "only the household owner can change the viewing mode")
 
         try:
             mode = parse_mode(raw_mode)

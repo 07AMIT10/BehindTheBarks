@@ -116,3 +116,13 @@ def test_owner_revokes_a_viewer_and_their_socket_closes(owner_and_viewer):
         assert ws.receive().get("code") == 4410  # the revoked viewer's socket is closed
     c.cookies.set(VIEWER_COOKIE, viewer_cookie)
     assert c.get("/me").status_code == 401  # and that cookie no longer authenticates
+
+
+def test_viewer_cannot_switch_the_household_to_demo(owner_and_viewer):
+    """POST /mode live|demo is a household-wide switch: owners only, like every other mode change."""
+    c, owner_cookie, viewer_cookie = owner_and_viewer
+    c.cookies.set(VIEWER_COOKIE, viewer_cookie)
+    assert c.post("/mode", json={"mode": "demo"}).status_code == 403
+    c.cookies.set(VIEWER_COOKIE, owner_cookie)
+    # the owner gets past the role check (a demo-less test household answers 400, not 403)
+    assert c.post("/mode", json={"mode": "demo"}).status_code != 403
