@@ -72,6 +72,8 @@ class MainActivity : Activity() {
     private var isMonitoring = false
     private var householdRef: TextView? = null
     private var isAmbientMode = false
+    private var uiResumed = false
+    private var approvalDialog: AlertDialog? = null
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -138,6 +140,16 @@ class MainActivity : Activity() {
                     runOnUiThread {
                         updateViewersUi(videoViewers)
                     }
+                }
+
+                override fun isUiInFront(): Boolean = uiResumed
+
+                override fun onModeApprovalRequested(requestedWire: String) {
+                    runOnUiThread { showApprovalDialog() }
+                }
+
+                override fun onModeApprovalResolved() {
+                    runOnUiThread { dismissApprovalDialog() }
                 }
             })
             val isPriv = monitorService?.isPrivacyMode() ?: false
@@ -1095,7 +1107,39 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        uiResumed = true
         refreshHouseholdLabel()  // a pairing done in ScannerActivity is shown when we come back
+        // A raise that arrived while we were away is still waiting for an answer: show it now.
+        if (monitorService?.pendingApprovalMode() != null) showApprovalDialog()
+    }
+
+    override fun onPause() {
+        uiResumed = false
+        // Leaving the screen: the prompt moves to the notification so it is still answerable.
+        if (approvalDialog?.isShowing == true) {
+            dismissApprovalDialog()
+            monitorService?.repostApprovalNotification()
+        }
+        super.onPause()
+    }
+
+    /** T3.2: the on-device prompt for a remote raise. Allow = 15 minutes; Keep private = no change. */
+    private fun showApprovalDialog() {
+        val mode = monitorService?.pendingApprovalMode() ?: return
+        if (approvalDialog?.isShowing == true) return
+        approvalDialog = AlertDialog.Builder(this)
+            .setTitle("Sharing request")
+            .setMessage(com.btb.ondevice.capture.approvalQuestion(mode))
+            .setPositiveButton("Allow") { _, _ -> monitorService?.allowPendingRaise() }
+            .setNegativeButton("Keep private") { _, _ -> monitorService?.keepPendingPrivate() }
+            .setCancelable(false)
+            .create()
+            .also { it.show() }
+    }
+
+    private fun dismissApprovalDialog() {
+        approvalDialog?.dismiss()
+        approvalDialog = null
     }
 
     override fun onStart() {

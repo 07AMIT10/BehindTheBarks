@@ -137,8 +137,6 @@ class ViewModeTest {
         assertThat(c.cap).isEqualTo(ViewMode.BLACKOUT)
     }
 
-
-
     @Test
     fun `legacy privacy false never raises exposure from a remote message`() {
         val c = controller(cap = ViewMode.PRIVACY, now = { 0L })
@@ -186,5 +184,69 @@ class ViewModeTest {
         assertThat(Policy(previewFps = 2).previewIntervalMs()).isEqualTo(500L)
         assertThat(Policy(previewFps = 1).previewIntervalMs()).isEqualTo(1000L)
         assertThat(Policy(previewFps = 0).previewIntervalMs()).isEqualTo(Long.MAX_VALUE)
+    }
+
+    @Test
+    fun `a raise that needs approval is pending, allowed, then raised with expiry`() {
+        var now = 1_000L
+        val c = controller(cap = ViewMode.PRIVACY, now = { now })
+        c.onPolicy(Policy(mode = ViewMode.FULL))
+        c.onModeRequest(ViewMode.FULL, fromOwner = true)
+        assertThat(c.pendingRaise()?.mode).isEqualTo(ViewMode.FULL)
+        assertThat(c.effectiveMode()).isEqualTo(ViewMode.PRIVACY)
+
+        assertThat(c.allowPendingRaise()).isEqualTo(ViewMode.FULL)
+        assertThat(c.pendingRaise()).isNull()
+        assertThat(c.effectiveMode()).isEqualTo(ViewMode.FULL)
+        assertThat(c.effectiveReason()).isEqualTo(ModeReason.APPROVED_RAISE)
+
+        now += 15 * 60_000 // the approved raise lapses
+        assertThat(c.effectiveMode()).isEqualTo(ViewMode.PRIVACY)
+    }
+
+    @Test
+    fun `keep private drops the pending raise and leaves the cap alone`() {
+        val c = controller(cap = ViewMode.PRIVACY, now = { 0L })
+        c.onPolicy(Policy(mode = ViewMode.FULL))
+        c.onModeRequest(ViewMode.FULL, fromOwner = true)
+        assertThat(c.denyPendingRaise()).isTrue()
+        assertThat(c.pendingRaise()).isNull()
+        assertThat(c.allowPendingRaise()).isNull() // nothing left to allow
+        assertThat(c.effectiveMode()).isEqualTo(ViewMode.PRIVACY)
+        assertThat(c.cap).isEqualTo(ViewMode.PRIVACY)
+    }
+
+    @Test
+    fun `an unanswered raise times out to deny after sixty seconds`() {
+        var now = 0L
+        val c = controller(cap = ViewMode.PRIVACY, now = { now })
+        c.onPolicy(Policy(mode = ViewMode.FULL))
+        c.onModeRequest(ViewMode.FULL, fromOwner = true)
+        now += 59_000
+        assertThat(c.pendingRaise()).isNotNull() // still waiting
+        now += 2_000
+        assertThat(c.pendingRaise()).isNull()     // default deny
+        assertThat(c.allowPendingRaise()).isNull() // a late Allow does nothing
+        assertThat(c.effectiveMode()).isEqualTo(ViewMode.PRIVACY)
+    }
+
+    @Test
+    fun `a new session or a device cap change clears a pending raise`() {
+        val c = controller(cap = ViewMode.PRIVACY, now = { 0L })
+        c.onPolicy(Policy(mode = ViewMode.FULL))
+        c.onModeRequest(ViewMode.FULL, fromOwner = true)
+        c.beginSession()
+        assertThat(c.pendingRaise()).isNull()
+        c.onModeRequest(ViewMode.FULL, fromOwner = true)
+        c.setStationCapFromDevice(ViewMode.LIMITED)
+        assertThat(c.pendingRaise()).isNull()
+    }
+
+    @Test
+    fun `the approval question names the requested mode`() {
+        assertThat(approvalQuestion(ViewMode.FULL))
+            .isEqualTo("A remote viewer asks to raise sharing to Full. Allow for 15 minutes?")
+        assertThat(approvalQuestion(ViewMode.LIMITED)).contains("to raise sharing to Limited.")
+        assertThat(approvalQuestion(ViewMode.PRIVACY)).contains("to raise sharing to Privacy.")
     }
 }

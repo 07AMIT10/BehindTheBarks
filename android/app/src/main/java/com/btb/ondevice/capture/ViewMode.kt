@@ -70,6 +70,39 @@ class ModeController(
     /** How long an approved raise lasts before the phone falls back to its own cap. */
     var raiseDurationMs: Long = 15 * 60_000L
 
+    /** How long an unanswered raise prompt waits before it is denied by default. */
+    var requestTimeoutMs: Long = 60_000L
+
+    /** A raise the owner asked for and the person on the phone has not answered yet. */
+    data class PendingRaise(val mode: ViewMode, val deadline: Long)
+
+    private var pending: PendingRaise? = null
+
+    /** The unanswered raise, or null. A prompt past its deadline is denied and cleared here. */
+    fun pendingRaise(): PendingRaise? {
+        val p = pending ?: return null
+        if (clock() >= p.deadline) {
+            pending = null
+            return null
+        }
+        return p
+    }
+
+    /** Allow the pending raise for [raiseDurationMs]. Returns the mode now in force, or null if nothing was pending. */
+    fun allowPendingRaise(): ViewMode? {
+        val p = pendingRaise() ?: return null
+        pending = null
+        approveRaise(p.mode)
+        return effectiveMode()
+    }
+
+    /** Keep private: the pending raise is dropped; the cap does not move. Returns true if one was pending. */
+    fun denyPendingRaise(): Boolean {
+        val had = pendingRaise() != null
+        pending = null
+        return had
+    }
+
     var policy: Policy = Policy.DEFAULT
         private set
 
@@ -89,11 +122,13 @@ class ModeController(
     /** Start of a monitoring session: nothing from the previous connection's policy carries over. */
     fun beginSession() {
         policySeen = false
+        pending = null
     }
 
     /** Set by the device UI: the person holding the phone chose this. This is the only way to raise. */
     fun setStationCapFromDevice(mode: ViewMode) {
         stationCap = mode
+        pending = null
         raiseApproved = false
         raisedUntil = 0L
         approvedMode = ViewMode.FULL
@@ -116,7 +151,10 @@ class ModeController(
                 approveRaise(mode)
                 RequestOutcome.Applied(effectiveMode(), ModeReason.APPROVED_RAISE)
             }
-            else -> RequestOutcome.NeedsApproval(mode)
+            else -> {
+                pending = PendingRaise(mode, clock() + requestTimeoutMs)
+                RequestOutcome.NeedsApproval(mode)
+            }
         }
 
     /** The device UI approved a raise. It lasts [raiseDurationMs], then the old cap returns. */
@@ -179,4 +217,15 @@ class ModeController(
         /** The phone must ask the person holding it before anything is raised. */
         data class NeedsApproval(val mode: ViewMode) : RequestOutcome()
     }
+}
+
+/** The on-device prompt for a raise, shared by the dialog and the notification so both say the same thing. */
+fun approvalQuestion(mode: ViewMode): String {
+    val label = when (mode) {
+        ViewMode.BLACKOUT -> "Blackout"
+        ViewMode.PRIVACY -> "Privacy"
+        ViewMode.LIMITED -> "Limited"
+        ViewMode.FULL -> "Full"
+    }
+    return "A remote viewer asks to raise sharing to $label. Allow for 15 minutes?"
 }

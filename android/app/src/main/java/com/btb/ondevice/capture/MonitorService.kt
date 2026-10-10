@@ -64,8 +64,12 @@ interface MonitorServiceListener {
     fun onQrCodeDetected(rawText: String) {}
     /** T3.2: the effective mode changed (device or server driven). */
     fun onModeStateChanged(effectiveWire: String) {}
-    /** T3.2: the owner asked for more exposure than the phone allows: prompt, default deny. */
+    /** T3.2: the owner asked for more exposure than the phone allows. Shown as a dialog when the UI is in front. */
     fun onModeApprovalRequested(requestedWire: String) {}
+    /** The pending raise was answered (on the phone or in the notification) or timed out: dismiss the prompt. */
+    fun onModeApprovalResolved() {}
+    /** True when the activity is resumed and can show the prompt itself; otherwise a notification is posted. */
+    fun isUiInFront(): Boolean = false
     /** T3.4: active remote viewer count changed. */
     fun onViewersCountChanged(videoViewers: Int, audioViewers: Int) {}
 }
@@ -107,6 +111,8 @@ class MonitorService : Service(), LifecycleOwner {
     private var currentVideoViewers: Int = 0
     private var currentAudioViewers: Int = 0
     private var currentStatusText: String = "Monitoring room with camera & audio..."
+    private val approvalHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val approvalTimeout = Runnable { resolveRaise(allow = false) }
 
     /** T3.4: station requests to disconnect all active remote viewers immediately. */
     fun disconnectViewers(): Boolean = uploader?.sendKickViewers() ?: false
@@ -219,9 +225,86 @@ class MonitorService : Service(), LifecycleOwner {
         if (requested == null) return
         when (val outcome = modeController.onModeRequest(requested, from == "owner")) {
             is ModeController.RequestOutcome.Applied -> publishModeState(outcome.reason.wire)
-            is ModeController.RequestOutcome.NeedsApproval ->
-                listener?.onModeApprovalRequested(requested.wire)
+            is ModeController.RequestOutcome.NeedsApproval -> {
+                approvalHandler.removeCallbacks(approvalTimeout)
+                approvalHandler.postDelayed(approvalTimeout, modeController.requestTimeoutMs)
+                if (listener?.isUiInFront() == true) {
+                    listener?.onModeApprovalRequested(requested.wire)
+                } else {
+                    postApprovalNotification(requested)
+                }
+            }
         }
+    }
+
+    /** The raise the owner asked for and nobody has answered yet, or null. */
+    fun pendingApprovalMode(): ViewMode? = modeController.pendingRaise()?.mode
+
+    /** The on-device answer: Allow for 15 minutes (the dialog button or the notification action). */
+    fun allowPendingRaise(): Boolean = resolveRaise(allow = true)
+
+    /** The on-device answer: Keep private. Also the default when the prompt times out. */
+    fun keepPendingPrivate(): Boolean = resolveRaise(allow = false)
+
+    /** Re-post the notification, e.g. when the activity goes away while its dialog is still open. */
+    fun repostApprovalNotification() {
+        val mode = pendingApprovalMode() ?: return
+        postApprovalNotification(mode)
+    }
+
+    /**
+     * Ends the pending raise one way or the other, then clears both prompts (dialog and notification).
+     * Returns false when nothing was pending (for example the other path already answered it).
+     */
+    private fun resolveRaise(allow: Boolean): Boolean {
+        approvalHandler.removeCallbacks(approvalTimeout)
+        val wasPending = if (allow) {
+            modeController.allowPendingRaise() != null
+        } else {
+            modeController.denyPendingRaise()
+        }
+        if (wasPending && allow) {
+            publishModeState(ModeReason.APPROVED_RAISE.wire)
+            listener?.onModeStateChanged(modeController.effectiveMode().wire)
+        }
+        cancelApprovalNotification()
+        listener?.onModeApprovalResolved()
+        return wasPending
+    }
+
+    private fun postApprovalNotification(mode: ViewMode) {
+        val nm = getSystemService(NotificationManager::class.java) ?: return
+        val allowIntent = PendingIntent.getService(
+            this, 2,
+            Intent(this, MonitorService::class.java).apply { action = ACTION_ALLOW_RAISE },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val keepIntent = PendingIntent.getService(
+            this, 3,
+            Intent(this, MonitorService::class.java).apply { action = ACTION_KEEP_PRIVATE },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val openIntent = packageManager.getLaunchIntentForPackage(packageName)?.let {
+            PendingIntent.getActivity(this, 4, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        }
+        val notification = NotificationCompat.Builder(this, APPROVAL_CHANNEL_ID)
+            .setContentTitle("Sharing request")
+            .setContentText(approvalQuestion(mode))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(approvalQuestion(mode)))
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setAutoCancel(false)
+            .setOngoing(true)
+            .addAction(android.R.drawable.ic_menu_send, "Allow", allowIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Keep private", keepIntent)
+            .apply { openIntent?.let { setContentIntent(it) } }
+            .build()
+        nm.notify(APPROVAL_NOTIFICATION_ID, notification)
+    }
+
+    private fun cancelApprovalNotification() {
+        getSystemService(NotificationManager::class.java)?.cancel(APPROVAL_NOTIFICATION_ID)
     }
 
     fun setListener(l: MonitorServiceListener?) {
@@ -247,6 +330,14 @@ class MonitorService : Service(), LifecycleOwner {
             disconnectViewers()
             return START_NOT_STICKY
         }
+        if (action == ACTION_ALLOW_RAISE) {
+            allowPendingRaise()
+            return START_NOT_STICKY
+        }
+        if (action == ACTION_KEEP_PRIVATE) {
+            keepPendingPrivate()
+            return START_NOT_STICKY
+        }
 
         val prefs = getSharedPreferences("btb_station_prefs", Context.MODE_PRIVATE)
         val defaultUrl = prefs.getString("server_url", DEFAULT_SERVER_URL) ?: DEFAULT_SERVER_URL
@@ -270,6 +361,7 @@ class MonitorService : Service(), LifecycleOwner {
     private fun startMonitoring(serverUrl: String, deviceName: String, token: String? = null) {
         if (!isRunning.compareAndSet(false, true)) return
         modeController.beginSession()
+        cancelApprovalNotification()
 
         // 1. Foreground Notification
         val notification = buildNotification("Monitoring room with camera & audio...")
@@ -633,8 +725,16 @@ class MonitorService : Service(), LifecycleOwner {
             ).apply {
                 description = "Runs on-device perception while capturing camera and audio"
             }
+            val approvals = NotificationChannel(
+                APPROVAL_CHANNEL_ID,
+                "Sharing requests",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "A remote viewer asks to raise what the station shares"
+            }
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(channel)
+            manager?.createNotificationChannel(approvals)
         }
     }
 
@@ -689,6 +789,9 @@ class MonitorService : Service(), LifecycleOwner {
 
     private fun stopMonitoring() {
         if (!isRunning.compareAndSet(true, false)) return
+        approvalHandler.removeCallbacks(approvalTimeout)
+        if (modeController.denyPendingRaise()) listener?.onModeApprovalResolved()
+        cancelApprovalNotification()
 
         cameraSource?.stop()
         cameraSource = null
@@ -761,6 +864,10 @@ class MonitorService : Service(), LifecycleOwner {
         const val ACTION_START = "com.btb.ondevice.action.START"
         const val ACTION_STOP = "com.btb.ondevice.action.STOP"
         const val ACTION_KICK_VIEWERS = "com.btb.ondevice.action.KICK_VIEWERS"
+        const val ACTION_ALLOW_RAISE = "com.btb.ondevice.action.ALLOW_RAISE"
+        const val ACTION_KEEP_PRIVATE = "com.btb.ondevice.action.KEEP_PRIVATE"
+        const val APPROVAL_CHANNEL_ID = "btb_approval_channel"
+        const val APPROVAL_NOTIFICATION_ID = 4041
         const val EXTRA_SERVER_URL = "extra_server_url"
         const val EXTRA_DEVICE_NAME = "extra_device_name"
         const val EXTRA_TOKEN = "extra_token"
