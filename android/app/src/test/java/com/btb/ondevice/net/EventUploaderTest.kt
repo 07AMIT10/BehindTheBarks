@@ -87,6 +87,43 @@ class EventUploaderTest {
     }
 
     @Test
+    fun `hello_ack notifies the listener once so the station can report its mode`() = runBlocking {
+        val helloReceived = CompletableDeferred<Unit>()
+        val ackSeen = CompletableDeferred<Int>()
+        var acks = 0
+
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (text.contains(""""type":"hello"""")) {
+                    helloReceived.complete(Unit)
+                    webSocket.send("""{"type":"hello_ack","server_time":1700000000.0}""")
+                }
+            }
+        }))
+
+        val uploader = EventUploader(
+            serverUrl = server.url("/ingest-events").toString(),
+            deviceName = "test-galaxy",
+            spool = spool,
+            listener = object : EventUploaderListener {
+                override fun onHelloAck() {
+                    acks += 1
+                    if (!ackSeen.isCompleted) ackSeen.complete(acks)
+                }
+            }
+        )
+
+        uploader.start()
+        withTimeout(5000) { helloReceived.await() }
+        assertThat(withTimeout(5000) { ackSeen.await() }).isEqualTo(1)
+        delay(300)
+        assertThat(acks).isEqualTo(1)
+        assertThat(uploader.connectionState).isEqualTo(ConnectionState.CONNECTED)
+
+        uploader.stop()
+    }
+
+    @Test
     fun `uploader sends frame audio rules and binary preview`() = runBlocking {
         val messagesReceived = mutableListOf<String>()
         val binariesReceived = mutableListOf<ByteString>()

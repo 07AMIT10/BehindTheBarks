@@ -37,6 +37,8 @@ enum class ConnectionState {
 
 interface EventUploaderListener {
     fun onStateChanged(state: ConnectionState) {}
+    /** The server accepted the handshake (hello_ack). The station reports its mode here (T3.1). */
+    fun onHelloAck() {}
     fun onTreatDownlink(ts: Double) {}
     fun onConfigDownlink(configJson: String) {}
     fun onTorchDownlink(enabled: Boolean) {}
@@ -280,6 +282,7 @@ class EventUploader(
                     }
                     backoffIndex.set(0)
                     listener?.onStateChanged(ConnectionState.CONNECTED)
+                    listener?.onHelloAck()
 
                     // Start pings and flush spool
                     startPings()

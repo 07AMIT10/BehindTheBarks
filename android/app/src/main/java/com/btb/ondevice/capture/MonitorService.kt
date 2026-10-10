@@ -336,6 +336,10 @@ class MonitorService : Service(), LifecycleOwner {
                 override fun onStateChanged(state: ConnectionState) {
                     listener?.onConnectionUpdate(state)
                 }
+                override fun onHelloAck() {
+                    // The server forgets the cap of a previous connection: tell it on every handshake.
+                    publishModeState("connect")
+                }
                 override fun onTreatDownlink(ts: Double) {
                     pipe.pushTreat(ts)
                     playTreatChime()
