@@ -266,6 +266,8 @@ class RemoteSession:
             self.dropped += 1
             return None
         self.station_cap, self.effective_mode = cap, effective
+        if hasattr(self.pipeline, "set_station_cap"):
+            self.pipeline.set_station_cap(cap)
         return "mode_state"
 
     def handle(self, data: bytes) -> str | None:

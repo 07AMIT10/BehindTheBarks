@@ -32,6 +32,9 @@ from backend.store.models import KIND_STATION, KIND_VIEWER, ROLE_OWNER, ROLE_VIE
 from backend.store.models import Viewer as _ViewerRow
 from backend.web.ingest import CLOSE_REVOKED
 from backend.web.auth import Ctx
+from backend.web.limited import limit_jpeg
+from backend.web.modes import ModeError, min_mode, mode_rank, parse_mode
+from backend.web.policy import Policy, build_events_only_slate, build_privacy_slate
 from backend.web.registry import LEGACY, HouseholdRegistry
 
 VIEWER_COOKIE = "btb_session"
@@ -214,7 +217,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             store_repo.touch_viewer(s, viewer)
             s.commit()
             return Ctx(household_id=viewer.household_id, role=viewer.role, viewer_id=viewer.id,
-                       runtime=lr.runtime, hub=lr.hub, pipeline=lr.pipeline, request=req)
+                       runtime=lr.runtime, hub=lr.hub, pipeline=lr.pipeline, request=req,
+                       policy=lr.policy, mode_ceiling=viewer.mode_ceiling or "full")
 
 
 
@@ -226,8 +230,10 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             return await households_ctx(req)
         verify_request_auth(req)
         lr = app.state.registry.peek(LEGACY)
+        policy = getattr(lr, "policy", None) or getattr(lr.runtime, "policy", None)
         return Ctx(household_id=LEGACY, role="owner", viewer_id=None,
-                   runtime=lr.runtime, hub=lr.hub, pipeline=lr.pipeline, request=req)
+                   runtime=lr.runtime, hub=lr.hub, pipeline=lr.pipeline, request=req,
+                   policy=policy, mode_ceiling="full")
 
     class _BadPair(Exception):
         """An otherwise-invalid /pair attempt: counted, then answered with the same 400 body."""
@@ -704,7 +710,20 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
 
     @app.get("/status")
     async def status(ctx: Ctx = Depends(auth_ctx)) -> dict:
-        return ctx.runtime.status()
+        st = dict(ctx.runtime.status())
+        station_cap = getattr(ctx.pipeline, "station_cap", "full")
+        policy = ctx.policy or getattr(ctx.runtime, "policy", None)
+        h_mode = policy.household_mode if policy else getattr(ctx.pipeline, "_policy_mode", "full")
+        effective = min_mode(station_cap, h_mode, getattr(ctx, "mode_ceiling", "full"))
+        st["station_cap"] = station_cap
+        st["effective_mode"] = effective
+        st["privacy_mode"] = effective == "blackout"
+        st["mode_info"] = {
+            "household_mode": h_mode,
+            "station_cap": station_cap,
+            "effective": effective,
+        }
+        return st
 
     @app.get("/events")
     async def events(ctx: Ctx = Depends(auth_ctx), since: int = 0) -> dict:
@@ -765,24 +784,57 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
 
     @app.post("/privacy")
     async def set_privacy(ctx: Ctx = Depends(auth_ctx), body: dict | None = None) -> dict:
-        pipeline = ctx.pipeline
-        fn = getattr(pipeline, "set_privacy", None)
-        if fn is None:
-            raise HTTPException(400, "web.pipeline must be 'remote' to control privacy mode")
-        if body is not None and "enabled" in body:
-            enabled = bool(body["enabled"])
+        if ctx.role != ROLE_OWNER:
+            raise HTTPException(403, "only the household owner can change the viewing mode")
+        enabled = bool((body or {}).get("enabled", False))
+        policy = ctx.policy or getattr(ctx.runtime, "policy", None)
+        if policy is None:
+            policy = Policy(household_mode="full")
+            ctx.policy = policy
+            if hasattr(ctx.runtime, "policy"):
+                ctx.runtime.policy = policy
+
+        station_cap = getattr(ctx.pipeline, "station_cap", "full")
+        if enabled:
+            if policy.household_mode != "blackout":
+                policy._prev_household_mode = policy.household_mode
+            policy.household_mode = "blackout"
+            set_policy_fn = getattr(ctx.pipeline, "set_policy", None)
+            if set_policy_fn:
+                set_policy_fn("blackout")
+            ctx.hub.publish("status", {
+                "mode_info": {"household_mode": "blackout", "station_cap": station_cap, "effective": "blackout"},
+                "effective_mode": "blackout",
+                "privacy_mode": True,
+            })
+            return {"ok": True, "privacy_mode": True, "status": "applied", "mode": "blackout"}
         else:
-            get_fn = getattr(pipeline, "get_privacy", None)
-            enabled = not (get_fn() if get_fn is not None else False)
-        sent = bool(fn(enabled))
-        return {"ok": True, "privacy_mode": enabled, "sent": sent}
+            restore_mode = policy.restore_mode()
+            if mode_rank(restore_mode) > mode_rank(station_cap):
+                req_fn = getattr(ctx.pipeline, "request_mode", None)
+                if req_fn:
+                    req_fn(restore_mode, from_role="owner")
+                return {"ok": True, "privacy_mode": True, "status": "pending", "mode": restore_mode}
+            else:
+                policy.household_mode = restore_mode
+                set_policy_fn = getattr(ctx.pipeline, "set_policy", None)
+                if set_policy_fn:
+                    set_policy_fn(restore_mode)
+                eff = policy.compute_effective(station_cap, ctx)
+                ctx.hub.publish("status", {
+                    "mode_info": {"household_mode": restore_mode, "station_cap": station_cap, "effective": eff},
+                    "effective_mode": eff,
+                    "privacy_mode": eff == "blackout",
+                })
+                return {"ok": True, "privacy_mode": eff == "blackout", "status": "applied", "mode": restore_mode}
 
     @app.get("/privacy")
     async def get_privacy(ctx: Ctx = Depends(auth_ctx)) -> dict:
-        pipeline = ctx.pipeline
-        get_fn = getattr(pipeline, "get_privacy", None)
-        enabled = False if get_fn is None else bool(get_fn())
-        return {"privacy_mode": enabled}
+        station_cap = getattr(ctx.pipeline, "station_cap", "full")
+        policy = ctx.policy or getattr(ctx.runtime, "policy", None)
+        h_mode = policy.household_mode if policy else getattr(ctx.pipeline, "_policy_mode", "full")
+        effective = min_mode(station_cap, h_mode, getattr(ctx, "mode_ceiling", "full"))
+        return {"privacy_mode": effective == "blackout"}
 
     @app.get("/demo/clips")
     async def demo_clips() -> list[dict]:
@@ -814,12 +866,66 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             raise HTTPException(404, f"no timeline for {cid!r} (run scripts/precompute_demo.py)")
         return tl
 
+    @app.get("/mode")
+    async def get_mode(ctx: Ctx = Depends(auth_ctx)) -> dict:
+        station_cap = getattr(ctx.pipeline, "station_cap", "full")
+        policy = ctx.policy or getattr(ctx.runtime, "policy", None)
+        h_mode = policy.household_mode if policy else getattr(ctx.pipeline, "_policy_mode", "full")
+        effective = min_mode(station_cap, h_mode, getattr(ctx, "mode_ceiling", "full"))
+        return {
+            "household_mode": h_mode,
+            "station_cap": station_cap,
+            "effective": effective,
+        }
+
     @app.post("/mode")
     async def set_mode(ctx: Ctx = Depends(auth_ctx), body: dict | None = None) -> dict:
+        if not body or "mode" not in body:
+            raise HTTPException(400, "mode is required")
+        raw_mode = body.get("mode")
+        if raw_mode in ("live", "demo"):
+            try:
+                return {"mode": ctx.runtime.set_mode(raw_mode)}
+            except ValueError as exc:
+                raise HTTPException(400, str(exc))
+
+        if ctx.role != ROLE_OWNER:
+            raise HTTPException(403, "only the household owner can change the viewing mode")
+
         try:
-            return {"mode": ctx.runtime.set_mode((body or {}).get("mode"))}
-        except ValueError as exc:
+            mode = parse_mode(raw_mode)
+        except ModeError as exc:
             raise HTTPException(400, str(exc))
+
+        station_cap = getattr(ctx.pipeline, "station_cap", "full")
+        policy = ctx.policy or getattr(ctx.runtime, "policy", None)
+        if policy is None:
+            policy = Policy(household_mode="full")
+            ctx.policy = policy
+            if hasattr(ctx.runtime, "policy"):
+                ctx.runtime.policy = policy
+
+        # Raising above station cap sends mode_request {mode, from: "owner"}
+        if mode_rank(mode) > mode_rank(station_cap):
+            req_fn = getattr(ctx.pipeline, "request_mode", None)
+            if req_fn:
+                req_fn(mode, from_role="owner")
+            return {"status": "pending", "mode": mode}
+
+        # Lowering or at/below cap applies immediately
+        if policy.household_mode != "blackout":
+            policy._prev_household_mode = policy.household_mode
+        policy.household_mode = mode
+        set_policy_fn = getattr(ctx.pipeline, "set_policy", None)
+        if set_policy_fn:
+            set_policy_fn(mode)
+        eff = policy.compute_effective(station_cap, ctx)
+        ctx.hub.publish("status", {
+            "mode_info": {"household_mode": mode, "station_cap": station_cap, "effective": eff},
+            "effective_mode": eff,
+            "privacy_mode": eff == "blackout",
+        })
+        return {"status": "applied", "mode": mode}
 
     @app.post("/demo/notify")
     async def demo_notify(ctx: Ctx = Depends(auth_ctx), body: dict | None = None) -> dict:
@@ -849,7 +955,23 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             sent = 0
             last_frame_at = time.monotonic()
             while max_frames <= 0 or sent < max_frames:
-                jpeg = ctx.pipeline.latest_frame_jpeg()
+                station_cap = getattr(ctx.pipeline, "station_cap", "full")
+                policy = ctx.policy or getattr(ctx.runtime, "policy", None)
+                h_mode = policy.household_mode if policy else getattr(ctx.pipeline, "_policy_mode", "full")
+                eff_mode = min_mode(station_cap, h_mode, getattr(ctx, "mode_ceiling", "full"))
+
+                if getattr(ctx.pipeline, "_idle", False):
+                    jpeg = None
+                elif eff_mode == "blackout":
+                    jpeg = getattr(ctx.pipeline, "_privacy_jpeg", None) or build_privacy_slate()
+                elif eff_mode == "privacy":
+                    jpeg = build_events_only_slate()
+                elif eff_mode == "limited":
+                    raw = getattr(ctx.pipeline, "raw_frame_jpeg", ctx.pipeline.latest_frame_jpeg)()
+                    jpeg = limit_jpeg(raw) if raw else None
+                else:  # full
+                    jpeg = getattr(ctx.pipeline, "raw_frame_jpeg", ctx.pipeline.latest_frame_jpeg)()
+
                 if jpeg:
                     yield b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + str(len(jpeg)).encode() \
                         + b"\r\n\r\n" + jpeg + b"\r\n"
@@ -870,7 +992,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             await sock.close(code=4401, reason="Unauthorized")
             return
         await sock.accept()
-        q = app.state.hub.subscribe()
+        q = app.state.hub.subscribe(role="owner")
         try:
             await sock.send_json({"type": "status", "seq": 0, "data": app.state.rt.status()})
             while True:
@@ -897,14 +1019,30 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             await sock.close(code=4401, reason="Unauthorized: session revoked or expired")
             return
         lr = await app.state.registry.get(viewer.household_id)
-        q = lr.hub.subscribe(viewer_id=viewer.id)
+        q = lr.hub.subscribe(viewer_id=viewer.id, role=viewer.role)
         try:
-            await sock.send_json({"type": "status", "seq": 0, "data": lr.runtime.status()})
+            status_data = dict(lr.runtime.status())
+            eff = lr.policy.compute_effective(getattr(lr.pipeline, "station_cap", "full"), viewer)
+            status_data["effective_mode"] = eff
+            if "mode_info" in status_data and isinstance(status_data["mode_info"], dict):
+                status_data["mode_info"] = dict(status_data["mode_info"])
+                status_data["mode_info"]["effective"] = eff
+            status_data["privacy_mode"] = eff == "blackout"
+            await sock.send_json({"type": "status", "seq": 0, "data": status_data})
             while True:
                 msg = await q.get()
                 if msg is KICKED:  # the owner revoked this viewer (T2.6)
                     await sock.close(code=CLOSE_REVOKED, reason="your access was revoked")
                     return
+                if msg.get("type") == "status" and isinstance(msg.get("data"), dict):
+                    data = dict(msg["data"])
+                    eff = lr.policy.compute_effective(getattr(lr.pipeline, "station_cap", "full"), viewer)
+                    data["effective_mode"] = eff
+                    if "mode_info" in data and isinstance(data["mode_info"], dict):
+                        data["mode_info"] = dict(data["mode_info"])
+                        data["mode_info"]["effective"] = eff
+                    data["privacy_mode"] = eff == "blackout"
+                    msg = {**msg, "data": data}
                 await sock.send_json(msg)
         except (WebSocketDisconnect, RuntimeError):
             pass

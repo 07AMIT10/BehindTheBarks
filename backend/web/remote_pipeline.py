@@ -191,6 +191,20 @@ class RemotePipeline:
         log.info("remote: sent policy=%s to phone (%s)", mode, "sent" if sent else "no phone")
         return sent
 
+    def request_mode(self, mode: str, *, from_role: str = "owner") -> bool:
+        """T3.3: ask the phone to raise its cap (mode_request downlink). Returns False with no phone."""
+        mode = parse_mode(mode)
+        sent = self._post({"type": "mode_request", "data": {"mode": mode, "from": from_role}})
+        log.info("remote: sent mode_request=%s (from=%s) to phone (%s)", mode, from_role,
+                 "sent" if sent else "no phone")
+        return sent
+
+    def raw_frame_jpeg(self) -> bytes | None:
+        """The un-processed newest preview JPEG from the phone, or None if idle/none yet."""
+        if self._idle:
+            return None
+        return self._jpeg
+
     def set_privacy(self, enabled: bool) -> bool:
         """Enable or disable family privacy mode remotely (mutes mic & replaces video with privacy slate)."""
         self._privacy_mode = bool(enabled)

@@ -23,6 +23,8 @@ from backend.fusion.state import FusionState, StateConfig
 from backend.web.hub import Hub
 from backend.web.ingest import Hello, IngestSession
 from backend.web.ingest_events import RemoteHello, RemoteSession
+from backend.web.modes import min_mode
+from backend.web.policy import Policy
 from backend.web.settings import is_demo
 
 log = logging.getLogger("runtime")
@@ -31,9 +33,11 @@ FPS_FRESH_S = 3.0  # status().fps is 0.0 when the newest frame is older than thi
 
 
 class Runtime:
-    def __init__(self, cfg: dict, pipeline: Any, interpreter: Any, notifier: Any, hub: Hub, clock=time.time, demo_clips: DemoClips | None = None):
+    def __init__(self, cfg: dict, pipeline: Any, interpreter: Any, notifier: Any, hub: Hub, clock=time.time,
+                 demo_clips: DemoClips | None = None, policy: Policy | None = None):
         self.cfg, self.pipeline, self.interpreter, self.notifier, self.hub, self.clock = (
             cfg, pipeline, interpreter, notifier, hub, clock)
+        self.policy: Policy = policy or Policy(household_mode=cfg.get("web", {}).get("mode", "full"))
         self.state = FusionState(StateConfig.from_config(cfg))
         self.triggers = TriggerPolicy.from_config(cfg)
         llm = cfg["web"]["llm"]
@@ -295,6 +299,16 @@ class Runtime:
             return self.pipeline.status()
         except Exception:  # noqa: BLE001 - includes NotImplementedError on the stub
             return None
+
+    def mode_info(self) -> dict[str, str]:
+        station_cap = getattr(self.pipeline, "station_cap", "full")
+        policy = getattr(self, "policy", None)
+        h_mode = policy.household_mode if policy else getattr(self.pipeline, "_policy_mode", "full")
+        return {
+            "household_mode": h_mode,
+            "station_cap": station_cap,
+            "effective": min_mode(station_cap, h_mode),
+        }
 
     def status(self) -> dict:
         ps = self._pipeline_status()

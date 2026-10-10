@@ -19,6 +19,7 @@ from typing import Any, Awaitable, Callable
 from backend.notify.dashboard import DashboardOnlyNotifier
 from backend.web.event_log import EventLog
 from backend.web.hub import Hub
+from backend.web.policy import Policy
 from backend.web.runtime import Runtime
 
 LEGACY = "legacy"
@@ -40,6 +41,7 @@ class HouseholdRuntime:
     runtime: Runtime
     hub: Hub
     pipeline: Any
+    policy: Policy = field(default_factory=Policy)
     used_at: float = 0.0
     stations: int = 0  # live station sockets; eviction needs zero of these and zero viewers
     viewers: int = 0
@@ -59,8 +61,10 @@ class HouseholdRegistry:
     # -- legacy ---------------------------------------------------------------------------------
     def use_legacy(self, runtime: Runtime, hub: Hub, pipeline: Any) -> HouseholdRuntime:
         """Wrap the objects create_app already built: the single-household behaviour, unchanged."""
+        policy = getattr(runtime, "policy", None) or Policy(household_mode="full")
+        runtime.policy = policy
         lr = HouseholdRuntime(household_id=LEGACY, runtime=runtime, hub=hub, pipeline=pipeline,
-                              used_at=self.clock())
+                              policy=policy, used_at=self.clock())
         self._households[LEGACY] = lr
         return lr
 
@@ -105,10 +109,14 @@ class HouseholdRegistry:
         else:
             interpreter = DisabledInterpreter()
         notifier = self.make_notifier(cfg) if self.make_notifier else DashboardOnlyNotifier()
-        rt = Runtime(cfg, pipeline, interpreter, notifier, hub, clock=self.clock)
+        policy = Policy(household_mode="privacy")
+        rt = Runtime(cfg, pipeline, interpreter, notifier, hub, clock=self.clock, policy=policy)
+        rt.policy = policy
+        if hasattr(pipeline, "set_policy"):
+            pipeline.set_policy(policy.household_mode)
         await rt.start()
         return HouseholdRuntime(household_id=hid, runtime=rt, hub=hub, pipeline=pipeline,
-                                used_at=self.clock())
+                                policy=policy, used_at=self.clock())
 
     def _household_settings(self, hid: str, cfg: dict) -> tuple[dict, bool, bool]:
         """The profile, log flag and LLM opt-in from the DB row (T2.9); else the cfg."""

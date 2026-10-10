@@ -24,6 +24,7 @@ class Hub:
         self._qsize, self._clock, self._log = client_queue, clock, log
         self._clients: set[asyncio.Queue] = set()
         self._viewers: dict[str, set[asyncio.Queue]] = {}  # viewer_id -> its live queues (T2.6)
+        self._queue_meta: dict[asyncio.Queue, dict[str, Any]] = {}  # metadata for T3.3/T3.4
         self._history: deque[dict] = deque(maxlen=history)
         self._seq = 0
         self._frame_period = 1.0 / frame_fps if frame_fps > 0 else 0.0
@@ -33,12 +34,13 @@ class Hub:
     def client_count(self) -> int:
         return len(self._clients)
 
-    def subscribe(self, viewer_id: str | None = None) -> asyncio.Queue:
-        """`viewer_id` tags the subscription so an owner can kick one viewer without touching others."""
+    def subscribe(self, viewer_id: str | None = None, role: str | None = None) -> asyncio.Queue:
+        """`viewer_id` and `role` tag the subscription so an owner can kick or track viewers (T2.6, T3.3)."""
         q: asyncio.Queue = asyncio.Queue(maxsize=self._qsize)
         self._clients.add(q)
         if viewer_id:
             self._viewers.setdefault(viewer_id, set()).add(q)
+        self._queue_meta[q] = {"viewer_id": viewer_id, "role": role}
         return q
 
     def kick(self, viewer_id: str) -> int:
@@ -47,6 +49,7 @@ class Hub:
         queues = self._viewers.pop(viewer_id, set())
         for q in queues:
             self._clients.discard(q)
+            self._queue_meta.pop(q, None)
             try:
                 q.put_nowait(KICKED)
             except asyncio.QueueFull:
@@ -55,6 +58,7 @@ class Hub:
 
     def unsubscribe(self, q: asyncio.Queue) -> None:
         self._clients.discard(q)
+        self._queue_meta.pop(q, None)
         for vid, queues in list(self._viewers.items()):
             queues.discard(q)
             if not queues:
