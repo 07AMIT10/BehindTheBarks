@@ -81,6 +81,9 @@ $ANDROID_HOME/build-tools/35.0.0/zipalign -c -P 16 4 app/build/outputs/apk/relea
 
 # Install to connected phone via ADB
 adb install -r android/app/build/outputs/apk/release/app-release.apk
+
+# On-device instrumented tests on the USB phone (screen unlocked); keeps the app installed after the run
+make android-test-device   # = cd android && ./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
 ```
 
 ---
