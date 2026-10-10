@@ -10,7 +10,8 @@
   "warnings": [],
   "notes": [],
   "shot": "large-f0.85-port-a-idle.jpg",
-  "detail": "status line '● Idle · Ready', expected Idle"
+  "detail": "status line '● Idle · Ready', expected Idle",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "large:0.85:port:b",
@@ -25,7 +26,8 @@
    "Stop Monitoring reachable after 0 swipe(s)"
   ],
   "shot": "large-f0.85-port-b-monitoring.jpg",
-  "detail": "backend connected=True, status line '● Live · Connected to Server'"
+  "detail": "backend connected=True, status line '● Live · Connected to Server'",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "large:0.85:port:c",
@@ -38,7 +40,8 @@
   "warnings": [],
   "notes": [],
   "shot": "large-f0.85-port-c-mode-chooser.jpg",
-  "detail": "tapped in-app mode control at 879,1339 after 0 swipes"
+  "detail": "tapped in-app mode control at 879,1341 after 0 swipes",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "large:0.85:port:d",
@@ -51,7 +54,8 @@
   "warnings": [],
   "notes": [],
   "shot": "large-f0.85-port-d-approval.jpg",
-  "detail": "lowered: tapped in-app mode control at 879,1339 after 0 swipes; tapped 'privacy' row of t; POST /mode full -> pending; prompt seen=True"
+  "detail": "lowered: tapped in-app mode control at 879,1341 after 0 swipes; tapped 'privacy' row of t; POST /mode full -> pending; prompt seen=True",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "large:1.0:port:a",
@@ -284,7 +288,8 @@
   "warnings": [],
   "notes": [],
   "shot": "native-f1.0-land-a-idle.jpg",
-  "detail": "status line '● Idle · Ready', expected Idle"
+  "detail": "status line '● Idle · Ready', expected Idle",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "native:1.0:land:b",
@@ -297,7 +302,8 @@
   "warnings": [],
   "notes": [],
   "shot": "native-f1.0-land-b-monitoring.jpg",
-  "detail": "after rotation"
+  "detail": "after rotation",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "native:1.0:land:c",
@@ -310,7 +316,8 @@
   "warnings": [],
   "notes": [],
   "shot": "native-f1.0-land-c-mode-chooser.jpg",
-  "detail": "tapped in-app mode control at 1191,606 after 0 swipes"
+  "detail": "tapped in-app mode control at 1191,605 after 0 swipes",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "native:1.0:land:d",
@@ -323,7 +330,8 @@
   "warnings": [],
   "notes": [],
   "shot": "native-f1.0-land-d-approval.jpg",
-  "detail": "prompt seen=True"
+  "detail": "prompt seen=True",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "native:1.0:port:a",
@@ -336,7 +344,8 @@
   "warnings": [],
   "notes": [],
   "shot": "native-f1.0-port-a-idle.jpg",
-  "detail": "status line '● Idle · Ready', expected Idle"
+  "detail": "status line '● Idle · Ready', expected Idle",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "native:1.0:port:b",
@@ -351,7 +360,8 @@
    "Stop Monitoring reachable after 0 swipe(s)"
   ],
   "shot": "native-f1.0-port-b-monitoring.jpg",
-  "detail": "backend connected=True, status line '● Live · Connected to Server'"
+  "detail": "backend connected=True, status line '● Live · Connected to Server'",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "native:1.0:port:c",
@@ -364,7 +374,8 @@
   "warnings": [],
   "notes": [],
   "shot": "native-f1.0-port-c-mode-chooser.jpg",
-  "detail": "tapped in-app mode control at 585,969 after 0 swipes"
+  "detail": "tapped in-app mode control at 585,969 after 0 swipes",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "native:1.0:port:d",
@@ -377,7 +388,8 @@
   "warnings": [],
   "notes": [],
   "shot": "native-f1.0-port-d-approval.jpg",
-  "detail": "lowered: tapped in-app mode control at 585,969 after 0 swipes; tapped 'privacy' row of th; POST /mode full -> pending; prompt seen=True"
+  "detail": "lowered: tapped in-app mode control at 585,969 after 0 swipes; tapped 'privacy' row of th; POST /mode full -> pending; prompt seen=True",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "native:1.0:port:dim",
@@ -390,7 +402,8 @@
   "warnings": [],
   "notes": [],
   "shot": "native-f1.0-port-dim-station.jpg",
-  "detail": "dim hides controls=True; tap wakes=True"
+  "detail": "dim hides controls=True; tap wakes=True",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "native:1.0:rotate:r",
@@ -403,7 +416,8 @@
   "warnings": [],
   "notes": [],
   "shot": "",
-  "detail": "events 439 -> 477; UI still monitoring=True; Stop Monitoring reached after 1 swipe(s)"
+  "detail": "events 437 -> 477; UI still monitoring=True; Stop Monitoring reached after 1 swipe(s)",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "native:1.3:port:a",
@@ -714,7 +728,8 @@
   "warnings": [],
   "notes": [],
   "shot": "small-f1.3-port-a-idle.jpg",
-  "detail": "status line '● Idle · Ready', expected Idle"
+  "detail": "status line '● Idle · Ready', expected Idle",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "small:1.3:port:b",
@@ -729,7 +744,8 @@
    "Stop Monitoring reachable after 0 swipe(s)"
   ],
   "shot": "small-f1.3-port-b-monitoring.jpg",
-  "detail": "backend connected=True, status line '● Live · Connected to Server'"
+  "detail": "backend connected=True, status line '● Live · Connected to Server'",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "small:1.3:port:c",
@@ -742,7 +758,8 @@
   "warnings": [],
   "notes": [],
   "shot": "small-f1.3-port-c-mode-chooser.jpg",
-  "detail": "tapped in-app mode control at 388,762 after 1 swipes"
+  "detail": "tapped in-app mode control at 388,762 after 1 swipes",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "small:1.3:port:d",
@@ -755,7 +772,8 @@
   "warnings": [],
   "notes": [],
   "shot": "small-f1.3-port-d-approval.jpg",
-  "detail": "lowered: tapped in-app mode control at 388,762 after 0 swipes; tapped 'privacy' row of th; POST /mode full -> pending; prompt seen=True"
+  "detail": "lowered: tapped in-app mode control at 388,762 after 0 swipes; tapped 'privacy' row of th; POST /mode full -> pending; prompt seen=True",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "small:1.5:port:a",
@@ -1068,7 +1086,8 @@
   "warnings": [],
   "notes": [],
   "shot": "tablet-f1.5-land-a-idle.jpg",
-  "detail": "status line '● Idle · Ready', expected Idle"
+  "detail": "status line '● Idle · Ready', expected Idle",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "tablet:1.5:land:b",
@@ -1081,7 +1100,8 @@
   "warnings": [],
   "notes": [],
   "shot": "tablet-f1.5-land-b-monitoring.jpg",
-  "detail": "after rotation"
+  "detail": "after rotation",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "tablet:1.5:land:c",
@@ -1094,7 +1114,8 @@
   "warnings": [],
   "notes": [],
   "shot": "tablet-f1.5-land-c-mode-chooser.jpg",
-  "detail": "tapped in-app mode control at 1301,819 after 0 swipes"
+  "detail": "tapped in-app mode control at 1301,819 after 0 swipes",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "tablet:1.5:land:d",
@@ -1107,7 +1128,8 @@
   "warnings": [],
   "notes": [],
   "shot": "tablet-f1.5-land-d-approval.jpg",
-  "detail": "prompt seen=True"
+  "detail": "prompt seen=True",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "tablet:1.5:port:a",
@@ -1120,7 +1142,8 @@
   "warnings": [],
   "notes": [],
   "shot": "tablet-f1.5-port-a-idle.jpg",
-  "detail": "status line '● Idle · Ready', expected Idle"
+  "detail": "status line '● Idle · Ready', expected Idle",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "tablet:1.5:port:b",
@@ -1135,7 +1158,8 @@
    "Stop Monitoring reachable after 0 swipe(s)"
   ],
   "shot": "tablet-f1.5-port-b-monitoring.jpg",
-  "detail": "backend connected=True, status line '● Live · Connected to Server'"
+  "detail": "backend connected=True, status line '● Live · Connected to Server'",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "tablet:1.5:port:c",
@@ -1148,7 +1172,8 @@
   "warnings": [],
   "notes": [],
   "shot": "tablet-f1.5-port-c-mode-chooser.jpg",
-  "detail": "tapped in-app mode control at 888,881 after 0 swipes"
+  "detail": "tapped in-app mode control at 888,881 after 0 swipes",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "tablet:1.5:port:d",
@@ -1161,7 +1186,8 @@
   "warnings": [],
   "notes": [],
   "shot": "tablet-f1.5-port-d-approval.jpg",
-  "detail": "lowered: tapped in-app mode control at 888,881 after 0 swipes; tapped 'privacy' row of th; POST /mode full -> pending; prompt seen=True"
+  "detail": "lowered: tapped in-app mode control at 888,881 after 0 swipes; tapped 'privacy' row of th; POST /mode full -> pending; prompt seen=True",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  },
  {
   "cid": "tablet:1.5:rotate:r",
@@ -1174,6 +1200,7 @@
   "warnings": [],
   "notes": [],
   "shot": "",
-  "detail": "events 460 -> 499; UI still monitoring=True; Stop Monitoring reached after 0 swipe(s)"
+  "detail": "events 455 -> 493; UI still monitoring=True; Stop Monitoring reached after 0 swipe(s)",
+  "run": "re-run 2026-10-11 04:08 @ b322ceb"
  }
 ]
