@@ -4,10 +4,16 @@ This task is a pure refactor — no endpoint or schema usage changes — so the 
 identity, caching, eviction and cfg-isolation guarantees the later phases rely on.
 """
 
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
 from backend.demo.mock_pipeline import MockPipeline
 from backend.notify.dashboard import DashboardOnlyNotifier
+from backend.store import db, repo
 from backend.web.hub import Hub
-from backend.web.registry import HouseholdRegistry, HouseholdRuntime
+from backend.web.registry import DisabledInterpreter, HouseholdRegistry, HouseholdRuntime
 from backend.web.runtime import Runtime
 from backend.web.settings import load_config
 
@@ -129,3 +135,73 @@ async def test_a_household_with_a_connected_viewer_is_not_evicted(tmp_path):
     assert reg.peek("hh-watch") is lr
     lr.hub.unsubscribe(q)
     assert await reg.evict_idle() == ["hh-watch"]
+
+
+# -- T4.x: a station channel gets the same interpreter decision as the household runtime ----------
+class FakeLLM:
+    """Stands in for LLMInterpreter: records the settings it was built with, never calls out."""
+
+    built: list = []
+
+    def __init__(self, settings):
+        FakeLLM.built.append(settings)
+        self.enabled = True
+        self.last_call = None
+
+    async def interpret(self, **_kw):  # pragma: no cover - the registry tests never reach a call
+        raise AssertionError("no LLM call may happen in a registry test")
+
+
+@pytest.fixture()
+def households():
+    engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False},
+                           future=True)
+    db.Base.metadata.create_all(engine)
+    return sessionmaker(bind=engine, future=True)
+
+
+@pytest.fixture()
+def fake_llm(monkeypatch):
+    monkeypatch.setattr(FakeLLM, "built", [])
+    monkeypatch.setattr("backend.fusion.llm_interpreter.LLMInterpreter", FakeLLM)
+    return FakeLLM
+
+
+def new_household(sm, *, llm_enabled: bool) -> str:
+    with sm() as s:
+        h, _ = repo.create_household(s, llm_enabled=llm_enabled)
+        s.commit()
+        return h.id
+
+
+async def household_and_station_interpreters(tmp_path, sm, *, hid: str, operator_llm: bool):
+    c = cfg(tmp_path)
+    c["web"]["llm"]["enabled"] = operator_llm
+    reg = HouseholdRegistry(c, clock=lambda: 1_000.0, idle_evict_s=600, sessionmaker=sm)
+    try:
+        lr = await reg.get(hid)
+        ch = await lr.channel("station-1")
+        return lr.runtime.interpreter, ch.runtime.interpreter
+    finally:
+        await reg.close()
+
+
+async def test_default_household_station_channel_is_disabled(tmp_path, households, fake_llm):
+    hid = new_household(households, llm_enabled=False)
+    room, station = await household_and_station_interpreters(tmp_path, households, hid=hid, operator_llm=False)
+    assert isinstance(room, DisabledInterpreter) and isinstance(station, DisabledInterpreter)
+    assert fake_llm.built == []
+
+
+async def test_owner_opt_in_gives_both_the_real_interpreter(tmp_path, households, fake_llm):
+    hid = new_household(households, llm_enabled=True)
+    room, station = await household_and_station_interpreters(tmp_path, households, hid=hid, operator_llm=True)
+    assert isinstance(room, FakeLLM) and isinstance(station, FakeLLM)
+    assert len(fake_llm.built) == 2  # one per runtime, each built from that household's cfg
+
+
+async def test_owner_opt_in_without_operator_switch_stays_disabled(tmp_path, households, fake_llm):
+    hid = new_household(households, llm_enabled=True)
+    room, station = await household_and_station_interpreters(tmp_path, households, hid=hid, operator_llm=False)
+    assert isinstance(room, DisabledInterpreter) and isinstance(station, DisabledInterpreter)
+    assert fake_llm.built == []

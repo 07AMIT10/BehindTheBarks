@@ -125,7 +125,11 @@ class HouseholdRuntime:
             from backend.main import build_pipeline
             pipeline = build_pipeline(cfg)
 
-        interpreter = DisabledInterpreter()
+        if self.registry is not None:  # same owner opt-in and operator switch as the household runtime
+            _, _, llm_enabled = self.registry._household_settings(self.household_id, cfg)
+            interpreter = self.registry.build_interpreter(cfg, llm_enabled)
+        else:
+            interpreter = DisabledInterpreter()
         notifier = DashboardOnlyNotifier()
         policy = Policy(household_mode=self.policy.household_mode)
         tracker = ViewerTracker(household_id=self.household_id, policy=policy, pipeline=pipeline, clock=clock)
@@ -219,17 +223,8 @@ class HouseholdRegistry:
 
             pipeline = build_pipeline(cfg)
         # Tester households must never inherit the operator's LLM keys or Telegram/WhatsApp tokens
-        # (T2.9): a disabled interpreter and a dashboard-only notifier unless the owner opted in
-        # (or the caller injected factories on purpose for the legacy household).
-        if self.make_interpreter is not None:
-            interpreter = self.make_interpreter(cfg)
-        elif llm_enabled and cfg["web"].get("llm", {}).get("enabled"):
-            from backend.fusion.llm_interpreter import LLMInterpreter
-            from backend.web.settings import LLMSettings
-
-            interpreter = LLMInterpreter(LLMSettings.from_config(cfg))
-        else:
-            interpreter = DisabledInterpreter()
+        # (T2.9): a disabled interpreter and a dashboard-only notifier unless the owner opted in.
+        interpreter = self.build_interpreter(cfg, llm_enabled)
         notifier = self.make_notifier(cfg) if self.make_notifier else DashboardOnlyNotifier()
         policy = Policy(household_mode="privacy")
         tracker = ViewerTracker(household_id=hid, policy=policy, pipeline=pipeline, clock=self.clock)
@@ -251,6 +246,19 @@ class HouseholdRegistry:
         lr.channels["default"] = default_ch
         lr.default_channel_id = "default"
         return lr
+
+    def build_interpreter(self, cfg: dict, llm_enabled: bool) -> Any:
+        """The single decision of which interpreter a household's runtime (and each of its station
+        channels, T4.1) gets. The real LLM only when the owner opted in AND the operator enabled
+        `web.llm`; anything else is DisabledInterpreter, so no room image leaves the host."""
+        if self.make_interpreter is not None:
+            return self.make_interpreter(cfg)
+        if llm_enabled and cfg["web"].get("llm", {}).get("enabled"):
+            from backend.fusion.llm_interpreter import LLMInterpreter
+            from backend.web.settings import LLMSettings
+
+            return LLMInterpreter(LLMSettings.from_config(cfg))
+        return DisabledInterpreter()
 
     def _household_settings(self, hid: str, cfg: dict) -> tuple[dict, bool, bool]:
         """The profile, log flag and LLM opt-in from the DB row (T2.9); else the cfg."""
