@@ -179,3 +179,36 @@ def test_deleting_the_household_closes_open_viewer_sockets(tmp_path):
             c.cookies.set(VIEWER_COOKIE, owner_cookie)
             assert c.request("DELETE", "/households/me", json={"recovery_key": recovery_key}).status_code == 200
             assert ws.receive().get("code") == 4410
+
+
+# -- review hardening: profile route, CORS, WebSocket origin, video tracker ------------------------
+def test_global_profile_put_is_closed_in_households_mode(owner_and_viewer):
+    c, owner_cookie, viewer_cookie = owner_and_viewer
+    for cookie in (owner_cookie, viewer_cookie):
+        c.cookies.set(VIEWER_COOKIE, cookie)
+        r = c.put("/profile", json={"dog_name": "Hijack"})
+        assert r.status_code == 404  # profile.json is shared across households; PUT /households/me/profile is the route
+
+
+def test_households_mode_has_no_wildcard_cors(tmp_path):
+    with TestClient(app(tmp_path)) as c:
+        r = c.get("/health", headers={"Origin": "https://evil.example"})
+        assert "access-control-allow-origin" not in {k.lower() for k in r.headers}
+
+
+def test_cross_site_websocket_is_refused_but_same_origin_works(owner_and_viewer):
+    c, owner_cookie, _ = owner_and_viewer
+    with c.websocket_connect("/ws", cookies={VIEWER_COOKIE: owner_cookie},
+                             headers={"Origin": "https://evil.example"}) as ws:
+        assert ws.receive().get("code") == 4403
+    with c.websocket_connect("/ws", cookies={VIEWER_COOKIE: owner_cookie},
+                             headers={"Origin": "http://testserver"}) as ws:
+        assert ws.receive_json()["type"] == "status"
+
+
+def test_a_finished_video_stream_leaves_no_ghost_viewer(owner_and_viewer):
+    c, owner_cookie, _ = owner_and_viewer
+    c.cookies.set(VIEWER_COOKIE, owner_cookie)
+    c.get("/video?max_frames=1")  # no frames ever arrive: ends on the idle timeout or immediately
+    lr = c.app.state.registry.peek(c.get("/me").json()["household_id"])
+    assert lr is not None and not lr.tracker._video_streams

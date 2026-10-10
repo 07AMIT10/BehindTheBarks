@@ -10,10 +10,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import hashlib
 import logging
 import secrets
 import time
 import uuid
+from urllib.parse import urlparse
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -41,6 +43,7 @@ from backend.web.registry import LEGACY, HouseholdRegistry
 VIEWER_COOKIE = "btb_session"
 STATION_AUTH_PREFIX = b"btb-auth-v1|"  # the signed challenge message: nonce | station_id | device
 SESSION_MAX_AGE_S = 31_536_000  # a year: the recovery key, not a password reset, is the escape hatch
+MAX_LIMITER_KEYS = 4096  # in-memory limiter dicts are pruned past this many keys
 HOUSEHOLD_CREATES_PER_HOUR = 5  # web.auth.household_creates_per_hour overrides it
 from backend.web.debug_metrics import LoopLagMonitor, calculate_drain_pct_per_h, collect_server_metrics
 from backend.web.event_log import EventLog
@@ -143,7 +146,6 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             hub.close()
 
     app = FastAPI(title="Behind The Barks", lifespan=lifespan)
-    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
     debug_cfg = web.get("debug") or {}
     debug_enabled = bool(debug_cfg.get("enabled", False))
@@ -152,6 +154,13 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     auth_enabled = bool(auth_cfg.get("enabled", False))
     auth_mode = str(auth_cfg.get("mode", "pin"))
     households_mode = auth_mode == "households"
+    cors_origins = [str(o).strip().rstrip("/") for o in (web.get("cors_origins") or []) if str(o).strip()]
+    if not households_mode:
+        app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+    elif cors_origins:
+        # credentialed requests cannot use "*": only the listed dev origins (web.cors_origins) get CORS
+        app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_credentials=True,
+                           allow_methods=["*"], allow_headers=["*"])
     dashboard_pin = str(auth_cfg.get("dashboard_pin", "")).strip()
     api_token = str(auth_cfg.get("api_token", "")).strip()
     ingest_token = str(auth_cfg.get("ingest_token", "")).strip()
@@ -278,6 +287,9 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             return None
         return key if isinstance(key, ec.EllipticCurvePublicKey) and key.curve.name == "secp256r1" else None
 
+    def _client_ip(req: Request) -> str:
+        return req.client.host if req.client else "unknown"
+
     def _pair_attempt(req: Request) -> None:
         """10/min per IP and 100/hour globally: every /pair attempt counts, valid or not."""
         now = time.time()
@@ -285,6 +297,9 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         recent = [t for t in pair_failures.get(ip, []) if now - t < 60]
         recent.append(now)
         pair_failures[ip] = recent
+        if len(pair_failures) > MAX_LIMITER_KEYS:
+            for k in [k for k, v in pair_failures.items() if not v or now - v[-1] >= 60]:
+                del pair_failures[k]
         hourly = [t for t in pair_failures_global if now - t < 3600]
         hourly.append(now)
         pair_failures_global[:] = hourly
@@ -388,7 +403,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         endpoints, but it may watch within its household."""
         if not households_mode:
             _pin_only_404()
-        check_rate_limit("join", 2.0)
+        check_rate_limit("join", 2.0, f"ip:{_client_ip(req)}")
         code = str((body or {}).get("code") or "").strip()
         label = str((body or {}).get("label") or "viewer")[:64].strip()
         with app.state.db_session() as s:
@@ -461,7 +476,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                               "server_time": rt_clock()})
         try:
             reply = json.loads(await asyncio.wait_for(sock.receive_text(), timeout=10.0))
-        except (asyncio.TimeoutError, TypeError, ValueError):
+        except Exception:  # timeout, bad JSON, or a binary frame (receive_text raises KeyError): all fail the auth
             await sock.close(code=4401, reason="auth timeout")
             return
         sig_b64 = str(reply.get("sig") or "") if isinstance(reply, dict) else ""
@@ -548,6 +563,9 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             raise HTTPException(status_code=429, detail="too many households from this address; try again later")
         recent.append(now)
         household_creates[ip] = recent
+        if len(household_creates) > MAX_LIMITER_KEYS:
+            for k in [k for k, v in household_creates.items() if not v or now - v[-1] >= 3600]:
+                del household_creates[k]
 
     @app.post("/households")
     async def create_household(req: Request, body: dict | None = None) -> dict:
@@ -575,7 +593,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     async def recover(req: Request, body: dict | None = None) -> dict:
         if not households_mode:
             _pin_only_404()
-        check_rate_limit("recover", 5.0)
+        check_rate_limit("recover", 5.0, f"ip:{_client_ip(req)}")
         key = str((body or {}).get("recovery_key") or "").strip()
         with app.state.db_session() as s:
             found = store_repo.recover_household(s, key)
@@ -728,6 +746,9 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         key = f"{hid}:{action}"  # one household's burst never limits another's
         clock_fn = getattr(getattr(app.state, "rt", None), "clock", time.time)
         now = clock_fn()
+        if len(rate_limits) > MAX_LIMITER_KEYS:  # keys are per household/IP and action: never let them pile up
+            for k in [k for k, t in rate_limits.items() if now - t > 3600]:
+                del rate_limits[k]
         last = rate_limits.get(key, 0.0)
         elapsed = now - last
         if elapsed < min_interval_s:
@@ -981,6 +1002,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     @app.put("/profile")
     async def put_profile(ctx: Ctx = Depends(auth_ctx), body: dict | None = None) -> dict:
         """Save the viewer's pet name/location/zone label and broadcast it to every dashboard."""
+        if households_mode:  # the shared profile.json is not per household; use PUT /households/me/profile
+            raise HTTPException(404, "use PUT /households/me/profile")
         check_rate_limit("profile", 0.5, ctx.household_id)
         store = getattr(app.state, "profile_store", None)
         if store is None or not isinstance(body, dict):
@@ -1292,7 +1315,9 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         if view not in ("grid", "focus", "none"):
             raise HTTPException(status_code=400, detail="view must be 'grid', 'focus', or 'none'")
         target_station = station or body.get("station")
-        viewer_id = ctx.viewer_id or _viewer_token(ctx.request) or "viewer"
+        raw_token = _viewer_token(ctx.request)
+        # never keep a session token itself as an in-memory key
+        viewer_id = ctx.viewer_id or (hashlib.sha256(raw_token.encode()).hexdigest()[:16] if raw_token else "viewer")
 
         lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
         if target_station:
@@ -1339,15 +1364,17 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         stream_id = str(uuid.uuid4())
         ua = ctx.request.headers.get("user-agent", "") if ctx.request else ""
         label = parse_ua_label(ua)
-        if tracker:
-            try:
-                tracker.enter_video(stream_id, viewer_id=ctx.viewer_id, label=label, view=view or "focus")
-            except Exception:
-                raise HTTPException(status_code=403, detail="Viewers disconnected by station")
 
         async def gen():
             sent = 0
             last_frame_at = time.monotonic()
+            # Register inside the generator: if the client drops before the first iteration the stream
+            # never starts, and a registration made earlier would never be released (ghost viewer).
+            if tracker:
+                try:
+                    tracker.enter_video(stream_id, viewer_id=ctx.viewer_id, label=label, view=view or "focus")
+                except Exception:
+                    return
             try:
                 while max_frames <= 0 or sent < max_frames:
                     if tracker and tracker.is_kicked():
@@ -1420,6 +1447,12 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             hdr = sock.headers.get("Authorization", "")
             token = hdr[len("Bearer "):].strip() if hdr.startswith("Bearer ") else ""
         await sock.accept()
+        origin = (sock.headers.get("origin") or "").strip().rstrip("/")
+        if origin and urlparse(origin).netloc not in {sock.headers.get("host", ""),
+                                                      sock.headers.get("x-forwarded-host", "")} \
+                and origin not in cors_origins:
+            await sock.close(code=4403, reason="Forbidden origin")  # cross-site WebSocket hijack guard
+            return
         if not token:
             await sock.close(code=4401, reason="Unauthorized: no session")
             return

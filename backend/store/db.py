@@ -69,5 +69,7 @@ def init_db(engine: Engine) -> None:
     Base.metadata.create_all(engine)
     with engine.begin() as conn:
         conn.execute(text("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)"))
-        conn.execute(text("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', :v)"),
+        # portable upsert (INSERT OR REPLACE is SQLite-only; BTB_DATABASE_URL may point at Postgres)
+        conn.execute(text("DELETE FROM meta WHERE key = 'schema_version'"))
+        conn.execute(text("INSERT INTO meta (key, value) VALUES ('schema_version', :v)"),
                      {"v": str(SCHEMA_VERSION)})

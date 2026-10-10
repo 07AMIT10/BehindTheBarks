@@ -215,3 +215,18 @@ def test_pair_failure_rate_limit(tmp_path):
                                   "device_name": "x"})
         assert c.post("/pair", json={"code": code, "pubkey_spki_b64": StationKey().spki_b64(),
                                      "device_name": "x"}).status_code == 429
+
+
+def test_a_binary_frame_instead_of_the_auth_reply_closes_with_4401(tmp_path):
+    """The auth step used receive_text(), which raises on a binary frame: that must be a clean 4401."""
+    import json
+
+    with TestClient(app(tmp_path)) as c:
+        code = paired_owner(c)
+        station_id = c.post("/pair", json={"code": code, "pubkey_spki_b64": StationKey().spki_b64(),
+                                           "device_name": "Pixel 8"}).json()["station_id"]
+        with c.websocket_connect("/ingest-events") as ws:
+            ws.send_text(json.dumps(hello_proto2(station_id)))
+            assert ws.receive_json()["type"] == "challenge"
+            ws.send_bytes(b"\x01not-json")
+            assert ws.receive().get("code") == 4401
