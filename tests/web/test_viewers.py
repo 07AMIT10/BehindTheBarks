@@ -126,3 +126,12 @@ def test_viewer_cannot_switch_the_household_to_demo(owner_and_viewer):
     c.cookies.set(VIEWER_COOKIE, owner_cookie)
     # the owner gets past the role check (a demo-less test household answers 400, not 403)
     assert c.post("/mode", json={"mode": "demo"}).status_code != 403
+
+
+def test_viewer_cannot_rename_the_dog(owner_and_viewer):
+    """The household profile is owner-only (T2.3): a viewer's PUT must be refused and change nothing."""
+    c, owner_cookie, viewer_cookie = owner_and_viewer
+    c.cookies.set(VIEWER_COOKIE, viewer_cookie)
+    assert c.put("/households/me/profile", json={"dog_name": "Hacked", "location": ""}).status_code == 403
+    c.cookies.set(VIEWER_COOKIE, owner_cookie)
+    assert c.get("/status").json()["profile"]["dog_name"] == "Rex"

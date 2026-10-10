@@ -615,6 +615,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     async def put_household_profile(ctx: Ctx = Depends(auth_ctx), body: dict | None = None) -> dict:
         if not households_mode:
             _pin_only_404()
+        if ctx.role != ROLE_OWNER:
+            raise HTTPException(status_code=403, detail="only the owner can change the dog profile")
         payload = body or {}
         dog_name = str(payload.get("dog_name") or "Your dog").strip()
         location = str(payload.get("location") or "").strip()
