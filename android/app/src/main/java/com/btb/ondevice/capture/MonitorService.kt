@@ -380,8 +380,9 @@ class MonitorService : Service(), LifecycleOwner {
         applyPreviewConfig()
         up.setPreviewMinInterval(modeController.policy.previewIntervalMs())
 
-        // T5.2 step 4: once a second, feed the ladder whether thermal got worse and how many previews
-        // the uploader dropped under backpressure since the last second.
+        // T5.2 step 4: once a second, feed the ladder whether thermal got worse, the current thermal
+        // level (the ladder never steps up while it is above 0) and how many previews the uploader
+        // dropped under backpressure since the last second.
         previewLadder = PreviewLadder()  // each monitoring session starts at rung 0
         ladderJob = CoroutineScope(Dispatchers.Default).launch {
             var prevLevel = thermal.currentLevel
@@ -394,6 +395,7 @@ class MonitorService : Service(), LifecycleOwner {
                 val dropped = up.previewDroppedBackpressure.get()
                 previewLadder.onSample(
                     thermalDegraded = level > prevLevel,
+                    thermalLevel = level.ordinal, // DegradeLevel: 0 = L0_NORMAL, 3 = L3_CRITICAL
                     offered = (offered - prevOffered).toInt(),
                     droppedBackpressure = (dropped - prevDropped).toInt(),
                 )

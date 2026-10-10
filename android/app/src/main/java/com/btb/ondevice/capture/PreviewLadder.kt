@@ -9,7 +9,9 @@ package com.btb.ondevice.capture
  * Fed about once a second through [onSample]:
  * - step DOWN one rung (never below the last) when the thermal level got worse since the previous
  *   sample, or when more than 20% of the previews offered in the last 10 s were dropped;
- * - step UP one rung only after 30 s with neither condition;
+ * - step UP one rung only after 30 s with neither condition AND the thermal level at 0 (normal).
+ *   A phone that stays hot at a constant level never steps up; the 30 s clock restarts each second
+ *   the level is above 0, so the climb back starts 30 s after the level returns to 0;
  * - never move more than one rung per 5 s, in either direction.
  */
 class PreviewLadder(private val clock: () -> Long = System::currentTimeMillis) {
@@ -42,10 +44,12 @@ class PreviewLadder(private val clock: () -> Long = System::currentTimeMillis) {
 
     /**
      * One sample. [thermalDegraded] is true when the thermal level got worse than at the previous
-     * sample. [offered] and [droppedBackpressure] are the previews offered to and dropped by the
-     * uploader since the previous sample (per-sample deltas, not running totals).
+     * sample. [thermalLevel] is the current degrade level as an int (0 = normal, 1 = warm, 2 = hot,
+     * 3 = critical); while it is above 0 the ladder never steps up. [offered] and [droppedBackpressure]
+     * are the previews offered to and dropped by the uploader since the previous sample (per-sample
+     * deltas, not running totals).
      */
-    fun onSample(thermalDegraded: Boolean, offered: Int, droppedBackpressure: Int) {
+    fun onSample(thermalDegraded: Boolean, thermalLevel: Int, offered: Int, droppedBackpressure: Int) {
         val now = clock()
         window.addLast(Sample(now, offered, droppedBackpressure))
         while (window.isNotEmpty() && now - window.first().atMs >= DROP_WINDOW_MS) window.removeFirst()
@@ -59,6 +63,8 @@ class PreviewLadder(private val clock: () -> Long = System::currentTimeMillis) {
                 currentRung++
                 lastMoveMs = now
             }
+        } else if (thermalLevel > 0) {
+            lastDegradedMs = now // hot but not worsening: no step down, and no step up either
         } else if (currentRung > 0 && now - lastDegradedMs >= CLEAN_BEFORE_STEP_UP_MS && mayMove(now)) {
             currentRung--
             lastMoveMs = now

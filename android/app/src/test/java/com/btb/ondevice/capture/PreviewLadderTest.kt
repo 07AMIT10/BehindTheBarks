@@ -8,9 +8,15 @@ class PreviewLadderTest {
     private val ladder = PreviewLadder { nowMs }
 
     /** Advances the fake clock to [atMs] and feeds one sample. */
-    private fun sample(atMs: Long, thermalDegraded: Boolean = false, offered: Int = 0, dropped: Int = 0) {
+    private fun sample(
+        atMs: Long,
+        thermalDegraded: Boolean = false,
+        thermalLevel: Int = 0,
+        offered: Int = 0,
+        dropped: Int = 0,
+    ) {
         nowMs = atMs
-        ladder.onSample(thermalDegraded, offered, dropped)
+        ladder.onSample(thermalDegraded, thermalLevel, offered, dropped)
     }
 
     @Test
@@ -52,6 +58,25 @@ class PreviewLadderTest {
         for (t in 1L..29L) sample(t * 1_000)
         assertThat(ladder.currentRung).isEqualTo(1)
         sample(30_000)
+        assertThat(ladder.currentRung).isEqualTo(0)
+    }
+
+    @Test
+    fun `sustained hot level never steps up`() {
+        sample(0, thermalDegraded = true, thermalLevel = 2) // rung 1
+        for (t in 1L..300L) sample(t * 1_000, thermalLevel = 2) // hot and constant: no worsening
+        assertThat(ladder.currentRung).isEqualTo(1)
+        for (t in 301L..400L) sample(t * 1_000, thermalLevel = 1) // still warm: still no step up
+        assertThat(ladder.currentRung).isEqualTo(1)
+    }
+
+    @Test
+    fun `steps up 30 s after the level returns to 0`() {
+        sample(0, thermalDegraded = true, thermalLevel = 1) // rung 1
+        for (t in 1L..60L) sample(t * 1_000, thermalLevel = 1) // hot until t=60 s
+        for (t in 61L..89L) sample(t * 1_000, thermalLevel = 0) // normal again, only 29 s clean
+        assertThat(ladder.currentRung).isEqualTo(1)
+        sample(90_000, thermalLevel = 0) // 30 s clean since the last hot sample at t=60 s
         assertThat(ladder.currentRung).isEqualTo(0)
     }
 
