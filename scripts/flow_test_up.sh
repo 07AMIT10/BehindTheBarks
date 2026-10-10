@@ -20,12 +20,55 @@ LOG="$DATA/backend.log"
 
 mkdir -p "$DATA"
 
+# Same identification as scripts/flow_test_down.sh: the flow-test backend is "uvicorn backend.main:app" with
+# "--port 8000" as a whole token, and never "--port 8001". Anything else on port 8000 is not ours.
+cmdline_of() {
+  local args=""
+  args="$(ps -o args= -p "$1" 2>/dev/null || true)"
+  if [[ -z "$args" && -r "/proc/$1/cmdline" ]]; then args="$(tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null || true)"; fi
+  printf '%s' "$args"
+}
+is_flowtest_backend() {
+  local args re8000='--port[[:space:]=]8000([[:space:]]|$)' re8001='--port[[:space:]=]8001'
+  args="$(cmdline_of "$1")"
+  [[ -n "$args" ]] || return 1
+  [[ "$args" == *"uvicorn backend.main:app"* ]] || return 1
+  [[ "$args" =~ $re8000 ]] || return 1
+  [[ "$args" =~ $re8001 ]] && return 1
+  return 0
+}
+# Sets LISTENING (1 if something accepts TCP on 127.0.0.1:$1) and LISTEN_PIDS (space-separated listener pids).
+find_listeners() {
+  local port="$1" out=""
+  LISTENING=0
+  LISTEN_PIDS=""
+  if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then LISTENING=1; fi
+  if command -v ss >/dev/null 2>&1; then
+    out="$(ss -Hltnp "sport = :$port" 2>/dev/null || true)"
+    LISTEN_PIDS="$(printf '%s\n' "$out" | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -un | tr '\n' ' ' || true)"
+  elif command -v lsof >/dev/null 2>&1; then
+    out="$(lsof -nP -t -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+    LISTEN_PIDS="$(printf '%s\n' "$out" | grep -E '^[0-9]+$' | sort -un | tr '\n' ' ' || true)"
+  fi
+  LISTEN_PIDS="${LISTEN_PIDS% }"
+  if [[ -n "$LISTEN_PIDS" ]]; then LISTENING=1; fi
+}
+
 if [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
   echo "FAIL: the flow-test backend is already running (pid $(cat "$PIDFILE")). Run scripts/flow_test_down.sh first."
   exit 1
 fi
-if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
-  echo "FAIL: port $PORT is already in use by another process. Not touching it; stop it, then rerun."
+find_listeners "$PORT"
+if [[ "$LISTENING" == 1 ]]; then
+  if [[ -n "$LISTEN_PIDS" && "$LISTEN_PIDS" != *" "* ]] && is_flowtest_backend "$LISTEN_PIDS"; then
+    echo "FAIL: a flow-test backend (pid $LISTEN_PIDS) already listens on port $PORT, but its PID file $PIDFILE is missing or stale."
+    echo "      Run scripts/flow_test_down.sh (it finds the backend by port) and rerun."
+  elif [[ -n "$LISTEN_PIDS" ]]; then
+    echo "FAIL: port $PORT is held by pid $LISTEN_PIDS, which is not the flow-test backend ($(cmdline_of "$LISTEN_PIDS" | cut -c1-120))."
+    echo "      Not touching it; stop it, then rerun."
+  else
+    echo "FAIL: port $PORT is in use by a process whose owner cannot be identified (ss and lsof missing or no permission). Not touching it."
+  fi
   exit 1
 fi
 

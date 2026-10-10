@@ -45,7 +45,7 @@ Key words used below:
   **You should see:** `Flow-test backend is up`, the dashboard address `http://localhost:8000/`, and the phone line
   saying the adb reverse is set. The numbered first steps are printed at the end.
 
-  **If not:** the script prints the last lines of `out/flowtest/backend.log`. Send them back. If the port is already in use, the other process is not ours; do not kill it.
+  **If not:** the script prints the last lines of `out/flowtest/backend.log`. Send them back. If the port is already in use, the message says what holds it. A flow-test backend with a lost PID file: run `scripts/flow_test_down.sh`, which finds it by port 8000. Any other process is not ours: do not kill it.
 
 ---
 
@@ -216,7 +216,7 @@ Use a second, simulated station on this computer (not the phone).
 ## Stopping the test
 
 - [ ] On the phone, tap Stop Monitoring if it is still running.
-- [ ] In the terminal, run `scripts/flow_test_down.sh`. It stops the backend, removes the USB link, and force-stops the app. It keeps your data in `out/flowtest/`.
+- [ ] In the terminal, run `scripts/flow_test_down.sh`. It stops the backend (by its PID file, or by port 8000 if the PID file is lost; never a process that is not the flow-test backend), removes the USB link, and force-stops the app. It keeps your data in `out/flowtest/`.
 
 ---
 

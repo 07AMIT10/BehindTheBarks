@@ -25,11 +25,45 @@ else
   fail "backend /health does not answer on 127.0.0.1:$PORT (run scripts/flow_test_up.sh)"
 fi
 
-# 2. the backend that answers is the flow-test one (pid file), in households mode
-if [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-  pass "flow-test backend is running (pid $(cat "$PIDFILE"))"
+# 2. the process on port 8000 is the flow-test backend (same identification as flow_test_down.sh), and the PID file agrees
+cmdline_of() {
+  local args=""
+  args="$(ps -o args= -p "$1" 2>/dev/null || true)"
+  if [[ -z "$args" && -r "/proc/$1/cmdline" ]]; then args="$(tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null || true)"; fi
+  printf '%s' "$args"
+}
+is_flowtest_backend() {
+  local args re8000='--port[[:space:]=]8000([[:space:]]|$)' re8001='--port[[:space:]=]8001'
+  args="$(cmdline_of "$1")"
+  [[ -n "$args" ]] || return 1
+  [[ "$args" == *"uvicorn backend.main:app"* ]] || return 1
+  [[ "$args" =~ $re8000 ]] || return 1
+  [[ "$args" =~ $re8001 ]] && return 1
+  return 0
+}
+LISTEN_PIDS=""
+LISTENING=0
+if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then LISTENING=1; fi
+if command -v ss >/dev/null 2>&1; then
+  LISTEN_PIDS="$(ss -Hltnp "sport = :$PORT" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -un | tr '\n' ' ' || true)"
+elif command -v lsof >/dev/null 2>&1; then
+  LISTEN_PIDS="$(lsof -nP -t -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | grep -E '^[0-9]+$' | sort -un | tr '\n' ' ' || true)"
+fi
+LISTEN_PIDS="${LISTEN_PIDS% }"
+[[ -n "$LISTEN_PIDS" ]] && LISTENING=1
+if [[ -n "$LISTEN_PIDS" && "$LISTEN_PIDS" != *" "* ]] && is_flowtest_backend "$LISTEN_PIDS"; then
+  PIDFILE_PID="$(cat "$PIDFILE" 2>/dev/null || true)"
+  if [[ "$PIDFILE_PID" == "$LISTEN_PIDS" ]]; then
+    pass "flow-test backend is running (pid $LISTEN_PIDS, matches the PID file)"
+  else
+    fail "flow-test backend (pid $LISTEN_PIDS) listens on $PORT, but the PID file $PIDFILE is missing or stale: run scripts/flow_test_down.sh (it stops it by port)"
+  fi
+elif [[ -n "$LISTEN_PIDS" ]]; then
+  fail "port $PORT is held by pid $LISTEN_PIDS, which is not the flow-test backend ($(cmdline_of "$LISTEN_PIDS" | cut -c1-120)); not touched"
+elif [[ "$LISTENING" == 1 ]]; then
+  fail "port $PORT is in use, but its owner cannot be identified (ss and lsof missing or no permission)"
 else
-  fail "no live flow-test pid file at $PIDFILE"
+  fail "no flow-test backend on port $PORT (run scripts/flow_test_up.sh)"
 fi
 AUTH="$(curl -fsS -m 3 "http://127.0.0.1:$PORT/auth/status" 2>/dev/null || true)"
 if [[ "$AUTH" == *'"mode":"households"'* || "$AUTH" == *'"mode": "households"'* ]]; then
