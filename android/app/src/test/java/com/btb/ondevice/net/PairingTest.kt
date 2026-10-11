@@ -56,7 +56,7 @@ class PairingTest {
                 MockResponse().setResponseCode(200)
                     .setBody("""{"station_id":"st1","household_id":"hh1","server_time":1700000000.0}""")
         }
-        val result = StationPairing.pair(server.url("/").toString(), "the-code", "Pixel 8", SoftwareSigner())
+        val result = StationPairing.pair(server.url("/").toString(), "the-code", "Pixel 8", SoftwareSigner(), true)
         assertThat(result).isInstanceOf(PairResult.Ok::class.java)
         val pairing = (result as PairResult.Ok).pairing
         assertThat(pairing.stationId).isEqualTo("st1")
@@ -74,7 +74,7 @@ class PairingTest {
             override fun dispatch(request: RecordedRequest): MockResponse =
                 MockResponse().setResponseCode(400).setBody("""{"error":"invalid_or_expired_code"}""")
         }
-        val result = StationPairing.pair(server.url("/").toString(), "used-code", "Pixel 8", SoftwareSigner())
+        val result = StationPairing.pair(server.url("/").toString(), "used-code", "Pixel 8", SoftwareSigner(), true)
         assertThat(result).isEqualTo(PairResult.InvalidCode)
     }
 
@@ -110,5 +110,12 @@ class PairingTest {
         assertThat(StationPairing.pairEndpoint("http://192.168.1.10:8000/pair/")).isEqualTo("http://192.168.1.10:8000/pair")
         assertThat(StationPairing.pairEndpoint("https://host.example")).isEqualTo("https://host.example/pair")
         assertThat(StationPairing.pairEndpoint("https://host.example/")).isEqualTo("https://host.example/pair")
+    }
+
+    @Test
+    fun `pair refuses a cleartext pairing endpoint in release without sending a request`() = runBlocking {
+        val result = StationPairing.pair(server.url("/").toString(), "the-code", "Pixel 8", SoftwareSigner(), false)
+        assertThat(result).isInstanceOf(PairResult.Refused::class.java)
+        assertThat(server.requestCount).isEqualTo(0)
     }
 }

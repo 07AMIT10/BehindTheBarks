@@ -4,6 +4,8 @@ import android.content.SharedPreferences
 import com.btb.ondevice.net.PairResult
 import com.btb.ondevice.net.Signer
 import com.btb.ondevice.net.StationPairing
+import com.btb.ondevice.net.UrlCheck
+import com.btb.ondevice.net.UrlPolicy
 import com.btb.ondevice.util.PairingTarget
 
 /**
@@ -17,8 +19,15 @@ object PairingFlow {
         target: PairingTarget.Code,
         deviceName: String,
         signer: Signer,
+        allowCleartext: Boolean,
     ): PairResult {
-        val result = StationPairing.pair(target.pairUrl, target.code, deviceName, signer)
+        // Both the saved websocket URL and the pairing endpoint must pass the link policy (H2).
+        // A refusal returns before any request is sent and before any preference is written.
+        for (url in listOf(target.wsUrl, target.pairUrl)) {
+            val check = UrlPolicy.check(url, allowCleartext)
+            if (check is UrlCheck.Rejected) return PairResult.Refused(check.reason)
+        }
+        val result = StationPairing.pair(target.pairUrl, target.code, deviceName, signer, allowCleartext)
         if (result is PairResult.Ok) {
             prefs.edit()
                 .putString(StationPrefs.STATION_ID, result.pairing.stationId)

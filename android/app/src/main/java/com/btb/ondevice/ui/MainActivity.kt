@@ -38,6 +38,9 @@ import com.btb.ondevice.capture.MonitorServiceListener
 import com.btb.ondevice.net.ConnectionState
 import com.btb.ondevice.net.PairResult
 import com.btb.ondevice.net.StationKey
+import com.btb.ondevice.net.UrlCheck
+import com.btb.ondevice.net.UrlPolicy
+import com.btb.ondevice.BuildConfig
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import com.btb.ondevice.util.PairingTarget
@@ -349,11 +352,13 @@ class MainActivity : Activity() {
         }
         presetsLayout.addView(cloudPreset, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f).apply { rightMargin = dp(8) })
 
+        // Local presets fill ws:// URLs, which a release build refuses (H2): debug builds only.
         val wifiPreset = Button(this).apply {
-            text = "Local Wi-Fi"
+            text = if (BuildConfig.DEBUG) "Local Wi-Fi" else "Local Wi-Fi (debug builds only)"
             textSize = 11f
             setBackgroundColor(Color.parseColor("#37474F"))
             setTextColor(Color.WHITE)
+            isEnabled = BuildConfig.DEBUG
             setOnClickListener {
                 showLocalWifiPrompt()
             }
@@ -361,10 +366,11 @@ class MainActivity : Activity() {
         presetsLayout.addView(wifiPreset, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
 
         val usbPreset = Button(this).apply {
-            text = "USB (Local)"
+            text = if (BuildConfig.DEBUG) "USB (Local)" else "USB (debug builds only)"
             textSize = 11f
             setBackgroundColor(Color.parseColor("#37474F"))
             setTextColor(Color.WHITE)
+            isEnabled = BuildConfig.DEBUG
             setOnClickListener {
                 urlEditText.setText("ws://127.0.0.1:8000/ingest-events")
             }
@@ -660,7 +666,7 @@ class MainActivity : Activity() {
             val linkUrl = uri.getQueryParameter("url")
             val linkToken = uri.getQueryParameter("token")
             val linkDevice = uri.getQueryParameter("device")
-            if (!linkUrl.isNullOrBlank()) {
+            if (!linkUrl.isNullOrBlank() && allowedServerLink(linkUrl)) {
                 val host = runCatching { android.net.Uri.parse(linkUrl).host }.getOrNull() ?: linkUrl
                 // A deep link is attacker-controllable (any web page can fire one): confirm before it
                 // touches the stored configuration, and never take a token for a different host.
@@ -1003,9 +1009,10 @@ class MainActivity : Activity() {
      * payload fills in the server settings. Returns the parsed target, or null when the text is not a payload.
      */
     private fun applyPairingPayload(rawText: String): PairingTarget? {
-        val target = QrDecoder.parsePairingText(rawText)
+        val target = QrDecoder.parsePairingText(rawText, BuildConfig.DEBUG)
         when (target) {
             is PairingTarget.Code -> pairStation(target)  // v2: signed identity (T2.5)
+            is PairingTarget.Rejected -> Toast.makeText(this, target.reason, Toast.LENGTH_LONG).show()  // H2
             is PairingTarget.Manual -> {
                 val config = target.config
                 urlEditText.setText(config.url)
@@ -1032,7 +1039,7 @@ class MainActivity : Activity() {
         Toast.makeText(this, "Pairing station…", Toast.LENGTH_SHORT).show()
         MainScope().launch {
             val deviceName = prefs.getString(KEY_DEVICE, Build.MODEL) ?: Build.MODEL
-            when (val result = PairingFlow.pairAndSave(prefs, target, deviceName, StationKey.getOrCreate())) {
+            when (val result = PairingFlow.pairAndSave(prefs, target, deviceName, StationKey.getOrCreate(), BuildConfig.DEBUG)) {
                 is PairResult.Ok -> {
                     urlEditText.setText(target.wsUrl)
                     refreshHouseholdLabel()
@@ -1040,6 +1047,7 @@ class MainActivity : Activity() {
                 }
                 PairResult.InvalidCode -> Toast.makeText(this@MainActivity, "That pairing code is expired or used", Toast.LENGTH_LONG).show()
                 is PairResult.Failed -> Toast.makeText(this@MainActivity, "Pairing failed: ${result.detail}", Toast.LENGTH_LONG).show()
+                is PairResult.Refused -> Toast.makeText(this@MainActivity, result.reason, Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -1090,8 +1098,22 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * True when [url] may be used by this build (H2). A refusal says why in a toast and changes nothing:
+     * the typed text stays in the field and no preference is written.
+     */
+    private fun allowedServerLink(url: String): Boolean {
+        val check = UrlPolicy.check(url, BuildConfig.DEBUG)
+        if (check is UrlCheck.Rejected) {
+            Toast.makeText(this, check.reason, Toast.LENGTH_LONG).show()
+            return false
+        }
+        return true
+    }
+
     private fun startMonitoringService() {
         val url = urlEditText.text.toString().trim()
+        if (!allowedServerLink(url)) return
         val device = deviceEditText.text.toString().trim()
         // A paired station (households, T2.5) identifies itself with its id and Keystore key, not the shared token.
         val stationId = prefs.getString(KEY_STATION_ID, null)?.takeIf { it.isNotBlank() }

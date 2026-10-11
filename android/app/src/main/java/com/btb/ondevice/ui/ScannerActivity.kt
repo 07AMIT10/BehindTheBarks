@@ -1,6 +1,7 @@
 package com.btb.ondevice.ui
 
 import android.Manifest
+import com.btb.ondevice.BuildConfig
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
@@ -80,10 +81,17 @@ class ScannerActivity : Activity(), LifecycleOwner {
             if (done) return
             val rgba = rgbaFrom(proxy)
             val text = rgba?.let { QrDecoder.decodeRgba(it, proxy.width, proxy.height) }
-            val target = text?.let { QrDecoder.parsePairingText(it) }
+            val target = text?.let { QrDecoder.parsePairingText(it, BuildConfig.DEBUG) }
             if (target is PairingTarget.Code && !done) {
                 done = true
                 runOnUiThread { pair(target) }
+            } else if (target is PairingTarget.Rejected && !done) {
+                // H2: a link this build may not use. Say why and close, so a rescan starts clean.
+                done = true
+                runOnUiThread {
+                    Toast.makeText(this, target.reason, Toast.LENGTH_LONG).show()
+                    finish()
+                }
             }
         } catch (t: Throwable) {
             Log.w("Scanner", "frame failed", t)
@@ -127,7 +135,7 @@ class ScannerActivity : Activity(), LifecycleOwner {
         val deviceName = prefs.getString(StationPrefs.DEVICE, android.os.Build.MODEL) ?: android.os.Build.MODEL
         Toast.makeText(this, "Pairing station…", Toast.LENGTH_SHORT).show()
         scope.launch {
-            when (val result = PairingFlow.pairAndSave(prefs, target, deviceName, StationKey.getOrCreate())) {
+            when (val result = PairingFlow.pairAndSave(prefs, target, deviceName, StationKey.getOrCreate(), BuildConfig.DEBUG)) {
                 is PairResult.Ok -> {
                     Toast.makeText(this@ScannerActivity, "✓ Station paired — start monitoring", Toast.LENGTH_LONG).show()
                     finish()
@@ -139,6 +147,10 @@ class ScannerActivity : Activity(), LifecycleOwner {
                 is PairResult.Failed -> {
                     done = false
                     Toast.makeText(this@ScannerActivity, "Pairing failed: ${result.detail}", Toast.LENGTH_LONG).show()
+                }
+                is PairResult.Refused -> {
+                    done = false
+                    Toast.makeText(this@ScannerActivity, result.reason, Toast.LENGTH_LONG).show()
                 }
             }
         }

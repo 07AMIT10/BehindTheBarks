@@ -36,6 +36,9 @@ import com.btb.ondevice.net.EventSpool
 import com.btb.ondevice.net.EventUploader
 import com.btb.ondevice.net.EventUploaderListener
 import com.btb.ondevice.net.StationKey
+import com.btb.ondevice.net.UrlCheck
+import com.btb.ondevice.net.UrlPolicy
+import com.btb.ondevice.BuildConfig
 import com.btb.ondevice.pipeline.AndroidMemoryProvider
 import com.btb.ondevice.pipeline.AndroidThermalProvider
 import com.btb.ondevice.pipeline.InferenceExecutor
@@ -378,6 +381,14 @@ class MonitorService : Service(), LifecycleOwner {
         val serverUrl = intent?.getStringExtra(EXTRA_SERVER_URL)
             ?: intent?.getStringExtra("server_url")
             ?: defaultUrl
+        // H2, defence in depth: the UI refuses these links too. A refused start still calls startForeground
+        // (the system requires it for a foreground start), shows the reason in the notification and stops.
+        val linkCheck = UrlPolicy.check(serverUrl, BuildConfig.DEBUG)
+        if (linkCheck is UrlCheck.Rejected && !isRunning.get()) {
+            startForeground(NOTIFICATION_ID, buildNotification(linkCheck.reason))
+            stopSelf()
+            return START_NOT_STICKY
+        }
         val deviceName = intent?.getStringExtra(EXTRA_DEVICE_NAME)
             ?: intent?.getStringExtra("device_name")
             ?: defaultDevice
