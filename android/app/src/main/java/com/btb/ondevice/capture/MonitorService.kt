@@ -557,6 +557,7 @@ class MonitorService : Service(), LifecycleOwner {
             degradeLevel = { pipeline?.scheduler?.getLevel() ?: com.btb.ondevice.pipeline.DegradeLevel.L0_NORMAL },
             previewEncoder = { previewEncoder },
             previewRung = { previewLadder.currentRung },
+            audioStreaming = { isAudioStreaming() },
             sampleIntervalMs = 10_000L,
             scope = CoroutineScope(Dispatchers.Default),
         )
@@ -694,6 +695,10 @@ class MonitorService : Service(), LifecycleOwner {
             Log.w("MonitorService", "audio chunk skipped: ${t.message}")
         }
     }
+
+    /** True while live audio is actually leaving the phone: the gate is open and the socket is up. */
+    fun isAudioStreaming(): Boolean =
+        modeController.shouldStreamAudio() && uploader?.connectionState == ConnectionState.CONNECTED
 
     /** T3.9 listener chime: a low prompt then a beep, distinct from the video chime (ACK, BEEP2) and the treat chime. */
     private fun playListenerChime() {
