@@ -37,6 +37,7 @@ from backend.store.models import Viewer as _ViewerRow
 from backend.web.ingest import CLOSE_REVOKED
 from backend.web.auth import Ctx
 from backend.web.limited import limit_jpeg
+from backend.web.limits import RateLimiter
 from backend.web.modes import ModeError, min_mode, mode_rank, parse_mode
 from backend.web.policy import Policy, build_events_only_slate, build_privacy_slate
 from backend.web.registry import LEGACY, HouseholdRegistry
@@ -44,7 +45,6 @@ from backend.web.registry import LEGACY, HouseholdRegistry
 VIEWER_COOKIE = "btb_session"
 STATION_AUTH_PREFIX = b"btb-auth-v1|"  # the signed challenge message: nonce | station_id | device
 SESSION_MAX_AGE_S = 31_536_000  # a year: the recovery key, not a password reset, is the escape hatch
-MAX_LIMITER_KEYS = 4096  # in-memory limiter dicts are pruned past this many keys
 HOUSEHOLD_CREATES_PER_HOUR = 5  # web.auth.household_creates_per_hour overrides it
 from backend.web.debug_metrics import LoopLagMonitor, calculate_drain_pct_per_h, collect_server_metrics
 from backend.web.event_log import EventLog
@@ -292,20 +292,25 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     def _client_ip(req: Request) -> str:
         return req.client.host if req.client else "unknown"
 
+    # One limiter for every rate limit and lockout in this app (H4, backend/web/limits.py).
+    limiter = RateLimiter(clock=rt_clock)
+    LOCKOUT_DETAIL = "too many failed attempts; try again later"  # generic: no oracle on the code
+
+    def _lockout_key(name: str, req: Request) -> str:
+        """Refuse with 429 + Retry-After while this client IP is locked out for `name` (the failed
+        attempts of /pair, /auth/recover and /join each have their own per-IP counter)."""
+        key = f"{name}:{_client_ip(req)}"
+        wait = limiter.locked_for(key)
+        if wait > 0:
+            raise HTTPException(status_code=429, detail=LOCKOUT_DETAIL,
+                                headers={"Retry-After": RateLimiter.retry_after(wait)})
+        return key
+
     def _pair_attempt(req: Request) -> None:
         """10/min per IP and 100/hour globally: every /pair attempt counts, valid or not."""
-        now = time.time()
-        ip = req.client.host if req.client else "unknown"
-        recent = [t for t in pair_failures.get(ip, []) if now - t < 60]
-        recent.append(now)
-        pair_failures[ip] = recent
-        if len(pair_failures) > MAX_LIMITER_KEYS:
-            for k in [k for k, v in pair_failures.items() if not v or now - v[-1] >= 60]:
-                del pair_failures[k]
-        hourly = [t for t in pair_failures_global if now - t < 3600]
-        hourly.append(now)
-        pair_failures_global[:] = hourly
-        if len(recent) > 10 or len(hourly) > 100:
+        ok_ip = limiter.hit(f"pair:ip:{_client_ip(req)}", 10, 60)
+        ok_all = limiter.hit("pair:global", 100, 3600)
+        if not (ok_ip and ok_all):
             raise HTTPException(status_code=429, detail="too many pairing attempts; try again later")
 
     @app.post("/households/me/pairing")
@@ -338,6 +343,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         failure, so a caller cannot tell a used code from a wrong one."""
         if not households_mode:
             _pin_only_404()
+        lock_key = _lockout_key("pair", req)
         _pair_attempt(req)
         payload = body or {}
         code = str(payload.get("code") or "").strip()
@@ -359,9 +365,11 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 station = store_repo.create_station(s, household_id=consumed.household_id, name=device_name,
                                                    pubkey_spki=key.public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo))
                 s.commit()
+                limiter.record_success(lock_key)
                 return {"station_id": station.id, "household_id": station.household_id,
                         "server_time": rt_clock()}
         except _BadPair:
+            limiter.record_failure(lock_key)
             return _bad_code()
 
     @app.delete("/stations/{station_id}")
@@ -406,17 +414,20 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         endpoints, but it may watch within its household."""
         if not households_mode:
             _pin_only_404()
+        lock_key = _lockout_key("join", req)
         check_rate_limit("join", 2.0, f"ip:{_client_ip(req)}")
         code = str((body or {}).get("code") or "").strip()
         label = str((body or {}).get("label") or "viewer")[:64].strip()
         with app.state.db_session() as s:
             consumed = store_repo.consume_pairing_code(s, code, kind=KIND_VIEWER)
             if consumed is None:
+                limiter.record_failure(lock_key)
                 raise HTTPException(status_code=400, detail="invalid_or_expired_code")
             household_id, ceiling = consumed.household_id, (consumed.mode_ceiling or "full")
             viewer, token = store_repo.create_viewer(
                 s, household_id=household_id, role=ROLE_VIEWER, label=label, mode_ceiling=ceiling)
             s.commit()
+        limiter.record_success(lock_key)
         resp = JSONResponse({"ok": True, "household_id": household_id})
         _set_session_cookie(resp, token, req)
         return resp
@@ -559,16 +570,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     create_limit = int((web.get("auth") or {}).get("household_creates_per_hour", HOUSEHOLD_CREATES_PER_HOUR))
 
     def _rate_limit_household_creates(req: Request) -> None:
-        now = time.time()
-        ip = req.client.host if req.client else "unknown"
-        recent = [t for t in household_creates.get(ip, []) if now - t < 3600]
-        if len(recent) >= create_limit:
+        if not limiter.hit(f"create:{_client_ip(req)}", create_limit, 3600.0, count_denied=False):
             raise HTTPException(status_code=429, detail="too many households from this address; try again later")
-        recent.append(now)
-        household_creates[ip] = recent
-        if len(household_creates) > MAX_LIMITER_KEYS:
-            for k in [k for k, v in household_creates.items() if not v or now - v[-1] >= 3600]:
-                del household_creates[k]
 
     @app.post("/households")
     async def create_household(req: Request, body: dict | None = None) -> dict:
@@ -596,14 +599,17 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     async def recover(req: Request, body: dict | None = None) -> dict:
         if not households_mode:
             _pin_only_404()
+        lock_key = _lockout_key("recover", req)
         check_rate_limit("recover", 5.0, f"ip:{_client_ip(req)}")
         key = str((body or {}).get("recovery_key") or "").strip()
         with app.state.db_session() as s:
             found = store_repo.recover_household(s, key)
             if found is None:
+                limiter.record_failure(lock_key)
                 raise HTTPException(status_code=401, detail="unknown recovery key")
             viewer, token = found
             s.commit()
+        limiter.record_success(lock_key)
         resp = JSONResponse({"ok": True})
         _set_session_cookie(resp, token, req)
         return resp
@@ -743,29 +749,16 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     rate_limit_cfg = web.get("rate_limits") or {}
     rate_limits_enabled = bool(rate_limit_cfg.get("enabled", auth_enabled))
 
-    rate_limits: dict[str, float] = {}
-    household_creates: dict[str, list[float]] = {}  # per-IP hourly buckets (households mode)
-    pair_failures: dict[str, list[float]] = {}  # per-minute /pair attempts
-    pair_failures_global: list[float] = []  # per-hour /pair attempts
-
     def check_rate_limit(action: str, min_interval_s: float, hid: str = LEGACY) -> None:
         if not rate_limits_enabled:
             return
         key = f"{hid}:{action}"  # one household's burst never limits another's
-        clock_fn = getattr(getattr(app.state, "rt", None), "clock", time.time)
-        now = clock_fn()
-        if len(rate_limits) > MAX_LIMITER_KEYS:  # keys are per household/IP and action: never let them pile up
-            for k in [k for k, t in rate_limits.items() if now - t > 3600]:
-                del rate_limits[k]
-        last = rate_limits.get(key, 0.0)
-        elapsed = now - last
-        if elapsed < min_interval_s:
-            wait_s = round(min_interval_s - elapsed, 2)
+        wait_s = limiter.check_interval(key, min_interval_s)
+        if wait_s > 0:
             raise HTTPException(
                 status_code=429,
                 detail=f"Rate limit exceeded for {action}. Please wait {wait_s}s before retrying."
             )
-        rate_limits[key] = now
 
     @app.get("/auth/status")
     async def auth_status() -> dict:
@@ -808,12 +801,6 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         clients = hub.client_count
         queue_depths = [q.qsize() for q in getattr(hub, "_clients", set())]
 
-        if households_mode:
-            entries = getattr(app.state.registry, "_households", {})
-            households_count = len(entries)
-        else:
-            households_count = 1
-
         pipeline = ctx.pipeline
         lr = app.state.registry.peek(ctx.household_id) if hasattr(app.state, "registry") else None
         if station:
@@ -845,7 +832,6 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 "clients": clients,
                 "queue_depths": queue_depths,
             },
-            "households": households_count,
             "station": {
                 "latest_telemetry": latest_telemetry,
                 "series": series,

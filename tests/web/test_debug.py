@@ -117,7 +117,7 @@ def test_debug_metrics_owner_returns_valid_shape(tmp_path):
         assert "clients" in data["hub"]
         assert "queue_depths" in data["hub"]
 
-        assert data["households"] >= 1
+        assert "households" not in data  # the server-wide household count is never exposed (H3c)
         assert "station" in data
         assert "downlinks" in data
         assert "sent" in data["downlinks"]
