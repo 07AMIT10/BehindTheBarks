@@ -7,8 +7,13 @@ import {
   CODEC_IMA_ADPCM,
   INDEX_TABLE,
   STEP_TABLE,
+  CHUNK_SAMPLES,
+  CODEC_PCM16,
   decodeBlock,
+  decodeFrameSamples,
   parseFrame,
+  parseViewerFrame,
+  toFloat32,
 } from "./adpcm";
 
 // The same vectors file the Python and Kotlin codecs assert (tests/vectors/audio_v1.json).
@@ -97,5 +102,61 @@ describe("parseFrame", () => {
     expect(() => parseFrame(codec9)).toThrow(AdpcmError);
     expect(() => parseFrame(good.subarray(0, good.byteLength - 1))).toThrow(AdpcmError);
     expect(() => parseFrame(new Uint8Array([2, 1, 0, 0]))).toThrow(AdpcmError);
+  });
+});
+
+describe("viewer frames (GET /audio, no leading 0x02)", () => {
+  it("parses every vector frame with the 0x02 byte dropped and decodes to the reference samples", () => {
+    for (const v of doc.vectors) {
+      const phoneFrame = hex(v.frame_hex);
+      const viewer = phoneFrame.subarray(1);
+      const frame = parseViewerFrame(viewer);
+      expect(frame.codec).toBe(CODEC_IMA_ADPCM);
+      expect(frame.seq).toBe(v.frame.seq);
+      expect(frame.tMs).toBe(v.frame.t_ms);
+      expect(Array.from(decodeFrameSamples(frame))).toEqual(v.decoded);
+    }
+  });
+
+  it("builds the viewer frame from the block alone and matches the decoded vector", () => {
+    const v = doc.vectors.find((x) => x.name === "synthetic_mixed");
+    if (!v) throw new Error("vector missing");
+    const block = hex(v.block_hex);
+    const viewer = new Uint8Array(9 + block.byteLength);
+    const view = new DataView(viewer.buffer);
+    viewer[0] = CODEC_IMA_ADPCM;
+    view.setUint32(1, 42, true);
+    view.setUint32(5, 5000, true);
+    viewer.set(block, 9);
+    const frame = parseViewerFrame(viewer);
+    expect(frame.seq).toBe(42);
+    expect(frame.tMs).toBe(5000);
+    expect(Array.from(decodeFrameSamples(frame))).toEqual(v.decoded);
+  });
+
+  it("decodes PCM16 payloads directly as little-endian s16", () => {
+    const samples = new Int16Array(CHUNK_SAMPLES);
+    for (let i = 0; i < CHUNK_SAMPLES; i++) samples[i] = (i * 37) % 65536 - 32768;
+    const payload = new Uint8Array(samples.buffer.slice(0));
+    const viewer = new Uint8Array(9 + payload.byteLength);
+    viewer[0] = CODEC_PCM16;
+    viewer.set(payload, 9);
+    const frame = parseViewerFrame(viewer);
+    expect(frame.codec).toBe(CODEC_PCM16);
+    expect(Array.from(decodeFrameSamples(frame))).toEqual(Array.from(samples));
+    const f = toFloat32(decodeFrameSamples(frame));
+    expect(f[0]).toBe(samples[0] / 32768);
+    expect(f.every((x) => x >= -1 && x < 1)).toBe(true);
+  });
+
+  it("rejects reserved codecs, the wrong payload length and short frames", () => {
+    const good = hex(doc.vectors[0].frame_hex).subarray(1);
+    const codec2 = Uint8Array.from(good);
+    codec2[0] = 2;
+    expect(() => parseViewerFrame(codec2)).toThrow(AdpcmError);
+    expect(() => parseViewerFrame(good.subarray(0, good.byteLength - 1))).toThrow(AdpcmError);
+    expect(() => parseViewerFrame(new Uint8Array([1, 0, 0]))).toThrow(AdpcmError);
+    // A phone frame (leading 0x02) read as a viewer frame has codec 2 and is refused.
+    expect(() => parseViewerFrame(hex(doc.vectors[0].frame_hex))).toThrow(AdpcmError);
   });
 });

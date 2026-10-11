@@ -90,3 +90,43 @@ export function decodeBlock(block: Uint8Array): Int16Array {
   }
   return out;
 }
+
+/** Header bytes of a viewer frame (the phone frame without its leading 0x02). */
+export const VIEWER_HEADER_BYTES = 9;
+
+/**
+ * Parse a frame as sent by GET /audio: `codec u8 | seq u32 LE | t_ms u32 LE | payload`, the phone
+ * frame forwarded verbatim without the 0x02 byte (docs/AUDIO_WIRE.md section 4).
+ */
+export function parseViewerFrame(data: Uint8Array): AudioFrame {
+  if (data.byteLength < VIEWER_HEADER_BYTES) throw new AdpcmError("viewer frame shorter than the 9-byte header");
+  const codec = data[0];
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const seq = view.getUint32(1, true);
+  const tMs = view.getUint32(5, true);
+  const payload = data.subarray(VIEWER_HEADER_BYTES);
+  const expected = payloadLength(codec);
+  if (payload.byteLength !== expected) {
+    throw new AdpcmError(`codec ${codec} payload must be ${expected} bytes, got ${payload.byteLength}`);
+  }
+  return { codec, seq, tMs, payload };
+}
+
+/** Decode a parsed frame's payload to 1600 s16 samples (PCM16 read directly, IMA-ADPCM decoded). */
+export function decodeFrameSamples(frame: AudioFrame): Int16Array {
+  if (frame.codec === CODEC_IMA_ADPCM) return decodeBlock(frame.payload);
+  if (frame.codec === CODEC_PCM16) {
+    const view = new DataView(frame.payload.buffer, frame.payload.byteOffset, frame.payload.byteLength);
+    const out = new Int16Array(CHUNK_SAMPLES);
+    for (let i = 0; i < CHUNK_SAMPLES; i++) out[i] = view.getInt16(i * 2, true);
+    return out;
+  }
+  throw new AdpcmError(`codec ${frame.codec} cannot be decoded`);
+}
+
+/** Convert s16 samples to the Float32 range -1..1 the AudioWorklet expects. */
+export function toFloat32(samples: Int16Array): Float32Array {
+  const out = new Float32Array(samples.length);
+  for (let i = 0; i < samples.length; i++) out[i] = samples[i] / 32768;
+  return out;
+}
