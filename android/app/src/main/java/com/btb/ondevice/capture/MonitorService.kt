@@ -20,6 +20,7 @@ import androidx.core.app.NotificationCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
+import com.btb.ondevice.audio.AdpcmCodec
 import com.btb.ondevice.audio.AudioPipeline
 import com.btb.ondevice.audio.YamnetClassifier
 import com.btb.ondevice.config.DataConfig
@@ -117,6 +118,10 @@ class MonitorService : Service(), LifecycleOwner {
     private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
     private var currentVideoViewers: Int = 0
     private var currentAudioViewers: Int = 0
+    /** T3.9: sequence of audio frames in this monitoring session. Only advanced for frames actually built. */
+    private val audioSeq = AtomicLong(0L)
+    /** Reused PCM16 view of one chunk for the ADPCM encoder (only the microphone thread touches it). */
+    private val audioShorts = ShortArray(AdpcmCodec.CHUNK_SAMPLES)
     private var currentStatusText: String = "Monitoring room with camera & audio..."
     private val approvalHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val approvalTimeout = Runnable { resolveRaise(RaiseResult.TIMEOUT) }
@@ -385,6 +390,7 @@ class MonitorService : Service(), LifecycleOwner {
         if (!isRunning.compareAndSet(false, true)) return
         isServiceRunning = true
         modeController.beginSession()
+        audioSeq.set(0L)
         cancelApprovalNotification()
 
         // 1. Foreground Notification
@@ -622,6 +628,8 @@ class MonitorService : Service(), LifecycleOwner {
                 ByteBuffer.wrap(pcm16).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shortArray)
                 val events = pipe.pushAudioPcm16(ts, shortArray)
                 events.forEach { up.sendAudio(it) }
+                // T3.9: live audio, only in Full mode with a listener (AudioStreamGate), same AudioRecord.
+                streamAudioChunk(up, pcm16)
             }
         )
         micSource = mic
@@ -656,6 +664,29 @@ class MonitorService : Service(), LifecycleOwner {
             }, 600)
         } catch (e: Exception) {
             Log.w("MonitorService", "Failed to play treat chime: ${e.message}")
+        }
+    }
+
+    /**
+     * T3.9: encode one 100 ms microphone chunk and hand it to the uploader. Runs on the microphone thread
+     * after the blackout return and YAMNet, so it never delays perception. Any failure is logged and the
+     * chunk skipped: the recorder thread must keep running.
+     */
+    private fun streamAudioChunk(up: EventUploader, pcm16: ByteArray) {
+        if (!modeController.shouldStreamAudio()) return
+        if (pcm16.size != AdpcmCodec.PCM16_PAYLOAD_BYTES) return
+        try {
+            val seq = audioSeq.getAndIncrement() and AUDIO_U32_MASK
+            val tMs = android.os.SystemClock.elapsedRealtime() and AUDIO_U32_MASK
+            val payload = if (AUDIO_CODEC == AdpcmCodec.CODEC_IMA_ADPCM) {
+                ByteBuffer.wrap(pcm16).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(audioShorts)
+                AdpcmCodec.encodeBlock(audioShorts)
+            } else {
+                pcm16
+            }
+            up.sendAudioChunk(AdpcmCodec.packFrame(AUDIO_CODEC, seq, tMs, payload))
+        } catch (t: Throwable) {
+            Log.w("MonitorService", "audio chunk skipped: ${t.message}")
         }
     }
 
@@ -911,6 +942,9 @@ class MonitorService : Service(), LifecycleOwner {
         @Volatile
         var isServiceRunning: Boolean = false
 
+        /** T3.9: codec of the live audio frames (AdpcmCodec.CODEC_IMA_ADPCM; PCM16 = 0 is for debugging). */
+        const val AUDIO_CODEC = AdpcmCodec.CODEC_IMA_ADPCM
+        private const val AUDIO_U32_MASK = 0xFFFFFFFFL
         const val KEY_STATION_CAP = "station_cap"   // T3.2: the cap the person holding the phone allows
     }
 }
