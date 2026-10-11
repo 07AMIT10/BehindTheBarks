@@ -11,6 +11,7 @@ import asyncio
 import base64
 import contextlib
 import hashlib
+import json
 import logging
 import secrets
 import time
@@ -47,8 +48,9 @@ MAX_LIMITER_KEYS = 4096  # in-memory limiter dicts are pruned past this many key
 HOUSEHOLD_CREATES_PER_HOUR = 5  # web.auth.household_creates_per_hour overrides it
 from backend.web.debug_metrics import LoopLagMonitor, calculate_drain_pct_per_h, collect_server_metrics
 from backend.web.event_log import EventLog
+from backend.web.audio_hub import CLIENT_GONE, KICKED_AUDIO, AudioHub, _put_drop_oldest
 from backend.web.hub import DISCONNECTED_ALL, KICKED, Hub
-from backend.web.tracker import CLOSE_VIEWERS_KICKED, parse_ua_label
+from backend.web.tracker import CLOSE_VIEWERS_KICKED, ViewersKickedError, parse_ua_label
 from backend.web.ingest import CLOSE_BAD_HELLO, CLOSE_BUSY, CLOSE_REPLACED, HelloError, parse_hello
 from backend.web.ingest_events import (MAX_SKEW_S, PROTO_STATION, RemoteSession, bind_pipeline,
                                        parse_remote_hello)
@@ -391,6 +393,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             if ch is not None:
                 await ch.runtime.stop()
                 ch.hub.close()
+                ch.audio.kick_all(include_owners=True)  # the station is gone: its audio listeners leave too
                 del lr.channels[station_id]
                 if lr.default_channel_id == station_id:
                     lr.default_channel_id = next(iter(lr.channels.keys())) if lr.channels else None
@@ -1505,6 +1508,161 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             if lr.tracker:
                 lr.tracker.leave_ws(q)
             lr.hub.unsubscribe(q)
+
+    # -- live audio (T3.9, A3.4): GET /audio, Full mode only --------------------------------------
+    AUDIO_CLOSE_NOT_FOUND = 4404  # the WebSocket has no HTTP status once the handshake is done
+    AUDIO_CLOSE_FORBIDDEN = 4403
+    AUDIO_CLOSE_MODE = 4412
+
+    async def _close_quietly(sock: WebSocket, code: int, reason: str) -> None:
+        try:
+            await sock.close(code=code, reason=reason)
+        except (RuntimeError, WebSocketDisconnect):
+            pass  # the client already went away
+
+    def _audio_hello(codec: int, station_id: str) -> str:
+        return json.dumps({"type": "audio_hello", "codec": codec, "rate": 16000, "chunk_ms": 100,
+                           "station": station_id})
+
+    async def _admit_audio(sock: WebSocket, ch, *, ceiling: str, viewer_id: str | None, label: str,
+                           owner: bool) -> None:
+        """Checks that need the station and the viewer, then the relay. The socket is already accepted,
+        so every refusal is a close with a code the dashboard can act on."""
+        if mode_rank(ceiling) < mode_rank("full"):
+            await _close_quietly(sock, AUDIO_CLOSE_FORBIDDEN, "audio needs full mode for this viewer")
+            return
+        if ch.tracker is not None and ch.tracker.is_kicked():
+            await _close_quietly(sock, CLOSE_VIEWERS_KICKED, "viewers disconnected by station")
+            return
+        if not _audio_allowed(ch, ceiling):
+            await _close_quietly(sock, AUDIO_CLOSE_FORBIDDEN, "audio is not permitted in the current mode")
+            return
+        await _relay_audio(sock, ch, ceiling=ceiling, viewer_id=viewer_id, label=label, owner=owner)
+
+    def _audio_allowed(ch, ceiling: str) -> bool:
+        """min(station cap, household mode, viewer ceiling) is full: the only state that carries audio."""
+        cap = getattr(ch.pipeline, "station_cap", "full")
+        return ch.policy.compute_effective(cap, ceiling) == "full"
+
+    async def _relay_audio(sock: WebSocket, ch, *, ceiling: str, viewer_id: str | None, label: str,
+                           owner: bool) -> None:
+        """One listener on one station. Registration is inside this coroutine and `finally` releases it, so
+        a client that drops before anything is sent never leaves a ghost listener (the /video lesson).
+        A watcher task reads the socket so an abrupt client drop is seen even when no frame is flowing."""
+        hub: AudioHub = ch.audio
+        tracker = ch.tracker
+        stream_id = str(uuid.uuid4())
+        q = hub.subscribe(owner=owner)
+
+        async def watch_client() -> None:
+            try:
+                while True:
+                    msg = await sock.receive()
+                    if msg["type"] == "websocket.disconnect":
+                        break
+            except (RuntimeError, WebSocketDisconnect):
+                pass
+            finally:
+                _put_drop_oldest(q, CLIENT_GONE)
+
+        watcher = asyncio.create_task(watch_client())
+        try:
+            try:
+                if tracker is not None:
+                    tracker.enter_audio(stream_id, viewer_id=viewer_id, label=label)
+            except ViewersKickedError:
+                await _close_quietly(sock, CLOSE_VIEWERS_KICKED, "viewers disconnected by station")
+                return
+            sent_codec = hub.last_codec if hub.last_codec in (0, 1) else 1
+            await sock.send_text(_audio_hello(sent_codec, ch.station_id))
+            while True:
+                try:
+                    item = await asyncio.wait_for(q.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    item = None
+                if item is CLIENT_GONE:
+                    return
+                if item is KICKED_AUDIO:
+                    await _close_quietly(sock, CLOSE_VIEWERS_KICKED, "viewers disconnected by station")
+                    return
+                if not _audio_allowed(ch, ceiling):  # re-checked on every frame and at least once a second
+                    await _close_quietly(sock, AUDIO_CLOSE_MODE, "audio not permitted in the current mode")
+                    return
+                if item is None:
+                    continue
+                if item[0] != sent_codec:  # the phone changed codec mid-stream: say so before the frames
+                    sent_codec = item[0]
+                    await sock.send_text(_audio_hello(sent_codec, ch.station_id))
+                await sock.send_bytes(item)
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            watcher.cancel()
+            hub.unsubscribe(q)
+            if tracker is not None:
+                tracker.leave_audio(stream_id)
+
+    async def _audio_households(sock: WebSocket) -> None:
+        """Households mode: the same credential and Origin guard as /ws. There is no household parameter:
+        the viewer's own household decides which stations exist for it."""
+        token = (sock.cookies.get(VIEWER_COOKIE) or "").strip()
+        if not token:
+            hdr = sock.headers.get("Authorization", "")
+            token = hdr[len("Bearer "):].strip() if hdr.startswith("Bearer ") else ""
+        await sock.accept()
+        origin = (sock.headers.get("origin") or "").strip().rstrip("/")
+        if origin and urlparse(origin).netloc not in {sock.headers.get("host", ""),
+                                                      sock.headers.get("x-forwarded-host", "")} \
+                and origin not in cors_origins:
+            await _close_quietly(sock, AUDIO_CLOSE_FORBIDDEN, "Forbidden origin")
+            return
+        if not token:
+            await _close_quietly(sock, 4401, "Unauthorized: no session")
+            return
+        with app.state.db_session() as s:
+            viewer = store_repo.viewer_by_token(s, token)
+            if viewer is None:
+                viewer_info = None
+            else:
+                viewer_info = (viewer.household_id, viewer.id, viewer.role, viewer.mode_ceiling or "full")
+        if viewer_info is None:
+            await _close_quietly(sock, 4401, "Unauthorized: session revoked or expired")
+            return
+        hid, vid, role, ceiling = viewer_info
+        lr = await app.state.registry.get(hid)
+        try:
+            ch = _resolve_channel(lr, sock.query_params.get("station") or None, hid)
+        except HTTPException:
+            ch = None
+        if ch is None:
+            await _close_quietly(sock, AUDIO_CLOSE_NOT_FOUND, "station not found in this household")
+            return
+        label = role if role == ROLE_OWNER else parse_ua_label(sock.headers.get("user-agent", ""))
+        await _admit_audio(sock, ch, ceiling=ceiling, viewer_id=vid, label=label,
+                           owner=(role == ROLE_OWNER))
+
+    @app.websocket("/audio")
+    async def audio(sock: WebSocket) -> None:
+        """Phone audio to a viewer (docs/AUDIO_WIRE.md): `audio_hello` text, then binary phone frames
+        without the 0x02 byte. Full mode only. Close codes: 4401 unauthorized, 4403 forbidden (ceiling below
+        full, or not full at connect), 4404 unknown station, 4411 kicked, 4412 mode dropped below full."""
+        if households_mode:
+            await _audio_households(sock)
+            return
+        if not verify_ws_auth(sock):
+            await sock.close(code=4401, reason="Unauthorized")
+            return
+        await sock.accept()
+        lr = app.state.registry.peek(LEGACY) or await app.state.registry.get(LEGACY)
+        try:
+            ch = _resolve_channel(lr, sock.query_params.get("station") or None, LEGACY)
+        except HTTPException:
+            ch = None
+        if ch is None:
+            await _close_quietly(sock, AUDIO_CLOSE_NOT_FOUND, "station not found")
+            return
+        label = parse_ua_label(sock.headers.get("user-agent", ""))
+        await _admit_audio(sock, ch, ceiling="full", viewer_id=None, label=label, owner=False)
 
     @app.websocket("/ingest")
     async def ingest(sock: WebSocket) -> None:

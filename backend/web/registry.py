@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from backend.notify.dashboard import DashboardOnlyNotifier
+from backend.web.audio_hub import AudioHub
 from backend.web.event_log import EventLog
 from backend.web.hub import HouseholdHub, Hub
 from backend.web.limited import Limited
@@ -48,6 +49,7 @@ class StationChannel:
     tracker: Any = None
     limited: Any = None
     used_at: float = 0.0
+    audio: AudioHub = field(default_factory=AudioHub)  # T3.9: this station's live audio listeners
 
 
 @dataclass
@@ -134,19 +136,22 @@ class HouseholdRuntime:
         policy = Policy(household_mode=self.policy.household_mode)
         tracker = ViewerTracker(household_id=self.household_id, policy=policy, pipeline=pipeline, clock=clock)
         tracker.register_kick_callback(st_hub.kick_all_viewers)
+        audio = AudioHub()
+        tracker.register_kick_callback(audio.kick_all)
         limited = Limited(clock=clock)
 
         rt = Runtime(cfg, pipeline, interpreter, notifier, st_hub, clock=clock, policy=policy)
         rt.policy = policy
         rt.tracker = tracker
         rt.limited = limited
+        rt.audio_hub = audio
         if hasattr(pipeline, "_policy_mode"):
             pipeline._policy_mode = policy.household_mode
         await rt.start()
 
         ch = StationChannel(station_id=station_id, name=name or f"Station {len(self.channels)+1}",
                             runtime=rt, hub=st_hub, pipeline=pipeline, policy=policy,
-                            tracker=tracker, limited=limited, used_at=now)
+                            tracker=tracker, limited=limited, used_at=now, audio=audio)
         self.channels[station_id] = ch
         if self.default_channel_id is None:
             self.default_channel_id = station_id
@@ -178,12 +183,15 @@ class HouseholdRegistry:
         runtime.tracker = tracker
         limited = getattr(runtime, "limited", None) or Limited(clock=self.clock)
         runtime.limited = limited
+        audio = getattr(runtime, "audio_hub", None) or AudioHub()
+        runtime.audio_hub = audio
+        tracker.register_kick_callback(audio.kick_all)
         lr = HouseholdRuntime(household_id=LEGACY, runtime=runtime, hub=hub, pipeline=pipeline,
                               policy=policy, tracker=tracker, limited=limited, used_at=self.clock(),
                               registry=self)
         default_ch = StationChannel(station_id=LEGACY, name="Default", runtime=runtime,
                                     hub=hub, pipeline=pipeline, policy=policy, tracker=tracker,
-                                    limited=limited, used_at=self.clock())
+                                    limited=limited, used_at=self.clock(), audio=audio)
         lr.channels[LEGACY] = default_ch
         lr.default_channel_id = LEGACY
         self._households[LEGACY] = lr
@@ -229,11 +237,14 @@ class HouseholdRegistry:
         policy = Policy(household_mode="privacy")
         tracker = ViewerTracker(household_id=hid, policy=policy, pipeline=pipeline, clock=self.clock)
         tracker.register_kick_callback(hub.kick_all_viewers)
+        audio = AudioHub()
+        tracker.register_kick_callback(audio.kick_all)
         limited = Limited(clock=self.clock)
         rt = Runtime(cfg, pipeline, interpreter, notifier, hub, clock=self.clock, policy=policy)
         rt.policy = policy
         rt.tracker = tracker
         rt.limited = limited
+        rt.audio_hub = audio
         if hasattr(pipeline, "_policy_mode"):
             pipeline._policy_mode = policy.household_mode
         await rt.start()
@@ -242,7 +253,7 @@ class HouseholdRegistry:
                               registry=self)
         default_ch = StationChannel(station_id="default", name="Default", runtime=rt,
                                     hub=hub, pipeline=pipeline, policy=policy, tracker=tracker,
-                                    limited=limited, used_at=self.clock())
+                                    limited=limited, used_at=self.clock(), audio=audio)
         lr.channels["default"] = default_ch
         lr.default_channel_id = "default"
         return lr
@@ -339,9 +350,11 @@ class HouseholdRegistry:
                 continue
             # Evict station channels idle for > 600s with no phone and no viewers (T4.1 step 5)
             for sid, ch in list(lr.channels.items()):
-                if ch.runtime.phone is None and ch.hub.client_count == 0 and now - ch.used_at > 600.0:
+                if ch.runtime.phone is None and ch.hub.client_count == 0 and ch.audio.client_count == 0 \
+                        and now - ch.used_at > 600.0:
                     await ch.runtime.stop()
                     ch.hub.close()
+                    ch.audio.kick_all(include_owners=True)
                     del lr.channels[sid]
                     if lr.default_channel_id == sid:
                         lr.default_channel_id = next(iter(lr.channels.keys())) if lr.channels else None

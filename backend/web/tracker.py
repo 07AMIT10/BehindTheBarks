@@ -72,6 +72,7 @@ class ViewerTracker:
         self.debounce_s = debounce_s
         self._video_streams: dict[str, dict[str, Any]] = {}
         self._ws_streams: dict[Any, dict[str, Any]] = {}
+        self._audio_streams: dict[str, dict[str, Any]] = {}  # stream_id -> {viewer_id, label, started_at}
         self._demands: dict[str, dict[str, Any]] = {}  # viewer_id -> {"view": str, "expires_at": float}
         self._kicked_until: float = 0.0
         self._debounce_task: asyncio.Task | None = None
@@ -103,6 +104,24 @@ class ViewerTracker:
     def leave_video(self, stream_id: str) -> None:
         if stream_id in self._video_streams:
             del self._video_streams[stream_id]
+            self._on_change()
+
+    def enter_audio(self, stream_id: str, viewer_id: str | None = None, label: str = "") -> None:
+        """A `/audio` listener (T3.9). Called from inside the socket handler; leave_audio pairs with it in
+        `finally`. Refused while the station's kick cooldown runs, like enter_video."""
+        if self.is_kicked():
+            raise ViewersKickedError("viewers temporarily disconnected by station")
+        lbl = (label or "Viewer").strip()[:24]
+        self._audio_streams[stream_id] = {
+            "viewer_id": viewer_id or stream_id,
+            "label": lbl,
+            "started_at": self.clock(),
+        }
+        self._on_change()
+
+    def leave_audio(self, stream_id: str) -> None:
+        if stream_id in self._audio_streams:
+            del self._audio_streams[stream_id]
             self._on_change()
 
     def enter_ws(self, q: Any, viewer_id: str | None = None, label: str = "") -> None:
@@ -183,6 +202,8 @@ class ViewerTracker:
             seen.add(v["label"])
         for v in self._ws_streams.values():
             seen.add(v["label"])
+        for v in self._audio_streams.values():
+            seen.add(v["label"])
         return sorted(list(seen))
 
     def kick_all(self, cooldown_s: float = 60.0) -> int:
@@ -190,6 +211,7 @@ class ViewerTracker:
         self._kicked_until = self.clock() + cooldown_s
         count = len(self._video_streams) + len(self._ws_streams) + len(self._demands)
         self._video_streams.clear()
+        self._audio_streams.clear()
         self._demands.clear()
 
         # Fire registered kick callbacks (disconnecting WebSocket subscribers)
