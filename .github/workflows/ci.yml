@@ -88,22 +88,43 @@ jobs:
       - name: Run Android Unit Tests
         run: ./gradlew testDebugUnitTest
 
+      # The release keystore is a secret, never committed. Without BTB_KEYSTORE_B64 the release steps
+      # are skipped (visibly) rather than signed with the debug key; the app's Gradle file refuses that.
+      - name: Decode release keystore (only when the secret is set)
+        env:
+          BTB_KEYSTORE_B64: ${{ secrets.BTB_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$BTB_KEYSTORE_B64" ]; then
+            echo "$BTB_KEYSTORE_B64" | base64 --decode > android/release.jks
+            echo "release keystore decoded"
+          else
+            echo "::notice::BTB_KEYSTORE_B64 is not set: release APK/AAB steps are skipped"
+          fi
+
       - name: Build Production APK & App Bundle (AAB)
+        if: hashFiles('android/release.jks') != ''
+        env:
+          BTB_KEYSTORE_PASSWORD: ${{ secrets.BTB_KEYSTORE_PASSWORD }}
+          BTB_KEY_ALIAS: ${{ secrets.BTB_KEY_ALIAS }}
+          BTB_KEY_PASSWORD: ${{ secrets.BTB_KEY_PASSWORD }}
         run: ./gradlew assembleRelease bundleRelease
 
       - name: Verify 16KB Page Alignment on Release APK
+        if: hashFiles('android/release.jks') != ''
         run: |
           BUILD_TOOLS_ZIPALIGN=$(find $ANDROID_HOME/build-tools/ -name zipalign | sort -V | tail -n 1)
           echo "Using zipalign at $BUILD_TOOLS_ZIPALIGN"
           $BUILD_TOOLS_ZIPALIGN -c -P 16 4 app/build/outputs/apk/release/app-release.apk
 
       - name: Upload Release APK
+        if: hashFiles('android/release.jks') != ''
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
           path: android/app/build/outputs/apk/release/app-release.apk
 
       - name: Upload Release AAB (Play Store)
+        if: hashFiles('android/release.jks') != ''
         uses: actions/upload-artifact@v4
         with:
           name: app-release-aab
