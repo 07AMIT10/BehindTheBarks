@@ -88,8 +88,14 @@ jobs:
       - name: Run Android Unit Tests
         run: ./gradlew testDebugUnitTest
 
+      # The release variant needs a keystore (T2.8) and a wss:// default server URL (H2). CI has no
+      # production key, so it signs with a throwaway one: the artifacts below verify the build, they are
+      # not distributable (an update would not install over a real release).
+      - name: Create throwaway CI signing keystore
+        run: ../scripts/generate_release_keystore.sh release.jks
+
       - name: Build Production APK & App Bundle (AAB)
-        run: ./gradlew assembleRelease bundleRelease
+        run: ./gradlew assembleRelease bundleRelease -PbtbDefaultIngestUrl=wss://example.invalid/ingest-events
 
       - name: Verify 16KB Page Alignment on Release APK
         run: |

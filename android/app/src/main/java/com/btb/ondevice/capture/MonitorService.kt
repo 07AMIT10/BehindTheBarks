@@ -979,7 +979,8 @@ class MonitorService : Service(), LifecycleOwner {
         const val EXTRA_DEVICE_NAME = "extra_device_name"
         const val EXTRA_TOKEN = "extra_token"
         const val EXTRA_STATION_ID = "extra_station_id"
-        const val DEFAULT_SERVER_URL = "ws://10.0.2.2:8000/ingest-events"
+        // The build default (debug: ws:// for the emulator; release: wss://, see the H2 build guard).
+        const val DEFAULT_SERVER_URL = com.btb.ondevice.BuildConfig.DEFAULT_INGEST_URL
         /** Set with the service's own running flag, so an activity can check it before it restarts anything. */
         @Volatile
         var isServiceRunning: Boolean = false
