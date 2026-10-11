@@ -25,3 +25,4 @@ data/fallback/tuning/
 .agents/
 .cursorrules
 .mcp.json
+deploy/data/

@@ -50,7 +50,8 @@ def test_video_is_multipart_jpeg(tmp_path):
     with client(tmp_path) as c:
         r = c.get("/video?max_frames=2")
         assert r.headers["content-type"].startswith("multipart/x-mixed-replace")
-        assert r.content.count(b"--frame") == 2 and b"\xff\xd8" in r.content
+        # two ticks, but the frame is unchanged: it is written once (unchanged JPEGs are not re-sent)
+        assert r.content.count(b"--frame") == 1 and b"\xff\xd8" in r.content
 
 
 def test_session_log_written(tmp_path):

@@ -78,3 +78,16 @@ class PairingCode(Base):
     created_by_viewer: Mapped[str | None] = mapped_column(String(32), ForeignKey("viewers.id"), nullable=True)
     mode_ceiling: Mapped[str | None] = mapped_column(String(16), nullable=True)
     viewer_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class AppSetting(Base):
+    """Operator settings that must survive a switch between hosts (e.g. the admin bandwidth overrides).
+
+    One row per setting. `value` is JSON text, so the schema does not change when a setting's shape does.
+    """
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[float] = mapped_column(Float)

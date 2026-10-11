@@ -1,0 +1,7 @@
+User-agent: *
+Disallow: /video
+Disallow: /ws
+Disallow: /ingest
+Disallow: /ingest-events
+Disallow: /demo/clips/
+Disallow: /admin/

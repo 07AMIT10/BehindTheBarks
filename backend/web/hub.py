@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import deque
-from typing import Any
+from typing import Any, Callable
 
 from pydantic import BaseModel
 
@@ -20,7 +20,7 @@ DISCONNECTED_ALL = object()  # sentinel when viewers are disconnected by station
 
 
 class Hub:
-    def __init__(self, client_queue: int = 64, history: int = 2000, frame_fps: float = 8.0,
+    def __init__(self, client_queue: int = 64, history: int = 2000, frame_fps: float | Callable[[], float] = 8.0,
                  clock=time.time, log: EventLog | None = None) -> None:
         self._qsize, self._clock, self._log = client_queue, clock, log
         self._clients: set[asyncio.Queue] = set()
@@ -28,7 +28,8 @@ class Hub:
         self._queue_meta: dict[asyncio.Queue, dict[str, Any]] = {}  # metadata for T3.3/T3.4
         self._history: deque[dict] = deque(maxlen=history)
         self._seq = 0
-        self._frame_period = 1.0 / frame_fps if frame_fps > 0 else 0.0
+        # A callable is read on every frame, so an admin change to ws_frame_fps applies without a restart.
+        self._frame_fps = frame_fps
         self._last_frame = -1e18
         self._taps: list[Any] = []
 
@@ -97,7 +98,8 @@ class Hub:
             raise ValueError(f"unknown message type {type!r}")
         now = self._clock()
         if type == "frame":
-            if now - self._last_frame < self._frame_period - 1e-9:
+            fps = self._frame_fps() if callable(self._frame_fps) else self._frame_fps
+            if fps > 0 and now - self._last_frame < 1.0 / fps - 1e-9:
                 return None
             self._last_frame = now
         self._seq += 1

@@ -41,8 +41,27 @@ def new_pairing_code() -> str:
     return secrets.token_urlsafe(16)
 
 
+def normalize_db_url(url: str) -> str:
+    """Normalize database connection URLs across dialects and drivers.
+
+    Handles:
+    - postgres:// -> postgresql:// (Render, Supabase, Heroku compatibility)
+    - postgresql:// -> postgresql+psycopg:// when psycopg 3 is installed and no driver is specified
+    """
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    if url.startswith("postgresql://") and not url.startswith("postgresql+"):
+        try:
+            import psycopg  # noqa: F401
+            url = "postgresql+psycopg://" + url[len("postgresql://"):]
+        except ImportError:
+            pass
+    return url
+
+
 def make_engine(url: str, **kwargs: Any) -> Engine:
-    """An engine configured per dialect: SQLite needs foreign keys and WAL, Postgres just works."""
+    """An engine configured per dialect: SQLite needs foreign keys and WAL, Postgres has pooling."""
+    url = normalize_db_url(url)
     if url.startswith("sqlite"):
         kwargs.setdefault("connect_args", {})
         kwargs["connect_args"].setdefault("check_same_thread", False)
@@ -54,9 +73,14 @@ def make_engine(url: str, **kwargs: Any) -> Engine:
             cur.execute("PRAGMA foreign_keys=ON")
             if ":memory:" not in url:
                 cur.execute("PRAGMA journal_mode=WAL")  # concurrent readers while a writer works
+                cur.execute("PRAGMA synchronous=NORMAL")  # crash-safe against abrupt power cuts
             cur.close()
 
         return engine
+
+    # PostgreSQL (Supabase, Neon, Render): connection liveness checking and recycling
+    kwargs.setdefault("pool_pre_ping", True)
+    kwargs.setdefault("pool_recycle", 300)
     return create_engine(url, **kwargs)
 
 

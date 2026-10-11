@@ -19,6 +19,8 @@ WEB_DEFAULTS: dict[str, Any] = {
     "database_url": "sqlite:///out/btb.db",
     "ws": {"frame_fps": 8, "client_queue": 64, "history": 2000},
     "video": {"fps": 8},
+    # gzip for JSON/JS/CSS/HTML only (streams and media are never compressed). Admin-tunable at runtime.
+    "compression": {"enabled": True, "min_size": 1000},
     # T2.10 retention: a household's session logs live 7 days by default, then the registry's
     # periodic sweep deletes them. Set 0 to keep everything.
     "log_retention_days": 7,
@@ -38,7 +40,10 @@ WEB_DEFAULTS: dict[str, Any] = {
         "telegram": {"token": "", "chat_id": ""},
         "whatsapp": {"token": "", "phone_number_id": "", "recipient": "", "api_version": "v18.0"},
     },
-    "demo": {"manifest": "data/fallback/manifest.json", "clips_dir": "backend/demo/clips", "telegram_first": False},
+    # video_source: "local" serves the MP4s from this host; "r2" redirects to presigned Cloudflare R2 URLs
+    # (run scripts/upload_demo_clips.py first). R2 egress is free, so this keeps video off the web host.
+    "demo": {"manifest": "data/fallback/manifest.json", "clips_dir": "backend/demo/clips", "telegram_first": False,
+             "video_source": "local"},
     "ingest": {"stale_s": 5.0, "status_every_s": 2.0, "fps_window_s": 3.0, "max_message_bytes": 2_000_000},
     "remote": {"stale_s": 2.0, "clock_samples": 5, "ping_every_s": 30.0, "max_skew_s": 60.0,
               "downlink_timeout_s": 5.0},
@@ -85,6 +90,8 @@ def load_config(path: str | Path = "config.yaml", env: Mapping[str, str] | None 
         notify["mode"] = env["NOTIFY_MODE"]
     if env.get("BTB_DATABASE_URL"):
         cfg["web"]["database_url"] = env["BTB_DATABASE_URL"].strip()
+    if env.get("BTB_DEMO_VIDEO_SOURCE"):
+        cfg["web"].setdefault("demo", {})["video_source"] = env["BTB_DEMO_VIDEO_SOURCE"].strip().lower()
     if env.get("BTB_AUTH_MODE"):
         cfg["web"].setdefault("auth", {})["mode"] = env["BTB_AUTH_MODE"].strip().lower()
     if env.get("BTB_HOUSEHOLD_CREATES_PER_HOUR"):

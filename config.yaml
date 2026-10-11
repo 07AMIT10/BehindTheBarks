@@ -133,11 +133,14 @@ web:
   pipeline: real              # mock | real | remote (remote = the phone runs the perception and streams events)
   log_dir: out
   ws:
-    frame_fps: 8              # max frame messages/s per client
+    frame_fps: 4              # max frame messages/s per client (bandwidth; admin-tunable at PATCH /admin/tuning)
     client_queue: 64          # per-client buffer; oldest dropped when full
     history: 2000             # non-frame events kept for GET /events
   video:
-    fps: 8                    # MJPEG rate for GET /video
+    fps: 4                    # MJPEG send-rate ceiling for GET /video; only new frames are sent (admin-tunable)
+  compression:                # gzip JSON/JS/CSS/HTML; streams and media are never compressed (admin-tunable)
+    enabled: true
+    min_size: 1000            # bytes
   state:
     persist_s: 3.0            # new emotion must hold this long to become the state
     no_dog_unknown_s: 2.0
@@ -176,6 +179,7 @@ web:
     manifest: data/fallback/manifest.json   # Person A's file; falls back to backend/demo/clips/manifest.json
     clips_dir: backend/demo/clips           # web-owned placeholder clips
     telegram_first: false                   # also send the first demo notification via Telegram if configured
+    video_source: local                     # local | r2 (r2: presigned Cloudflare R2 URLs; upload first with scripts/upload_demo_clips.py)
   ingest:                     # /ingest browser phone camera; every key optional, defaults live in settings.py
     stale_s: 5.0              # a quiet phone counts as gone; a newcomer replaces it (both /ingest transports)
     status_every_s: 2.0       # phone status broadcast to dashboards

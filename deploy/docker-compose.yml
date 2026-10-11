@@ -1,0 +1,41 @@
+# Self-hosting: the same Dockerfile as Render, behind Caddy (automatic HTTPS).
+# Usage (on the VM, from this folder):
+#   BTB_DOMAIN=btb.example.com docker compose up -d --build
+# Secrets live in ../.env (copy ../.env.example). Nothing here is Render-specific.
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    env_file: ../.env
+    environment:
+      WEB_PIPELINE: ${WEB_PIPELINE:-remote}
+      PORT: "8000"
+    volumes:
+      # SQLite database, event logs, profile and tuning.json live here, so they survive restarts.
+      # (Render's free disk does not; this is one of the reasons self-hosting matters.)
+      - ./data/out:/app/out
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  caddy:
+    image: caddy:2
+    depends_on: [app]
+    environment:
+      BTB_DOMAIN: ${BTB_DOMAIN:?set BTB_DOMAIN to the public hostname}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

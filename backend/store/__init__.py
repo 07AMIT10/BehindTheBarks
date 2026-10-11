@@ -7,4 +7,5 @@ secret (viewer token, pairing code, recovery key) is stored as a SHA-256 hash an
 """
 
 from backend.store import models  # noqa: F401 - registers the tables on Base
-from backend.store.db import Base, make_engine, init_db  # noqa: F401 - the public engine helpers
+from backend.store.db import Base, make_engine, init_db, normalize_db_url  # noqa: F401 - the public engine helpers
+from backend.store.storage import SnapshotStorage, EphemeralStorage, R2SnapshotStorage, build_storage  # noqa: F401

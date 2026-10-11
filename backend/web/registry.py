@@ -111,7 +111,7 @@ class HouseholdRuntime:
 
         st_hub = Hub(client_queue=cfg["web"]["ws"]["client_queue"],
                      history=cfg["web"]["ws"]["history"],
-                     frame_fps=cfg["web"]["ws"]["frame_fps"],
+                     frame_fps=_frame_fps_source(self.registry.tuning if self.registry else None, cfg),
                      clock=clock,
                      log=None)
         if isinstance(self.hub, HouseholdHub):
@@ -137,6 +137,7 @@ class HouseholdRuntime:
         limited = Limited(clock=clock)
 
         rt = Runtime(cfg, pipeline, interpreter, notifier, st_hub, clock=clock, policy=policy)
+        rt.household_id = self.household_id
         rt.policy = policy
         rt.tracker = tracker
         rt.limited = limited
@@ -155,6 +156,13 @@ class HouseholdRuntime:
         return ch
 
 
+def _frame_fps_source(tuning: Any, cfg: dict) -> Any:
+    """A live reader of the admin-tuned ws_frame_fps when tuning is wired, else the static config value."""
+    if tuning is None:
+        return cfg["web"]["ws"]["frame_fps"]
+    return lambda: tuning.get("ws_frame_fps")
+
+
 @dataclass
 class HouseholdRegistry:
     cfg: dict
@@ -164,6 +172,7 @@ class HouseholdRegistry:
     clock: Callable[[], float] = time.time
     idle_evict_s: float = 600.0
     sessionmaker: Any = None  # set by create_app: the household profile lives in the DB (T2.3)
+    tuning: Any = None  # set by create_app: admin-tunable ws_frame_fps, read live by every hub
     _households: dict[str, HouseholdRuntime] = field(default_factory=dict)
 
     # -- legacy ---------------------------------------------------------------------------------
@@ -215,7 +224,7 @@ class HouseholdRegistry:
         profile, log_enabled, llm_enabled = self._household_settings(hid, cfg)
         cfg["web"]["profile"] = profile
         hub = HouseholdHub(client_queue=cfg["web"]["ws"]["client_queue"], history=cfg["web"]["ws"]["history"],
-                           frame_fps=cfg["web"]["ws"]["frame_fps"], clock=self.clock,
+                           frame_fps=_frame_fps_source(self.tuning, cfg), clock=self.clock,
                            log=EventLog(log_dir) if log_enabled else None)
         pipeline = self.make_pipeline(cfg) if self.make_pipeline else None
         if pipeline is None:  # pragma: no cover - only when create_app injects nothing
@@ -231,6 +240,7 @@ class HouseholdRegistry:
         tracker.register_kick_callback(hub.kick_all_viewers)
         limited = Limited(clock=self.clock)
         rt = Runtime(cfg, pipeline, interpreter, notifier, hub, clock=self.clock, policy=policy)
+        rt.household_id = hid
         rt.policy = policy
         rt.tracker = tracker
         rt.limited = limited

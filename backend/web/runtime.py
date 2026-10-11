@@ -20,6 +20,7 @@ from backend.contracts import AudioEvent, EmotionState, Features, FrameEvent, Ru
 from backend.demo.clips import DemoClips
 from backend.fusion.llm_triggers import TriggerPolicy
 from backend.fusion.state import FusionState, StateConfig
+from backend.store.storage import SnapshotStorage, build_storage
 from backend.web.hub import Hub
 from backend.web.ingest import CLOSE_REVOKED, Hello, IngestSession
 from backend.web.ingest_events import RemoteHello, RemoteSession
@@ -34,9 +35,12 @@ FPS_FRESH_S = 3.0  # status().fps is 0.0 when the newest frame is older than thi
 
 class Runtime:
     def __init__(self, cfg: dict, pipeline: Any, interpreter: Any, notifier: Any, hub: Hub, clock=time.time,
-                 demo_clips: DemoClips | None = None, policy: Policy | None = None):
+                 demo_clips: DemoClips | None = None, policy: Policy | None = None,
+                 storage: SnapshotStorage | None = None):
         self.cfg, self.pipeline, self.interpreter, self.notifier, self.hub, self.clock = (
             cfg, pipeline, interpreter, notifier, hub, clock)
+        self.storage: SnapshotStorage = storage or build_storage(cfg)
+        self.household_id: str = "default"
         self.policy: Policy = policy or Policy(household_mode=cfg.get("web", {}).get("mode", "full"))
         self.state = FusionState(StateConfig.from_config(cfg))
         self.triggers = TriggerPolicy.from_config(cfg)
@@ -283,7 +287,8 @@ class Runtime:
 
     async def _notify(self, state: EmotionState) -> None:
         jpeg = self._latest_jpeg()
-        snap = f"data:image/jpeg;base64,{base64.b64encode(jpeg).decode('ascii')}" if jpeg else None
+        hid = getattr(self, "household_id", "default")
+        snap = await self.storage.store_snapshot(jpeg, household_id=hid, ts=state.ts, emotion=state.emotion)
         state = state.model_copy(update={"snapshot": snap})
         res = await self.notifier.send(state, jpeg)
         self.hub.publish("notification", {"state": state.model_dump(mode="json"), "status": res.status,

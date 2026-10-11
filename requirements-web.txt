@@ -18,5 +18,5 @@ cryptography==50.0.2       # T2.4 station pubkey verification (ECDSA P-256)
 pillow==12.3.0             # remote_pipeline privacy slate (was locally-only: prod fell back to the blank JPEG)
 ai-edge-litert             # LiteRT interpreter for tests/data/test_mobile_runners.py TFLite backend checks
 psutil==7.2.2                  # T6.3 server debug metrics
-pytest-timeout==2.4.0          # T6.2 test hang protection
-# psycopg[binary]==3.x    # uncomment when BTB_DATABASE_URL points at Postgres
+psycopg[binary]==3.3.6     # Postgres support (Supabase, Render, Koyeb)
+boto3==1.43.111            # Cloudflare R2 / S3 object storage for alert snapshots

@@ -23,7 +23,7 @@ from typing import Any
 from dotenv import load_dotenv
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from sqlalchemy.orm import sessionmaker
 
 from backend.fusion.llm_interpreter import LLMInterpreter
@@ -39,6 +39,10 @@ from backend.web.limited import limit_jpeg
 from backend.web.modes import ModeError, min_mode, mode_rank, parse_mode
 from backend.web.policy import Policy, build_events_only_slate, build_privacy_slate
 from backend.web.registry import LEGACY, HouseholdRegistry
+from backend.web.compression import ToggleGzip
+from backend.store.storage import build_r2
+from backend.demo.clips import demo_object_key
+from backend.web.tuning import DbTuningStore, Tuning, TuningError
 
 VIEWER_COOKIE = "btb_session"
 STATION_AUTH_PREFIX = b"btb-auth-v1|"  # the signed challenge message: nonce | station_id | device
@@ -80,6 +84,13 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         load_dotenv()
         cfg = load_config()
     web = cfg["web"]
+    # Admin-tunable bandwidth knobs: config.yaml is the baseline, PATCH /admin/tuning overrides it live.
+    # The overrides are stored in the database (attached in the lifespan, once the engine exists).
+    tuning = Tuning(
+        {"video_fps": web["video"]["fps"], "ws_frame_fps": web["ws"]["frame_fps"],
+         "gzip_enabled": (web.get("compression") or {}).get("enabled", True),
+         "gzip_min_size": (web.get("compression") or {}).get("min_size", 1000)},
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -87,7 +98,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         # belongs to a household directory (T2.7 isolation).
         legacy_log = None if households_mode else EventLog(web["log_dir"])
         hub = Hub(client_queue=web["ws"]["client_queue"], history=web["ws"]["history"],
-                  frame_fps=web["ws"]["frame_fps"], log=legacy_log)
+                  frame_fps=lambda: tuning.get("ws_frame_fps"), log=legacy_log)
         demo = load_demo_clips(cfg)
         # The saved profile wins over the config, so Runtime.status() and captions see the user's values.
         profile_store = ProfileStore(web["log_dir"], defaults=cfg["web"].get("profile") or {})
@@ -98,6 +109,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         store_db.init_db(engine)
         app.state.db_engine = engine
         app.state.db_session = sessionmaker(bind=engine, future=True)
+        # Overrides come from the database; a pre-database out/tuning.json is imported once.
+        tuning.attach(DbTuningStore(app.state.db_session), legacy_path=Path(str(web["log_dir"])) / "tuning.json")
         rt = Runtime(cfg, pipeline or build_pipeline(cfg),
                      interpreter or LLMInterpreter(LLMSettings.from_config(cfg)),
                      notifier or build_notifier(cfg), hub, demo_clips=demo)
@@ -105,7 +118,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         # app.state.rt / app.state.hub and every existing test keep working unchanged.
         registry = HouseholdRegistry(cfg, clock=rt.clock,
                                      idle_evict_s=float((web.get("registry") or {}).get("idle_evict_s", 600)),
-                                     sessionmaker=app.state.db_session)
+                                     sessionmaker=app.state.db_session, tuning=tuning)
         lr = registry.use_legacy(rt, hub, rt.pipeline)
         app.state.registry = registry
         app.state.hub, app.state.rt, app.state.demo = hub, rt, demo
@@ -128,6 +141,14 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                         continue
 
             sweeper = asyncio.create_task(_sweep_forever())
+
+        async def _tuning_forever() -> None:
+            # Re-read the admin overrides, so a change saved through the other host reaches this one.
+            while True:
+                await asyncio.sleep(30)
+                await asyncio.to_thread(tuning.refresh)
+
+        tuning_refresh = asyncio.create_task(_tuning_forever())
         loop_monitor = LoopLagMonitor()
         server_start_time = time.time()
         app.state.loop_monitor = loop_monitor
@@ -137,6 +158,9 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             yield
         finally:
             loop_monitor.stop()
+            tuning_refresh.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await tuning_refresh
             if sweeper is not None:
                 sweeper.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -161,6 +185,15 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         # credentialed requests cannot use "*": only the listed dev origins (web.cors_origins) get CORS
         app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_credentials=True,
                            allow_methods=["*"], allow_headers=["*"])
+    app.add_middleware(ToggleGzip, tuning=tuning)
+    app.state.tuning = tuning
+    # Demo MP4s: local files (default) or presigned R2 URLs. Misconfiguration fails at startup, not in the demo.
+    demo_source = str((web.get("demo") or {}).get("video_source", "local")).strip().lower()
+    if demo_source not in {"local", "r2"}:
+        raise ValueError(f"web.demo.video_source must be 'local' or 'r2', not {demo_source!r}")
+    app.state.demo_r2 = build_r2(cfg) if demo_source == "r2" else None
+    if demo_source == "r2" and app.state.demo_r2 is None:
+        raise ValueError("web.demo.video_source is 'r2' but R2 is not configured (set BTB_R2_* in the environment)")
     dashboard_pin = str(auth_cfg.get("dashboard_pin", "")).strip()
     api_token = str(auth_cfg.get("api_token", "")).strip()
     ingest_token = str(auth_cfg.get("ingest_token", "")).strip()
@@ -658,6 +691,32 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         ctx.hub.publish("status", {"profile": profile})
         return profile
 
+    # -- admin: live bandwidth tuning (no redeploy). Operator-only: the API token, never a household role.
+    def _require_admin(req: Request) -> None:
+        if not api_token:
+            raise HTTPException(status_code=403, detail="admin API disabled: set BTB_API_TOKEN")
+        auth_hdr = req.headers.get("Authorization", "")
+        presented = auth_hdr[len("Bearer "):].strip() if auth_hdr.startswith("Bearer ") else req.headers.get("X-BTB-Token", "").strip()
+        if not secrets.compare_digest(presented.encode(), api_token.encode()):
+            raise HTTPException(status_code=401, detail="admin token required")
+
+    @app.get("/admin/tuning")
+    async def get_admin_tuning(request: Request) -> dict:
+        _require_admin(request)
+        return tuning.snapshot()
+
+    @app.patch("/admin/tuning")
+    async def patch_admin_tuning(request: Request, body: dict | None = None) -> dict:
+        """Change any of video_fps, ws_frame_fps, gzip_enabled, gzip_min_size. Validated as a whole;
+        takes effect on the next frame or response and is kept across restarts."""
+        _require_admin(request)
+        try:
+            return tuning.update(body or {})
+        except TuningError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:  # noqa: BLE001 - a failed save must say so; nothing was applied
+            raise HTTPException(status_code=503, detail=f"could not save the settings: {exc.__class__.__name__}")
+
     @app.get("/households/me/settings")
     async def get_household_settings(ctx: Ctx = Depends(auth_ctx)) -> dict:
         """A tester household's opt-in flags (T2.9). Defaults are private; the owner opts in."""
@@ -1126,6 +1185,9 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             path = app.state.demo.video_path(cid)
         except KeyError:
             raise HTTPException(404, f"unknown demo clip {cid!r}")
+        if app.state.demo_r2 is not None:
+            # The bytes come from R2 (free egress); this host only sends the redirect.
+            return RedirectResponse(app.state.demo_r2.url_for(demo_object_key(cid)), status_code=302)
         return FileResponse(path, media_type="video/mp4")
 
     @app.get("/demo/clips/{cid}/events")
@@ -1361,7 +1423,6 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         if tracker and tracker.is_kicked():
             raise HTTPException(status_code=403, detail="Viewers disconnected by station")
 
-        period = 1.0 / float(web["video"]["fps"])
         # A tab left open on a household with no camera must not spin forever: stop after this much
         # silence (also makes ?max_frames=N terminate when no frame ever arrives).
         idle_s = float(web["video"].get("idle_timeout_s", 30.0))
@@ -1371,8 +1432,9 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         label = parse_ua_label(ua)
 
         async def gen():
-            sent = 0
+            ticks = 0
             last_frame_at = time.monotonic()
+            last_digest: bytes | None = None  # the phone sends ~0.5-5 fps; re-sending an unchanged JPEG wastes egress
             # Register inside the generator: if the client drops before the first iteration the stream
             # never starts, and a registration made earlier would never be released (ghost viewer).
             if tracker:
@@ -1381,7 +1443,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 except Exception:
                     return
             try:
-                while max_frames <= 0 or sent < max_frames:
+                # max_frames bounds served ticks (a test knob), not bytes written: unchanged frames are skipped below.
+                while max_frames <= 0 or ticks < max_frames:
                     if tracker and tracker.is_kicked():
                         return
                     station_cap = getattr(pipeline, "station_cap", "full") if pipeline else "full"
@@ -1403,13 +1466,17 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                         jpeg = getattr(pipeline, "raw_frame_jpeg", pipeline.latest_frame_jpeg)()
 
                     if jpeg:
-                        yield b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + str(len(jpeg)).encode() \
-                            + b"\r\n\r\n" + jpeg + b"\r\n"
-                        sent += 1
+                        ticks += 1
+                        digest = hashlib.blake2b(jpeg, digest_size=16).digest()
+                        if digest != last_digest:
+                            last_digest = digest
+                            yield b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + str(len(jpeg)).encode() \
+                                + b"\r\n\r\n" + jpeg + b"\r\n"
                         last_frame_at = time.monotonic()
                     elif time.monotonic() - last_frame_at > idle_s:
                         return
-                    await asyncio.sleep(period)
+                    # Read per tick, so an admin change to video_fps applies to streams already open.
+                    await asyncio.sleep(1.0 / float(tuning.get("video_fps")))
             finally:
                 if tracker:
                     tracker.leave_video(stream_id)
