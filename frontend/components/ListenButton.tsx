@@ -31,7 +31,9 @@ export function ListenButton({ control, variant }: { control: ListenControl; var
   if (control.availability === "hidden") return null;
   const locked = control.availability === "locked";
   const pressed = control.listening;
-  const name = pressed ? "Stop listening" : "Listen to the room";
+  // One stable accessible name; the state is carried by aria-pressed. The tooltip keeps the state-dependent wording.
+  const name = "Listen to the room";
+  const tooltip = pressed ? "Stop listening" : name;
   const pressedStyle = { background: "rgba(127,227,232,.18)", color: "#BFF2F4" };
   const idleStyle = { color: "#D6D8DB" };
   const base =
@@ -44,7 +46,7 @@ export function ListenButton({ control, variant }: { control: ListenControl; var
       aria-pressed={pressed}
       aria-label={name}
       aria-disabled={locked || undefined}
-      title={locked ? LOCKED_TEXT : name}
+      title={locked ? LOCKED_TEXT : tooltip}
       onClick={() => {
         if (!locked) control.toggle();
       }}
