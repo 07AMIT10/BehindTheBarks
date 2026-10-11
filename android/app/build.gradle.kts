@@ -68,20 +68,25 @@ android {
         release {
             isMinifyEnabled = false
             val releaseSigning = signingConfigs.findByName("release")
-            signingConfig = if (releaseSigning?.storeFile?.exists() == true) {
-                releaseSigning
-            } else {
-                // Never ship a tester build signed with the debug key by accident: a silent fallback
-                // means the APK cannot be updated in place and looks "broken" for no visible reason.
-                throw GradleException(
-                    "release signing key not found (BTB_KEYSTORE_PATH=$releaseKeystorePath). " +
-                        "Run scripts/generate_release_keystore.sh, or pass -PbtbKeystorePath, " +
-                        "or build the debug APK instead.",
-                )
-            }
+            // Unsigned when there is no keystore; the release tasks refuse to run in that case (below).
+            signingConfig = releaseSigning?.takeIf { it.storeFile?.exists() == true }
         }
         debug {
             isMinifyEnabled = false
+        }
+    }
+
+    // Never ship a tester build signed with the debug key by accident: a silent fallback means the APK
+    // cannot be updated in place and looks "broken" for no visible reason. This runs only when a release
+    // artifact is requested, so unit tests and debug builds (and CI, which has no keystore) are unaffected.
+    project.gradle.taskGraph.whenReady {
+        val releaseRequested = allTasks.any { it.name == "assembleRelease" || it.name == "bundleRelease" }
+        if (releaseRequested && !releaseKeystoreFile.exists()) {
+            throw GradleException(
+                "release signing key not found (BTB_KEYSTORE_PATH=$releaseKeystorePath). " +
+                    "Run scripts/generate_release_keystore.sh, or pass -PbtbKeystorePath, " +
+                    "or build the debug APK instead.",
+            )
         }
     }
 

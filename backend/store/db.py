@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import secrets
 import uuid
 from typing import Any
@@ -63,6 +64,10 @@ def make_engine(url: str, **kwargs: Any) -> Engine:
     """An engine configured per dialect: SQLite needs foreign keys and WAL, Postgres has pooling."""
     url = normalize_db_url(url)
     if url.startswith("sqlite"):
+        # A fresh checkout or container has no out/ yet; SQLite cannot create its own parent directory.
+        db_file = url.split("///", 1)[1] if "///" in url else ""
+        if db_file and db_file != ":memory:" and not db_file.startswith("file:"):
+            os.makedirs(os.path.dirname(os.path.abspath(db_file)), exist_ok=True)
         kwargs.setdefault("connect_args", {})
         kwargs["connect_args"].setdefault("check_same_thread", False)
         engine = create_engine(url, **kwargs)
