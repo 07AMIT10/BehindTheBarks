@@ -349,6 +349,11 @@ class RemotePipeline:
             "events": m["events"],
             "previews": m["previews"],
             "dropped": m["dropped"],
+            "audio_frames": m["audio_frames"],
+            "audio_bytes": m["audio_bytes"],
+            "audio_dropped_policy": m["audio_dropped_policy"],
+            "audio_dropped_invalid": m["audio_dropped_invalid"],
+            "audio_clients": m["audio_clients"],
             "device": m["device"],
             "models": m["models"],
             "clock_offset_s": m["clock_offset_s"],
@@ -372,6 +377,8 @@ class RemotePipeline:
         if self._session is not None and hasattr(self._session, "metrics"):
             return self._session.metrics(now)
         return {"events_s": 0.0, "preview_fps": 0.0, "events": 0, "previews": 0, "dropped": 0, "device": None,
+                "audio_frames": 0, "audio_bytes": 0, "audio_dropped_policy": 0, "audio_dropped_invalid": 0,
+                "audio_clients": 0,
                 "models": {}, "clock_offset_s": 0.0, "clock_samples": 0, "ping_due_s": None, "audio_ok": False,
                 "last_event_age_s": None, "last_frame_age_s": None, "last_preview_age_s": None,
                 "battery_pct": None, "charging": None, "temp_c": None, "latest_telemetry": None}
