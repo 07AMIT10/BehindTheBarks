@@ -9,6 +9,10 @@ services:
     envVars:
       - key: WEB_PIPELINE
         value: remote
+      # TLS-only (docs/SECURITY_HARDENING.md): Render terminates TLS and sets X-Forwarded-Proto, so
+      # plain-http requests get 308 / 403 and the session cookie is always Secure. /health is exempt.
+      - key: BTB_FORCE_HTTPS
+        value: "1"
       # BTB_DASHBOARD_PIN is intentionally NOT set here: this repo is public, so a
       # PIN in the Blueprint would be public knowledge. Set BTB_DASHBOARD_PIN (and
       # BTB_API_TOKEN / BTB_INGEST_TOKEN) manually in the Render dashboard instead.
