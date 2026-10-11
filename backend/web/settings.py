@@ -22,6 +22,9 @@ WEB_DEFAULTS: dict[str, Any] = {
     # T2.10 retention: a household's session logs live 7 days by default, then the registry's
     # periodic sweep deletes them. Set 0 to keep everything.
     "log_retention_days": 7,
+    # H2/H3: TLS-only mode (BTB_FORCE_HTTPS=1 env) and the dashboard Content-Security-Policy.
+    "force_https": False,
+    "csp": {"enabled": True, "extra_connect_src": []},
     "state": {
         "persist_s": 3.0, "no_dog_unknown_s": 2.0, "llm_override_conf": 0.7, "llm_stale_s": 12.0,
         "cooldown_s": 60.0, "cooldowns": {}, "always_notify": ["fearful", "aggressive", "disinterested"],
@@ -87,6 +90,8 @@ def load_config(path: str | Path = "config.yaml", env: Mapping[str, str] | None 
         cfg["web"]["database_url"] = env["BTB_DATABASE_URL"].strip()
     if env.get("BTB_AUTH_MODE"):
         cfg["web"].setdefault("auth", {})["mode"] = env["BTB_AUTH_MODE"].strip().lower()
+    if env.get("BTB_FORCE_HTTPS"):
+        cfg["web"]["force_https"] = _truthy(env["BTB_FORCE_HTTPS"])
     if env.get("BTB_HOUSEHOLD_CREATES_PER_HOUR"):
         cfg["web"].setdefault("auth", {})["household_creates_per_hour"] = int(env["BTB_HOUSEHOLD_CREATES_PER_HOUR"])
     profile = cfg["web"].setdefault("profile", {})

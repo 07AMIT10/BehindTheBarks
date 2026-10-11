@@ -38,6 +38,7 @@ from backend.web.ingest import CLOSE_REVOKED
 from backend.web.auth import Ctx
 from backend.web.limited import limit_jpeg
 from backend.web.limits import RateLimiter
+from backend.web.security import SecurityMiddleware, build_csp, inline_script_hashes
 from backend.web.modes import ModeError, min_mode, mode_rank, parse_mode
 from backend.web.policy import Policy, build_events_only_slate, build_privacy_slate
 from backend.web.registry import LEGACY, HouseholdRegistry
@@ -163,6 +164,16 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         # credentialed requests cannot use "*": only the listed dev origins (web.cors_origins) get CORS
         app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_credentials=True,
                            allow_methods=["*"], allow_headers=["*"])
+    # H2/H3: security headers, dashboard CSP, households Origin check, TLS-only mode (backend/web/security.py)
+    frontend_out = Path(__file__).resolve().parent.parent / "frontend" / "out"
+    force_https = bool(web.get("force_https", False))
+    csp_cfg = web.get("csp") or {}
+    csp_policy = None
+    if bool(csp_cfg.get("enabled", True)):
+        extra = [str(o).strip().rstrip("/") for o in (csp_cfg.get("extra_connect_src") or []) if str(o).strip()]
+        csp_policy = build_csp(inline_script_hashes(frontend_out), [*cors_origins, *extra])
+    app.add_middleware(SecurityMiddleware, csp=csp_policy, force_https=force_https,
+                       origin_check=households_mode, allowed_origins=cors_origins)
     dashboard_pin = str(auth_cfg.get("dashboard_pin", "")).strip()
     api_token = str(auth_cfg.get("api_token", "")).strip()
     ingest_token = str(auth_cfg.get("ingest_token", "")).strip()
@@ -215,7 +226,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
 
     def _set_session_cookie(resp, token: str, req: Request) -> None:
         resp.set_cookie(VIEWER_COOKIE, token, httponly=True, samesite="lax", path="/",
-                        max_age=SESSION_MAX_AGE_S, secure=_is_https(req))
+                        max_age=SESSION_MAX_AGE_S, secure=force_https or _is_https(req))
 
     def _clear_session_cookie(resp) -> None:
         resp.delete_cookie(VIEWER_COOKIE, path="/")
@@ -1775,7 +1786,6 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 detach(session)
             rt.phone_close(session, code)
 
-    frontend_out = Path(__file__).resolve().parent.parent / "frontend" / "out"
     if frontend_out.is_dir():
         from fastapi.staticfiles import StaticFiles
         app.mount("/", StaticFiles(directory=str(frontend_out), html=True), name="frontend")
