@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import secrets
 import uuid
 from typing import Any
@@ -41,9 +42,24 @@ def new_pairing_code() -> str:
     return secrets.token_urlsafe(16)
 
 
+def _ensure_sqlite_parent_dir(url: str) -> None:
+    """Create the directory holding a file-backed SQLite database (fresh clones and CI have no out/).
+
+    Handles `sqlite:///relative/x.db`, `sqlite:////abs/x.db` and `sqlite://` / `:memory:` (no file).
+    """
+    from sqlalchemy.engine import make_url
+
+    database = make_url(url).database
+    if not database or database == ":memory:" or database.startswith("file:"):
+        return
+    parent = os.path.dirname(os.path.abspath(database))
+    os.makedirs(parent, exist_ok=True)
+
+
 def make_engine(url: str, **kwargs: Any) -> Engine:
     """An engine configured per dialect: SQLite needs foreign keys and WAL, Postgres just works."""
     if url.startswith("sqlite"):
+        _ensure_sqlite_parent_dir(url)
         kwargs.setdefault("connect_args", {})
         kwargs["connect_args"].setdefault("check_same_thread", False)
         engine = create_engine(url, **kwargs)
