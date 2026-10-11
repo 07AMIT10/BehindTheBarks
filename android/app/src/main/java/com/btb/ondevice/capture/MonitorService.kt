@@ -42,6 +42,7 @@ import com.btb.ondevice.pipeline.InferenceExecutor
 import com.btb.ondevice.pipeline.MemoryGuard
 import com.btb.ondevice.pipeline.OnDevicePipeline
 import com.btb.ondevice.pipeline.ThermalGovernor
+import com.btb.ondevice.ui.ListenerIndicator
 import com.btb.ondevice.ui.OverlayState
 import com.btb.ondevice.vision.DogDetector
 import com.btb.ondevice.vision.FaceLandmarker
@@ -220,6 +221,7 @@ class MonitorService : Service(), LifecycleOwner {
             return
         }
         val prevVideoViewers = modeController.policy.videoViewers
+        val prevAudioViewers = modeController.policy.audioViewers
         val policy = Policy(
             mode = parsed,
             previewFps = previewFps,
@@ -238,6 +240,9 @@ class MonitorService : Service(), LifecycleOwner {
         currentAudioViewers = audioViewers
         if (prevVideoViewers == 0 && videoViewers > 0) {
             playViewerChime()
+        }
+        if (ListenerIndicator.chimesOn(prevAudioViewers, audioViewers)) {
+            playListenerChime()
         }
         updateNotification()
         listener?.onViewersCountChanged(videoViewers, audioViewers)
@@ -690,6 +695,26 @@ class MonitorService : Service(), LifecycleOwner {
         }
     }
 
+    /** T3.9 listener chime: a low prompt then a beep, distinct from the video chime (ACK, BEEP2) and the treat chime. */
+    private fun playListenerChime() {
+        try {
+            val toneGen = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 100)
+            toneGen.startTone(android.media.ToneGenerator.TONE_PROP_PROMPT, 200)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                try {
+                    toneGen.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 200)
+                } catch (_: Exception) {}
+            }, 220)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                try {
+                    toneGen.release()
+                } catch (_: Exception) {}
+            }, 600)
+        } catch (e: Exception) {
+            Log.w("MonitorService", "Failed to play listener chime: ${e.message}")
+        }
+    }
+
     /** T3.4: two-tone chime (TONE_PROP_ACK then TONE_PROP_BEEP2) when viewer count goes 0 -> >0. */
     private fun playViewerChime() {
         try {
@@ -812,12 +837,13 @@ class MonitorService : Service(), LifecycleOwner {
             PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
         )
 
-        val displayText = if (currentVideoViewers > 0) {
-            val s = if (currentVideoViewers == 1) "1 viewer watching" else "$currentVideoViewers viewers watching"
-            "$s · $statusText"
+        val viewerPart = if (currentVideoViewers > 0) {
+            if (currentVideoViewers == 1) "1 viewer watching" else "$currentVideoViewers viewers watching"
         } else {
-            statusText
+            null
         }
+        val displayText = listOfNotNull(viewerPart, ListenerIndicator.countText(currentAudioViewers), statusText)
+            .joinToString(" · ")
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Behind the Barks Monitor")
@@ -827,7 +853,7 @@ class MonitorService : Service(), LifecycleOwner {
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPendingIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)
 
-        if (currentVideoViewers > 0) {
+        if (currentVideoViewers > 0 || currentAudioViewers > 0) {
             val kickIntent = Intent(this, MonitorService::class.java).apply {
                 action = ACTION_KICK_VIEWERS
             }

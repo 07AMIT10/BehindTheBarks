@@ -66,6 +66,7 @@ class MainActivity : Activity() {
     private lateinit var viewersBadge: TextView
     private lateinit var disconnectViewersButton: Button
     private lateinit var ambientViewersText: TextView
+    private lateinit var listeningBadge: TextView
 
     private lateinit var prefs: SharedPreferences
 
@@ -123,7 +124,7 @@ class MainActivity : Activity() {
 
                 override fun onViewersCountChanged(videoViewers: Int, audioViewers: Int) {
                     runOnUiThread {
-                        updateViewersUi(videoViewers)
+                        updateViewersUi(videoViewers, audioViewers)
                     }
                 }
 
@@ -493,6 +494,19 @@ class MainActivity : Activity() {
         viewersRow.addView(disconnectViewersButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         controlsPanel.addView(viewersRow)
 
+        // T3.9: people listening to the microphone (Full mode only). Own row, hidden at zero.
+        val listeningRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        listeningBadge = TextView(this).apply {
+            setTextColor(Color.parseColor("#FFB74D"))
+            textSize = 12f
+            visibility = View.GONE
+        }
+        listeningRow.addView(listeningBadge, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        controlsPanel.addView(listeningRow)
+
         root.addView(controlsScroll)
 
         // 5. Ambient / Station Mode Fullscreen Overlay (pitch black to save power & prevent OLED burn-in)
@@ -565,7 +579,7 @@ class MainActivity : Activity() {
         setContentView(root)
         enforceTouchTargets(controlsPanel)
         enforceTouchTargets(floatingPill)
-        applyAccessibility(viewersRow)
+        applyAccessibility(viewersRow, listeningRow)
         requestPermissionsIfNeeded()
         // A rotation or font change recreates this screen while the service keeps capturing.
         // Reattach to the running service instead of treating the screen as idle.
@@ -606,7 +620,7 @@ class MainActivity : Activity() {
      * is always in the tree when it is shown. Focus follows the order the controls are added, which
      * is top to bottom as drawn.
      */
-    private fun applyAccessibility(viewers: LinearLayout) {
+    private fun applyAccessibility(viewers: LinearLayout, listening: LinearLayout) {
         previewView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         overlayView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         statusTextView.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
@@ -614,7 +628,10 @@ class MainActivity : Activity() {
         viewers.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         viewersBadge.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         disconnectViewersButton.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
-        disconnectViewersButton.contentDescription = "Disconnect all viewers"
+        disconnectViewersButton.contentDescription = "Disconnect all viewers and listeners"
+        listening.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        listeningBadge.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        listeningBadge.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         dimButton.contentDescription = "Station Dim: black screen, camera stays on"
         collapseButton.contentDescription = "Hide the control panel"
         ambientOverlay.contentDescription = "Station Dim is on. Tap to wake the screen."
@@ -1137,7 +1154,7 @@ class MainActivity : Activity() {
         setMonitoringUi(false)
         statusTextView.text = "● Idle · Ready"
         overlayView.updateState(OverlayState())
-        updateViewersUi(0)
+        updateViewersUi(0, 0)
     }
 
     /** The controls that depend on monitoring. Used on start, on stop and when a recreated screen reattaches. */
@@ -1165,19 +1182,29 @@ class MainActivity : Activity() {
         view.contentDescription = spokenLabel(view.text.toString())
     }
 
-    private fun updateViewersUi(count: Int) {
-        if (count > 0) {
-            val label = if (count == 1) "👁️ 1 viewer watching" else "👁️ $count viewers watching"
-            viewersBadge.text = label
+    /** T3.4 video viewers and T3.9 audio listeners. Disconnect kicks everyone, so it shows for either. */
+    private fun updateViewersUi(videoCount: Int, audioCount: Int) {
+        val videoLabel = if (videoCount > 0) {
+            if (videoCount == 1) "👁️ 1 viewer watching" else "👁️ $videoCount viewers watching"
+        } else null
+        if (videoLabel != null) {
+            viewersBadge.text = videoLabel
             viewersBadge.visibility = View.VISIBLE
-            disconnectViewersButton.visibility = View.VISIBLE
-            ambientViewersText.text = label
-            ambientViewersText.visibility = View.VISIBLE
         } else {
             viewersBadge.visibility = View.GONE
-            disconnectViewersButton.visibility = View.GONE
-            ambientViewersText.visibility = View.GONE
         }
+        val listeningLabel = ListenerIndicator.rowText(audioCount)
+        if (listeningLabel != null) {
+            listeningBadge.text = listeningLabel
+            listeningBadge.contentDescription = ListenerIndicator.description(audioCount)
+            listeningBadge.visibility = View.VISIBLE
+        } else {
+            listeningBadge.visibility = View.GONE
+        }
+        disconnectViewersButton.visibility = if (videoLabel != null || listeningLabel != null) View.VISIBLE else View.GONE
+        val ambient = listOfNotNull(videoLabel, listeningLabel).joinToString("\n")
+        ambientViewersText.text = ambient
+        ambientViewersText.visibility = if (ambient.isNotEmpty()) View.VISIBLE else View.GONE
     }
 
     private fun updateTorchButton(on: Boolean) {
