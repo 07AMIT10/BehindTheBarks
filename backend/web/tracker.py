@@ -188,12 +188,15 @@ class ViewerTracker:
 
     @property
     def viewer_counts(self) -> dict[str, int]:
+        """Distinct viewers per stream kind. Audio listeners count on their own: a listener with no video
+        demand still keeps the phone's microphone stream on (T3.9)."""
         self._clean_expired_demands()
         eff = self.effective_demand
-        if eff == "none":
-            return {"video": 0, "audio": 0}
-        active_vids = set(self._demands.keys()) | {v["viewer_id"] for v in self._video_streams.values()}
-        return {"video": len(active_vids), "audio": 0}
+        video = 0
+        if eff != "none":
+            video = len(set(self._demands.keys()) | {v["viewer_id"] for v in self._video_streams.values()})
+        audio = len({v["viewer_id"] for v in self._audio_streams.values()})
+        return {"video": video, "audio": audio}
 
     @property
     def labels(self) -> list[str]:

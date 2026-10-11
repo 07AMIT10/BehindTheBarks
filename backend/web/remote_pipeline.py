@@ -183,15 +183,17 @@ class RemotePipeline:
         """T3.1: send one `policy` downlink (mode + preview params + audio + viewer counts), then
         the legacy `privacy` downlink so an old APK still mutes. Returns whether a phone took it.
 
-        `mode` is validated here: an unknown mode raises rather than reaching the phone."""
+        `mode` is validated here: an unknown mode raises rather than reaching the phone.
+        `audio` is accepted for callers that predate T3.9 but never trusted: the flag sent is derived by
+        `_audio_wanted()` (effective mode full AND at least one audio listener), so a mode change cannot
+        leave a stale `audio: true` behind."""
         mode = parse_mode(mode)  # ModeError propagates: a bad mode must never be sent
         self._policy_mode = mode
         if preview is not None:
             self._policy_preview = dict(preview)
-        if audio is not None:
-            self._policy_audio = bool(audio)
         if viewers is not None:
             self._policy_viewers = dict(viewers)
+        self._policy_audio = self._audio_wanted()
         data = {"mode": mode, "preview": dict(self._policy_preview),
                 "audio": self._policy_audio, "viewers": dict(self._policy_viewers)}
         sent = self._post({"type": "policy", "data": data})
@@ -229,8 +231,15 @@ class RemotePipeline:
         return self._station_cap
 
     def set_station_cap(self, cap: str) -> None:
-        """Called by the session when the phone reports a new cap (T3.1/T3.2)."""
+        """Called by the session when the phone reports a new cap (T3.1/T3.2). A cap that changes whether
+        audio may flow is pushed at once, so the phone stops or starts its microphone stream."""
         self._station_cap = parse_mode(cap)
+        if self._audio_wanted() != self._policy_audio:
+            self.set_policy(self._policy_mode)
+
+    def _audio_wanted(self) -> bool:
+        """T3.9: the phone streams audio only in Full mode, and only while somebody listens."""
+        return self.effective_mode == "full" and int(self._policy_viewers.get("audio", 0) or 0) > 0
 
     # -- phone session --------------------------------------------------------------------------
     def attach(self, session: Any, send: Callable[[dict], Awaitable[None]] | None) -> None:
