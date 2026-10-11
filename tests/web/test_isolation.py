@@ -320,3 +320,167 @@ def test_two_households_two_stations_matrix(tmp_path):
             assert c.post(f"/treat?station={s1A.station_id}").status_code == 404
 
 
+
+
+# -- /audio (T3.9): isolation between households and mode/kick enforcement --------------------------
+from starlette.websockets import WebSocketDisconnect  # noqa: E402
+
+from backend.web import audio_codec as _ac  # noqa: E402
+
+
+def _audio_frame(seq: int) -> bytes:
+    """A valid codec-1 phone frame whose seq makes it unmistakable in a byte comparison."""
+    return _ac.pack_frame(_ac.CODEC_IMA_ADPCM, seq, 1000 + seq, _ac.encode_block([seq % 90] * _ac.CHUNK_SAMPLES))
+
+
+def _viewer_cookie(c, owner_cookie: str, ceiling: str | None = None) -> str:
+    """Pair a new viewer in the owner's household (optionally with a mode ceiling) and return its cookie."""
+    as_owner(c, owner_cookie)
+    body = {"kind": "viewer", "label": "Phone"}
+    if ceiling:
+        body["mode_ceiling"] = ceiling
+    code = c.post("/households/me/pairing", json=body).json()["code"]
+    c.cookies.clear()
+    assert c.post("/join", json={"code": code}).status_code == 200
+    return c.cookies[VIEWER_COOKIE]
+
+
+def _audio_close_code(c, path: str, cookies: dict | None = None, headers: dict | None = None) -> int:
+    """Open /audio, expect a refusal, and return its close code. The client's own cookie jar is cleared
+    first, so only the cookies passed here are presented."""
+    c.cookies.clear()
+    with pytest.raises(WebSocketDisconnect) as err:
+        with c.websocket_connect(path, cookies=cookies or {}, headers=headers or {}) as ws:
+            ws.receive_json()
+    return err.value.code
+
+
+def _go_full(c, owner_cookie: str) -> None:
+    as_owner(c, owner_cookie)
+    assert c.post("/mode", json={"mode": "full"}).status_code == 200
+
+
+def test_audio_viewer_of_household_b_never_hears_household_a(two_households):
+    app_, c, h1_cookie, h2_cookie, s1, s2 = two_households
+    _go_full(c, h1_cookie)
+    _go_full(c, h2_cookie)
+    with connect_station(c, s1) as phone_a, connect_station(c, s2) as phone_b:
+        listener_b = _viewer_cookie(c, h2_cookie)
+        with c.websocket_connect("/audio", cookies={VIEWER_COOKIE: listener_b}) as ws:
+            hello = ws.receive_json()
+            assert hello["station"] == s2.station_id  # B's default channel, never A's
+            phone_a.send_bytes(bytes([0x02]) + _audio_frame(41)[1:])
+            phone_b.send_bytes(_audio_frame(42))
+            assert ws.receive_bytes() == _audio_frame(42)[1:]  # the first thing B hears is B's own frame
+
+
+def test_audio_station_of_another_household_is_not_found(two_households):
+    app_, c, h1_cookie, h2_cookie, s1, s2 = two_households
+    _go_full(c, h1_cookie)
+    with connect_station(c, s1):
+        other_viewer = _viewer_cookie(c, h2_cookie)
+        assert _audio_close_code(c, f"/audio?station={s1.station_id}", {VIEWER_COOKIE: other_viewer}) == 4404
+
+
+def test_audio_needs_a_session_and_the_same_origin_guard(two_households):
+    app_, c, h1_cookie, h2_cookie, s1, s2 = two_households
+    _go_full(c, h1_cookie)
+    with connect_station(c, s1):
+        assert _audio_close_code(c, "/audio") == 4401
+        assert _audio_close_code(c, "/audio", {VIEWER_COOKIE: "not-a-session"}) == 4401
+        assert _audio_close_code(c, "/audio", {VIEWER_COOKIE: h1_cookie},
+                                 headers={"origin": "https://evil.example"}) == 4403
+
+
+def test_audio_ceiling_below_full_is_forbidden(two_households):
+    app_, c, h1_cookie, h2_cookie, s1, s2 = two_households
+    _go_full(c, h1_cookie)
+    with connect_station(c, s1):
+        for ceiling in ("limited", "privacy", "blackout"):
+            cookie = _viewer_cookie(c, h1_cookie, ceiling=ceiling)
+            assert _audio_close_code(c, "/audio", {VIEWER_COOKIE: cookie}) == 4403, ceiling
+
+
+def test_audio_refused_when_the_household_is_not_full_at_connect(two_households):
+    app_, c, h1_cookie, h2_cookie, s1, s2 = two_households
+    with connect_station(c, s1):
+        as_owner(c, h1_cookie)
+        assert c.post("/mode", json={"mode": "limited"}).status_code == 200
+        viewer = _viewer_cookie(c, h1_cookie)
+        assert _audio_close_code(c, "/audio", {VIEWER_COOKIE: viewer}) == 4403
+
+
+def test_lowering_the_mode_while_listening_closes_4412_and_frames_stop(two_households):
+    app_, c, h1_cookie, h2_cookie, s1, s2 = two_households
+    _go_full(c, h1_cookie)
+    with connect_station(c, s1) as phone:
+        viewer = _viewer_cookie(c, h1_cookie)
+        with c.websocket_connect("/audio", cookies={VIEWER_COOKIE: viewer}) as ws:
+            ws.receive_json()
+            phone.send_bytes(_audio_frame(1))
+            assert ws.receive_bytes() == _audio_frame(1)[1:]
+            as_owner(c, h1_cookie)
+            assert c.post("/mode", json={"mode": "privacy"}).status_code == 200
+            with pytest.raises(WebSocketDisconnect) as err:
+                while True:  # frames may still be queued; the close must come, within about a second
+                    ws.receive_bytes()
+            assert err.value.code == 4412
+        ch = app_.state.registry.peek(_hid(app_, s1)).channels[s1.station_id]
+        before = ch.pipeline.status()["audio_dropped_policy"]
+        phone.send_bytes(_audio_frame(2))
+        assert ch.pipeline.status()["audio_dropped_policy"] == before + 1  # nothing is relayed any more
+
+
+def _hid(app_, station) -> str:
+    """The household a paired station belongs to, from the store."""
+    from backend.store import repo as _repo
+
+    with app_.state.db_session() as s:
+        return _repo.station_by_id(s, station.station_id).household_id
+
+
+def test_kicking_viewers_closes_audio_with_4411_and_cools_down(two_households):
+    app_, c, h1_cookie, h2_cookie, s1, s2 = two_households
+    _go_full(c, h1_cookie)
+    with connect_station(c, s1):
+        viewer = _viewer_cookie(c, h1_cookie)
+        with c.websocket_connect("/audio", cookies={VIEWER_COOKIE: viewer}) as ws:
+            ws.receive_json()
+            as_owner(c, h1_cookie)
+            assert c.post("/viewers/disconnect-all").status_code == 200
+            with pytest.raises(WebSocketDisconnect) as err:
+                ws.receive_bytes()
+            assert err.value.code == 4411
+        # during the 60 s cooldown a new listener is refused the same way
+        assert _audio_close_code(c, "/audio", {VIEWER_COOKIE: viewer}) == 4411
+
+
+def test_multi_station_audio_goes_to_the_selected_station_only(two_households):
+    app_, c, h1_cookie, h2_cookie, s1, s2 = two_households
+    _go_full(c, h1_cookie)
+    other = Station(c, b"H1SECONDSTATION", "PhoneThree")  # a second station of household 1
+    as_owner(c, h1_cookie)
+    assert c.post("/mode", json={"mode": "full"}).status_code == 200
+    with connect_station(c, s1) as phone_1:
+        with connect_station(c, other) as phone_2:
+            viewer = _viewer_cookie(c, h1_cookie)
+            with c.websocket_connect(f"/audio?station={other.station_id}",
+                                     cookies={VIEWER_COOKIE: viewer}) as ws:
+                assert ws.receive_json()["station"] == other.station_id
+                phone_1.send_bytes(_audio_frame(10))  # station 1's audio must not reach this listener
+                phone_2.send_bytes(_audio_frame(11))
+                assert ws.receive_bytes() == _audio_frame(11)[1:]
+            assert _audio_close_code(c, f"/audio?station={s2.station_id}", {VIEWER_COOKIE: viewer}) == 4404
+
+
+def test_pin_mode_audio_follows_the_household_mode(tmp_path):
+    cfg = load_config(tmp_path / "none.yaml", env={})
+    cfg["web"]["log_dir"] = str(tmp_path / "out")
+    cfg["web"]["pipeline"] = "remote"
+    app_ = create_app(cfg, pipeline=None, interpreter=SpyLLM(), notifier=DashboardOnlyNotifier())
+    with TestClient(app_) as c:
+        assert c.post("/mode", json={"mode": "privacy"}).status_code == 200
+        assert _audio_close_code(c, "/audio") == 4403
+        assert c.post("/mode", json={"mode": "full"}).status_code == 200
+        with c.websocket_connect("/audio") as ws:
+            assert ws.receive_json()["type"] == "audio_hello"
