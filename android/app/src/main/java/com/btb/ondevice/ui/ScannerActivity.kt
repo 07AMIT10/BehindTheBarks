@@ -1,55 +1,91 @@
 package com.btb.ondevice.ui
 
 import android.Manifest
+import android.app.Activity
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.ViewGroup
+import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
-import android.app.Activity
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 import com.btb.ondevice.net.PairResult
 import com.btb.ondevice.net.StationKey
 import com.btb.ondevice.util.PairingTarget
 import com.btb.ondevice.util.QrDecoder
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
 
 /**
  * Standalone QR pairing (T2.5): a spare phone pairs BEFORE monitoring ever starts, which is what a
- * first-run tester does. Reads one v2 code, pairs, closes itself; the monitoring session is untouched.
- * No preview is bound: the analyzer alone is enough to read a QR, and it keeps the camera use brief.
+ * first-run tester does. The camera preview is shown full screen so the tester can aim at the dashboard
+ * QR, and the result (paired, expired, failed) is shown on screen instead of a short toast.
+ *
+ * One scan is one pairing attempt. After an attempt, scanning stays off until the tester taps
+ * "Scan again", so a code the server already used is never re-sent in a loop.
  */
 class ScannerActivity : Activity(), LifecycleOwner {
     private val lifecycleRegistry = LifecycleRegistry(this)
     override val lifecycle: Lifecycle get() = lifecycleRegistry
     private val scope = MainScope()
     private val executor = Executors.newSingleThreadExecutor()
-    private var done = false
-    private lateinit var hint: TextView
+
+    /** True while the analyzer may read a QR. Turned off by the first readable code. */
+    @Volatile private var armed = true
+
+    private lateinit var previewView: PreviewView
+    private lateinit var statusText: TextView
+    private lateinit var retryButton: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        hint = TextView(this).apply {
-            text = "Point the camera at the dashboard pairing QR"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-            gravity = Gravity.CENTER
+        previewView = PreviewView(this).apply {
+            scaleType = PreviewView.ScaleType.FILL_CENTER
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         }
-        setContentView(FrameLayout(this).apply { addView(hint) })
+        statusText = TextView(this).apply {
+            text = "Point the camera at the dashboard pairing QR"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+            setTextColor(0xFFFFFFFF.toInt())
+            gravity = Gravity.CENTER
+        }
+        retryButton = Button(this).apply {
+            text = "Scan again"
+            visibility = android.view.View.GONE
+            setOnClickListener { rearm() }
+        }
+        val cancelButton = Button(this).apply {
+            text = "Cancel"
+            setOnClickListener { finish() }
+        }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(0xCC000000.toInt())
+            setPadding(dp(20), dp(16), dp(20), dp(24))
+            addView(statusText)
+            addView(retryButton)
+            addView(cancelButton)
+        }
+        setContentView(FrameLayout(this).apply {
+            addView(previewView)
+            addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+        })
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 1)
             return
@@ -59,30 +95,35 @@ class ScannerActivity : Activity(), LifecycleOwner {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startCamera() else finish()
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            startCamera()
+        } else {
+            showResult("Camera permission is needed to read the QR. Allow it in Settings, then reopen this screen.", error = true, retry = false)
+        }
     }
 
     private fun startCamera() {
         val future = ProcessCameraProvider.getInstance(this)
         future.addListener({
             val provider = future.get()
+            val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
             val analysis = ImageAnalysis.Builder()
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build()
             analysis.setAnalyzer(executor) { proxy -> analyze(proxy) }
             provider.unbindAll()
-            provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, analysis as androidx.camera.core.UseCase)
+            provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
         }, ContextCompat.getMainExecutor(this))
     }
 
     private fun analyze(proxy: ImageProxy) {
         try {
-            if (done) return
+            if (!armed) return
             val rgba = rgbaFrom(proxy)
             val text = rgba?.let { QrDecoder.decodeRgba(it, proxy.width, proxy.height) }
             val target = text?.let { QrDecoder.parsePairingText(it) }
-            if (target is PairingTarget.Code && !done) {
-                done = true
+            if (target is PairingTarget.Code && armed) {
+                armed = false
                 runOnUiThread { pair(target) }
             }
         } catch (t: Throwable) {
@@ -125,24 +166,41 @@ class ScannerActivity : Activity(), LifecycleOwner {
     private fun pair(target: PairingTarget.Code) {
         val prefs = getSharedPreferences(StationPrefs.NAME, MODE_PRIVATE)
         val deviceName = prefs.getString(StationPrefs.DEVICE, android.os.Build.MODEL) ?: android.os.Build.MODEL
-        Toast.makeText(this, "Pairing station…", Toast.LENGTH_SHORT).show()
+        showResult("Pairing this phone…", error = false, retry = false)
         scope.launch {
             when (val result = PairingFlow.pairAndSave(prefs, target, deviceName, StationKey.getOrCreate())) {
                 is PairResult.Ok -> {
-                    Toast.makeText(this@ScannerActivity, "✓ Station paired — start monitoring", Toast.LENGTH_LONG).show()
-                    finish()
+                    showResult("✓ Paired. Close this screen, then tap Start Monitoring.", error = false, retry = false)
+                    previewView.postDelayed({ finish() }, 2000)
                 }
-                PairResult.InvalidCode -> {
-                    done = false
-                    Toast.makeText(this@ScannerActivity, "That code is expired or used", Toast.LENGTH_LONG).show()
-                }
+                PairResult.InvalidCode ->
+                    showResult("This code is expired or already used. Get a new code on the dashboard, then tap Scan again.", error = true)
                 is PairResult.Failed -> {
-                    done = false
-                    Toast.makeText(this@ScannerActivity, "Pairing failed: ${result.detail}", Toast.LENGTH_LONG).show()
+                    val message = if (result.detail == "HTTP 429") {
+                        "Too many attempts. Wait one minute, then tap Scan again."
+                    } else {
+                        "Pairing failed (${result.detail}). Check the dashboard is open on this computer, then tap Scan again."
+                    }
+                    showResult(message, error = true)
                 }
             }
         }
     }
+
+    /** Scanning starts again only when the tester asks for it. */
+    private fun rearm() {
+        armed = true
+        showResult("Point the camera at the dashboard pairing QR", error = false, retry = false)
+    }
+
+    private fun showResult(message: String, error: Boolean, retry: Boolean = error) {
+        statusText.text = message
+        statusText.setTextColor(if (error) 0xFFFF6B6B.toInt() else 0xFFFFFFFF.toInt())
+        retryButton.visibility = if (retry) android.view.View.VISIBLE else android.view.View.GONE
+    }
+
+    private fun dp(value: Int): Int =
+        TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value.toFloat(), resources.displayMetrics).toInt()
 
     override fun onStart() {
         super.onStart()
@@ -161,6 +219,7 @@ class ScannerActivity : Activity(), LifecycleOwner {
 
     override fun onDestroy() {
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
+        scope.cancel()
         executor.shutdown()
         super.onDestroy()
     }

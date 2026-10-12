@@ -73,6 +73,7 @@ class MainActivity : Activity() {
     private var isBound = false
     private var isMonitoring = false
     private var householdRef: TextView? = null
+    private var unpairButton: Button? = null
     private val dim = StationDimState()
     private val isAmbientMode: Boolean get() = dim.isOn
     private var uiResumed = false
@@ -297,7 +298,13 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.parseColor("#1565C0"))
             setTextColor(Color.WHITE)
             setOnClickListener {
-                startActivity(android.content.Intent(this@MainActivity, ScannerActivity::class.java))
+                // The scanner's camera start unbinds every CameraX use case in this process, which would
+                // silently stop a running monitor's camera while its socket stays up (no frames after pairing).
+                if (isMonitoring) {
+                    Toast.makeText(this@MainActivity, "Stop Monitoring first, then pair", Toast.LENGTH_LONG).show()
+                } else {
+                    startActivity(android.content.Intent(this@MainActivity, ScannerActivity::class.java))
+                }
             }
         }
         urlActionsRow.addView(pairQrBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
@@ -316,7 +323,7 @@ class MainActivity : Activity() {
         householdRow.addView(householdLabel, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         householdRow.addView(unpairBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         householdRef = householdLabel
-        refreshHouseholdLabel()
+        unpairButton = unpairBtn
 
         val pasteBtn = Button(this).apply {
             text = "📋 Paste"
@@ -1049,14 +1056,28 @@ class MainActivity : Activity() {
             ?: "No household paired (use Pair by QR)"
     }
 
-    /** Drop the station identity: the next start pairs again from the dashboard. */
+    /** Start and Unpair only apply to a paired station; Pair by QR stays available either way. */
+    private fun refreshPairingUi() {
+        val paired = !prefs.getString(KEY_STATION_ID, null).isNullOrBlank()
+        unpairButton?.visibility = if (paired) View.VISIBLE else View.GONE
+        toggleButton.visibility = if (paired) View.VISIBLE else View.GONE
+        refreshHouseholdLabel()
+    }
+
+    /**
+     * Drop the station identity and stop monitoring, since a running monitor would keep streaming under the
+     * old identity. The next start pairs again from the dashboard (Pair by QR).
+     */
     private fun unpairStation() {
+        if (isMonitoring) stopMonitoringService()
         prefs.edit()
             .remove(StationPrefs.STATION_ID)
             .remove(StationPrefs.HOUSEHOLD_ID)
             .remove(StationPrefs.PAIR_URL)
             .apply()
-        refreshHouseholdLabel()
+        refreshPairingUi()
+        statusTextView.text = "Unpaired. Tap Pair by QR to pair this phone again."
+        statusTextView.setTextColor(Color.parseColor("#FFB74D"))
         Toast.makeText(this, "Station unpaired", Toast.LENGTH_SHORT).show()
     }
 
@@ -1250,7 +1271,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         uiResumed = true
-        refreshHouseholdLabel()  // a pairing done in ScannerActivity is shown when we come back
+        refreshPairingUi()  // a pairing done in ScannerActivity is shown when we come back
         // A raise that arrived while we were away is still waiting for an answer: show it now.
         if (monitorService?.pendingApprovalMode() != null) showApprovalDialog()
     }

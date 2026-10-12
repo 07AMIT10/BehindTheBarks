@@ -32,11 +32,16 @@ export default function PairingModal({ isOpen, onClose, phoneConnected, deviceNa
     ? `${new URL(pairing.qr.pair_url).origin}/?join=${encodeURIComponent(pairing.code)}`
     : "";
 
+  // The modal is mounted before a code exists, so the countdown must start from each new pairing.
+  useEffect(() => {
+    if (pairing) setLeft(pairing.expires_in);
+  }, [pairing]);
+
   useEffect(() => {
     if (!pairing) return;
     const id = setInterval(() => setLeft((v) => v - 1), 1000);
     return () => clearInterval(id);
-  }, [pairing, left]);
+  }, [pairing]);
 
   useEffect(() => {
     if (!pairing) return;
@@ -118,7 +123,7 @@ export default function PairingModal({ isOpen, onClose, phoneConnected, deviceNa
 
         <div className="w-full flex items-center gap-2 p-2 rounded-xl bg-white/5 border border-white/10 text-xs text-muted font-mono mb-3">
           <span className="truncate flex-1 pl-1 text-[12px] text-gray-300">
-            {kind === "station" ? `${pairing.qr.pair_url}/pair` : joinLink}
+            {kind === "station" ? pairing.qr.pair_url : joinLink}
           </span>
           <span className="shrink-0 text-[12px] text-gray-400">{Math.max(left, 0)}s</span>
           {kind === "viewer" && (
