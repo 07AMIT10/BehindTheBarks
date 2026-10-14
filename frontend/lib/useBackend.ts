@@ -112,7 +112,7 @@ export function useBackend() {
     const getJson = async <T,>(path: string): Promise<T> => {
       const sep = path.includes("?") ? "&" : "?";
       const fullUrl = `${base.http}${path}${activeToken ? `${sep}token=${encodeURIComponent(activeToken)}` : ""}`;
-      const r = await fetch(fullUrl, { headers: getHeaders(), cache: "no-store" });
+      const r = await fetch(fullUrl, { headers: getHeaders(), credentials: "include", cache: "no-store" });
       if (r.status === 401) {
         setAuthRequired(true);
         setAuthenticated(false);
@@ -379,9 +379,33 @@ export function useBackend() {
   const revokeStation = useCallback(async (stationId: string) => {
     const tok = token ?? getStoredToken();
     const headers: Record<string, string> = {};
-    if (tok) headers["Authorization"] = `Bearer ${tok}`;
     const res = await fetch(`${base.http}/stations/${stationId}`, { method: "DELETE", credentials: "include", headers });
     if (!res.ok) throw new Error(`revoke station: HTTP ${res.status}`);
+    void fetch(`${base.http}/status${tok ? `?token=${encodeURIComponent(tok)}` : ""}`, { headers, credentials: "include", cache: "no-store" })
+      .then((r) => r.ok && r.json())
+      .then((st: Status) => st && dispatch({ kind: "status", status: st }))
+      .catch(() => undefined);
+  }, [base, token]);
+
+  const refreshStatus = useCallback(async () => {
+    const tok = token ?? getStoredToken();
+    const headers: Record<string, string> = {};
+    if (tok) headers["Authorization"] = `Bearer ${tok}`;
+    try {
+      const res = await fetch(`${base.http}/status${tok ? `?token=${encodeURIComponent(tok)}` : ""}`, {
+        headers,
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (res.ok) {
+        const st = (await res.json()) as Status;
+        dispatch({ kind: "status", status: st });
+        return st;
+      }
+    } catch {
+      // ignore
+    }
+    return undefined;
   }, [base, token]);
 
   const deleteHousehold = useCallback(async (recovery_key: string) => {
@@ -537,5 +561,6 @@ export function useBackend() {
     saveSettings,
     revokeViewer,
     revokeStation,
+    refreshStatus,
   };
 }

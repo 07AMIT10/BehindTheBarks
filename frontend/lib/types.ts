@@ -86,6 +86,8 @@ export type Status = {
   max_idle_s?: number; // T3.4: video inactivity timeout in seconds
   viewers?: { video: number; audio: number }; // T3.4: viewer count breakdown
   stations?: StationSummary[]; // T4.1 / T4.2
+  paired_station?: { id: string; name: string; mode_ceiling?: string };
+  revoked_station?: { id: string };
 };
 
 export type Span = {

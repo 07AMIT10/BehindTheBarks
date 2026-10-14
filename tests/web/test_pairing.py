@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from fastapi.testclient import TestClient
 
 from backend.demo.mock_pipeline import MockPipeline
-from backend.main import create_app
+from backend.main import VIEWER_COOKIE, create_app
 from backend.notify.dashboard import DashboardOnlyNotifier
 from backend.web.settings import load_config
 
@@ -75,6 +75,26 @@ def test_pairing_creates_the_station_and_the_qr_carries_the_code(tmp_path):
         assert r.status_code == 200
         body = r.json()
         assert body["station_id"] and body["household_id"]
+
+
+def test_pairing_publishes_status_to_websocket_subscribers(tmp_path):
+    app_ = app(tmp_path)
+    with TestClient(app_) as c:
+        code = paired_owner(c)
+        with c.websocket_connect("/ws", cookies={VIEWER_COOKIE: c.cookies[VIEWER_COOKIE]}) as dash:
+            init = dash.receive_json()
+            assert init["type"] == "status"
+            assert "stations" in init["data"]
+
+            key = StationKey()
+            r = c.post("/pair", json={"code": code, "pubkey_spki_b64": key.spki_b64(), "device_name": "Pixel 8"})
+            assert r.status_code == 200
+            station_id = r.json()["station_id"]
+
+            msg = dash.receive_json()
+            assert msg["type"] == "status"
+            assert msg["data"].get("paired_station") == {"id": station_id, "name": "Pixel 8"}
+            assert any(s["id"] == station_id for s in msg["data"].get("stations", []))
 
 
 def test_qr_payload_shape(tmp_path):

@@ -573,6 +573,7 @@ class MainActivity : Activity() {
         enforceTouchTargets(controlsPanel)
         enforceTouchTargets(floatingPill)
         applyAccessibility(viewersRow)
+        refreshPairingUi()
         requestPermissionsIfNeeded()
         // A rotation or font change recreates this screen while the service keeps capturing.
         // Reattach to the running service instead of treating the screen as idle.
@@ -1062,6 +1063,15 @@ class MainActivity : Activity() {
         unpairButton?.visibility = if (paired) View.VISIBLE else View.GONE
         toggleButton.visibility = if (paired) View.VISIBLE else View.GONE
         refreshHouseholdLabel()
+
+        val currentPrefsUrl = prefs.getString(KEY_URL, DEFAULT_URL) ?: DEFAULT_URL
+        if (urlEditText.text.toString() != currentPrefsUrl) {
+            urlEditText.setText(currentPrefsUrl)
+        }
+        val currentDevice = prefs.getString(KEY_DEVICE, null)
+        if (!currentDevice.isNullOrBlank() && deviceEditText.text.toString().isBlank()) {
+            deviceEditText.setText(currentDevice)
+        }
     }
 
     /**

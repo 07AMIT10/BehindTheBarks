@@ -95,6 +95,7 @@ export default function Dashboard() {
   const [pairing, setPairing] = useState<Pairing | null>(null);
   const [pairKind, setPairKind] = useState<"station" | "viewer">("station");
   const [pairError, setPairError] = useState<string | null>(null);
+  const [initialStationCount, setInitialStationCount] = useState<number | null>(null);
 
   const mintPairing = useCallback((kind: "station" | "viewer", ceiling = "full") => {
     setPairKind(kind);
@@ -104,6 +105,24 @@ export default function Dashboard() {
       .then(setPairing)
       .catch((err) => setPairError(err instanceof Error ? err.message : "could not create the code"));
   }, [createPairing]);
+
+  const openPairModal = useCallback((kind: "station" | "viewer" = "station") => {
+    setPairOpenCount((n) => n + 1);
+    setIsPairingOpen(true);
+    setInitialStationCount(stations.length);
+    mintPairing(kind);
+  }, [stations.length, mintPairing]);
+
+  const pairedStation = useMemo(() => {
+    if (!isPairingOpen) return null;
+    if (state.status?.paired_station) {
+      return state.status.paired_station;
+    }
+    if (initialStationCount !== null && stations.length > initialStationCount) {
+      return stations[stations.length - 1];
+    }
+    return null;
+  }, [isPairingOpen, state.status?.paired_station, stations, initialStationCount]);
   const mode = state.status?.mode ?? "live";
   const demo = mode === "demo";
   const viewMoment = useCallback((ts: number) => {
@@ -152,13 +171,17 @@ export default function Dashboard() {
         <Header dogName={profile.dog_name} location={profile.location}>
           <button
             type="button"
-            onClick={() => { setPairOpenCount((n) => n + 1); setIsPairingOpen(true); mintPairing("station"); }}
+            onClick={() => openPairModal("station")}
             title="Pair Phone Station"
             className="flex h-11 md:h-9 min-w-11 md:min-w-0 items-center gap-1.5 px-3 rounded-lg border border-accent/40 bg-accent/10 text-accent-ink hover:bg-accent/20 text-xs font-semibold transition-colors"
           >
             <span>📱</span>
             <span className="hidden sm:inline">
-              {state.status?.phone?.connected ? "Station Paired" : "Pair Phone"}
+              {state.status?.phone?.connected
+                ? "Station Live"
+                : stations.length > 0
+                ? "Station Paired"
+                : "Pair Phone"}
             </span>
           </button>
           <button
@@ -379,7 +402,8 @@ export default function Dashboard() {
                 blackoutPaused={blackoutPaused}
                 stream={shouldStream(st)}
                 dropped={st === "dropped"}
-                onPair={() => setIsPairingOpen(true)}
+                hasPairedStation={stations.length > 0}
+                onPair={() => openPairModal("station")}
                 lastDogTs={state.lastDogTs}
                 privacyMode={privacyMode}
                 onTogglePrivacy={() => void setPrivacy()}
@@ -444,9 +468,14 @@ export default function Dashboard() {
           kind={pairKind}
           pairing={pairing}
           error={pairError}
-          onClose={() => setIsPairingOpen(false)}
+          onClose={() => {
+            setIsPairingOpen(false);
+            setInitialStationCount(null);
+          }}
           phoneConnected={state.status?.phone?.connected}
           deviceName={state.status?.phone?.device}
+          isPaired={Boolean(pairedStation)}
+          pairedDeviceName={pairedStation?.name}
           onRegenerate={() => mintPairing(pairKind)}
           onSwitchKind={(k) => mintPairing(k)}
         />

@@ -363,6 +363,43 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             s.commit()
         return {"code": code, "expires_in": int(store_repo.PAIRING_TTL_S), "qr": _pair_qr(ctx.request, code)}
 
+    def _build_stations_list(lr, household_id: str, mode_ceiling: str = "full") -> list[dict]:
+        stations_list = []
+        seen_sids = set()
+        if lr is not None:
+            for s_id, c_obj in lr.channels.items():
+                if s_id == "default" and len(lr.channels) > 1 and c_obj.runtime.phone is None:
+                    continue
+                seen_sids.add(s_id)
+                sc = getattr(c_obj.pipeline, "station_cap", "full")
+                eff_c = min_mode(sc, c_obj.policy.household_mode, mode_ceiling)
+                c_phone = c_obj.runtime.status().get("phone")
+                stations_list.append({
+                    "id": s_id,
+                    "name": c_obj.name,
+                    "dog_name": c_obj.runtime.cfg["web"].get("profile", {}).get("dog_name", "Your dog"),
+                    "phone": c_phone,
+                    "pipeline_status": c_obj.runtime.status().get("pipeline_status"),
+                    "effective_mode": eff_c,
+                    "battery": c_phone.get("battery_pct") if c_phone else None,
+                })
+        if hasattr(app.state, "db_session") and app.state.db_session and household_id != LEGACY:
+            with app.state.db_session() as s:
+                for db_st in store_repo.stations_of_household(s, household_id):
+                    if db_st.revoked_at is None and db_st.id not in seen_sids:
+                        seen_sids.add(db_st.id)
+                        default_dog = lr.runtime.cfg["web"].get("profile", {}).get("dog_name", "Your dog") if lr else "Your dog"
+                        stations_list.append({
+                            "id": db_st.id,
+                            "name": db_st.name,
+                            "dog_name": db_st.dog_name or default_dog,
+                            "phone": None,
+                            "pipeline_status": None,
+                            "effective_mode": "full",
+                            "battery": None,
+                        })
+        return stations_list
+
     @app.post("/pair")
     async def pair(req: Request, body: dict | None = None) -> dict:
         """Unauthenticated on purpose: the one-time code is the credential. Always the same 400 on
@@ -390,6 +427,13 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 station = store_repo.create_station(s, household_id=consumed.household_id, name=device_name,
                                                    pubkey_spki=key.public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo))
                 s.commit()
+                lr = app.state.registry.peek(consumed.household_id)
+                if lr is not None:
+                    st_list = _build_stations_list(lr, consumed.household_id)
+                    lr.hub.publish("status", {
+                        "stations": st_list,
+                        "paired_station": {"id": station.id, "name": station.name},
+                    })
                 return {"station_id": station.id, "household_id": station.household_id,
                         "server_time": rt_clock()}
         except _BadPair:
@@ -427,6 +471,11 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 del lr.channels[station_id]
                 if lr.default_channel_id == station_id:
                     lr.default_channel_id = next(iter(lr.channels.keys())) if lr.channels else None
+            st_list = _build_stations_list(lr, ctx.household_id, getattr(ctx, "mode_ceiling", "full"))
+            lr.hub.publish("status", {
+                "stations": st_list,
+                "revoked_station": {"id": station_id},
+            })
         return {"ok": True}
 
     # -- viewer invites (T2.6): a code joins a viewer, the owner lists and revokes ------------------
@@ -971,39 +1020,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             "effective": effective,
         }
 
-        stations_list = []
-        seen_sids = set()
-        for s_id, c_obj in lr.channels.items():
-            if s_id == "default" and len(lr.channels) > 1 and c_obj.runtime.phone is None:
-                continue
-            seen_sids.add(s_id)
-            sc = getattr(c_obj.pipeline, "station_cap", "full")
-            eff_c = min_mode(sc, c_obj.policy.household_mode, getattr(ctx, "mode_ceiling", "full"))
-            c_phone = c_obj.runtime.status().get("phone")
-            stations_list.append({
-                "id": s_id,
-                "name": c_obj.name,
-                "dog_name": c_obj.runtime.cfg["web"].get("profile", {}).get("dog_name", "Your dog"),
-                "phone": c_phone,
-                "pipeline_status": c_obj.runtime.status().get("pipeline_status"),
-                "effective_mode": eff_c,
-                "battery": c_phone.get("battery_pct") if c_phone else None,
-            })
-        if hasattr(app.state, "db_session") and app.state.db_session and ctx.household_id != LEGACY:
-            with app.state.db_session() as s:
-                for db_st in store_repo.stations_of_household(s, ctx.household_id):
-                    if db_st.revoked_at is None and db_st.id not in seen_sids:
-                        seen_sids.add(db_st.id)
-                        stations_list.append({
-                            "id": db_st.id,
-                            "name": db_st.name,
-                            "dog_name": db_st.dog_name or (lr.runtime.cfg["web"].get("profile", {}).get("dog_name", "Your dog")),
-                            "phone": None,
-                            "pipeline_status": None,
-                            "effective_mode": "full",
-                            "battery": None,
-                        })
-        st["stations"] = stations_list
+        st["stations"] = _build_stations_list(lr, ctx.household_id, getattr(ctx, "mode_ceiling", "full"))
         return st
 
     @app.get("/events")
@@ -1547,6 +1564,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 status_data["mode_info"] = dict(status_data["mode_info"])
                 status_data["mode_info"]["effective"] = eff
             status_data["privacy_mode"] = eff == "blackout"
+            status_data["stations"] = _build_stations_list(lr, viewer.household_id, viewer.mode_ceiling or "full")
             await sock.send_json({"type": "status", "seq": 0, "data": status_data})
             while True:
                 msg = await q.get()

@@ -19,6 +19,7 @@ type Props = {
   blackoutPaused?: boolean;  // a deliberate Blackout (stationState "paused"): neutral card, no stream
   stream?: boolean;  // shouldStream(stationState): false for idle/paused/dropped, so no <img> and no /video request
   dropped?: boolean;  // the phone is attached but disconnected: "Reconnecting to camera", no stream
+  hasPairedStation?: boolean;
   onPair?: () => void;
   lastDogTs: number | null;
   privacyMode?: boolean;
@@ -49,6 +50,7 @@ export default function VideoPanel({
   blackoutPaused = false,
   stream = true,
   dropped = false,
+  hasPairedStation = false,
   onPair,
   lastDogTs,
   privacyMode = false,
@@ -292,15 +294,23 @@ export default function VideoPanel({
               <path d="M3 3l18 18" />
             </svg>
           </div>
-          <div className="text-heading font-semibold text-white">Monitoring stopped</div>
+          <div className="text-heading font-semibold text-white">
+            {hasPairedStation ? "Station Ready" : "Monitoring stopped"}
+          </div>
           <p className="max-w-sm text-small text-[#9CA3AF]">
-            Install the WagWatch app on a spare phone, open it, and scan the pairing QR from this page.
+            {hasPairedStation
+              ? "Your phone station is paired. Open WagWatch and tap \"Start Monitoring\" to begin live streaming."
+              : "Install the WagWatch app on a spare phone, open it, and scan the pairing QR from this page."}
           </p>
           {onPair && (
             <button type="button" onClick={onPair}
-              className="mt-1 flex h-11 shrink-0 items-center gap-2 rounded-lg bg-accent px-4 text-[14px] font-bold text-accent-fg transition-colors hover:bg-accent/90 active:scale-95">
+              className={`mt-1 flex h-11 shrink-0 items-center gap-2 rounded-lg px-4 text-[14px] font-bold transition-colors active:scale-95 ${
+                hasPairedStation
+                  ? "bg-white/10 text-white hover:bg-white/15"
+                  : "bg-accent text-accent-fg hover:bg-accent/90"
+              }`}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
-              Pair a phone
+              {hasPairedStation ? "Pair another phone" : "Pair a phone"}
             </button>
           )}
         </div>
