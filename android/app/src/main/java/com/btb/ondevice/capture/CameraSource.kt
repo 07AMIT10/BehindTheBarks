@@ -231,6 +231,41 @@ class CameraSource(
 
     fun isTorchOn(): Boolean = torchEnabled
 
+    fun pulseTorch(pattern: String = "double_blink") {
+        val cam = camera ?: return
+        if (!cam.cameraInfo.hasFlashUnit()) return
+        val wasOn = torchEnabled
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        when (pattern) {
+            "double_blink" -> {
+                cam.cameraControl.enableTorch(true)
+                handler.postDelayed({ cam.cameraControl.enableTorch(false) }, 150)
+                handler.postDelayed({ cam.cameraControl.enableTorch(true) }, 300)
+                handler.postDelayed({
+                    cam.cameraControl.enableTorch(wasOn)
+                    torchEnabled = wasOn
+                }, 450)
+            }
+            "beacon" -> {
+                for (i in 0..2) {
+                    handler.postDelayed({ cam.cameraControl.enableTorch(true) }, i * 400L)
+                    handler.postDelayed({ cam.cameraControl.enableTorch(false) }, i * 400L + 200L)
+                }
+                handler.postDelayed({
+                    cam.cameraControl.enableTorch(wasOn)
+                    torchEnabled = wasOn
+                }, 1300)
+            }
+            else -> {
+                cam.cameraControl.enableTorch(true)
+                handler.postDelayed({
+                    cam.cameraControl.enableTorch(wasOn)
+                    torchEnabled = wasOn
+                }, 300)
+            }
+        }
+    }
+
     fun hasFlashUnit(): Boolean = camera?.cameraInfo?.hasFlashUnit() ?: false
 
     fun flipCamera(): Boolean {

@@ -470,6 +470,9 @@ class MonitorService : Service(), LifecycleOwner {
                 override fun onTorchDownlink(enabled: Boolean) {
                     cameraSource?.setTorch(enabled)
                 }
+                override fun onCueDownlink(sound: String, light: String?) {
+                    playCue(sound, light)
+                }
                 override fun onFlipDownlink() {
                     cameraSource?.flipCamera()
                 }
@@ -676,6 +679,46 @@ class MonitorService : Service(), LifecycleOwner {
             }, 600)
         } catch (e: Exception) {
             Log.w("MonitorService", "Failed to play viewer chime: ${e.message}")
+        }
+    }
+
+    /** Multi-sensory soundboard cue + optional flashlight pulse. */
+    fun playCue(sound: String, lightPattern: String? = null) {
+        try {
+            val toneGen = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 100)
+            when (sound) {
+                "squeak" -> {
+                    toneGen.startTone(android.media.ToneGenerator.TONE_SUP_RINGTONE, 250)
+                }
+                "whistle" -> {
+                    toneGen.startTone(android.media.ToneGenerator.TONE_DTMF_D, 350)
+                }
+                "doorbell" -> {
+                    toneGen.startTone(android.media.ToneGenerator.TONE_DTMF_1, 200)
+                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                        try {
+                            toneGen.startTone(android.media.ToneGenerator.TONE_DTMF_4, 300)
+                        } catch (_: Exception) {}
+                    }, 220)
+                }
+                "lullaby" -> {
+                    toneGen.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 300)
+                }
+                else -> {
+                    toneGen.startTone(android.media.ToneGenerator.TONE_PROP_BEEP2, 250)
+                }
+            }
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                try {
+                    toneGen.release()
+                } catch (_: Exception) {}
+            }, 800)
+        } catch (e: Exception) {
+            Log.w("MonitorService", "Failed to play cue sound: ${e.message}")
+        }
+
+        if (!lightPattern.isNullOrBlank()) {
+            cameraSource?.pulseTorch(lightPattern)
         }
     }
 

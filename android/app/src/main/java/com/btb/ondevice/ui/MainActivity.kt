@@ -274,32 +274,14 @@ class MainActivity : Activity() {
         }
         controlsPanel.addView(urlEditText)
 
-        // URL Quick Actions row (Scan QR & Paste)
-        val urlActionsRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(0), dp(4), dp(0), dp(4))
-        }
-
-        val scanQrBtn = Button(this).apply {
-            text = "📷 Scan QR"
-            textSize = 11f
-            setBackgroundColor(Color.parseColor("#00897B"))
-            setTextColor(Color.WHITE)
-            setOnClickListener {
-                startQrScan()
-            }
-        }
-        urlActionsRow.addView(scanQrBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
-
-        // v2 pairing works before monitoring: the scanner is its own screen (T2.5).
+        // Primary Pairing Action: "Pair by QR"
         val pairQrBtn = Button(this).apply {
             text = "🔗 Pair by QR"
-            textSize = 11f
+            textSize = 13f
             setBackgroundColor(Color.parseColor("#1565C0"))
             setTextColor(Color.WHITE)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
             setOnClickListener {
-                // The scanner's camera start unbinds every CameraX use case in this process, which would
-                // silently stop a running monitor's camera while its socket stays up (no frames after pairing).
                 if (isMonitoring) {
                     Toast.makeText(this@MainActivity, "Stop Monitoring first, then pair", Toast.LENGTH_LONG).show()
                 } else {
@@ -307,14 +289,16 @@ class MainActivity : Activity() {
                 }
             }
         }
-        urlActionsRow.addView(pairQrBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
+        controlsPanel.addView(pairQrBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(4)
+            bottomMargin = dp(4)
+        })
 
-        // The paired household, and a way out of it.
-        // Stacked, not side by side: a wrapping label beside a weighted button is cut off at large font sizes.
-        val householdRow = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(0), dp(8), dp(0), dp(0)) }
+        // Paired household status and unpair button
+        val householdRow = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(0), dp(4), dp(0), dp(4)) }
         val householdLabel = TextView(this).apply { textSize = 11f }
         val unpairBtn = Button(this).apply {
-            text = "Unpair"
+            text = "Unpair Station"
             textSize = 11f
             setBackgroundColor(Color.parseColor("#B71C1C"))
             setTextColor(Color.WHITE)
@@ -324,59 +308,27 @@ class MainActivity : Activity() {
         householdRow.addView(unpairBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         householdRef = householdLabel
         unpairButton = unpairBtn
-
-        val pasteBtn = Button(this).apply {
-            text = "📋 Paste"
-            textSize = 11f
-            setBackgroundColor(Color.parseColor("#5E35B1"))
-            setTextColor(Color.WHITE)
-            setOnClickListener {
-                handlePaste()
-            }
-        }
-        urlActionsRow.addView(pasteBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        controlsPanel.addView(urlActionsRow)
         controlsPanel.addView(householdRow)
 
-        // Preset buttons row
-        val presetsLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(0), dp(4), dp(0), dp(8))
-        }
-
-        val cloudPreset = Button(this).apply {
-            text = "Cloud WSS"
-            textSize = 11f
-            setBackgroundColor(Color.parseColor("#1565C0"))
-            setTextColor(Color.WHITE)
-            setOnClickListener {
-                showCloudPrompt()
+        // Debug testing preset (only visible during developer test runs)
+        if (com.btb.ondevice.BuildConfig.DEBUG) {
+            val debugTestingLayout = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(dp(0), dp(2), dp(0), dp(4))
             }
-        }
-        presetsLayout.addView(cloudPreset, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f).apply { rightMargin = dp(8) })
-
-        val wifiPreset = Button(this).apply {
-            text = "Local Wi-Fi"
-            textSize = 11f
-            setBackgroundColor(Color.parseColor("#37474F"))
-            setTextColor(Color.WHITE)
-            setOnClickListener {
-                showLocalWifiPrompt()
+            val usbPreset = Button(this).apply {
+                text = "🛠️ USB Test (127.0.0.1:8000)"
+                textSize = 10f
+                setBackgroundColor(Color.parseColor("#37474F"))
+                setTextColor(Color.LTGRAY)
+                setOnClickListener {
+                    urlEditText.setText("ws://127.0.0.1:8000/ingest-events")
+                    Toast.makeText(this@MainActivity, "Set USB Local Test URL", Toast.LENGTH_SHORT).show()
+                }
             }
+            debugTestingLayout.addView(usbPreset, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            controlsPanel.addView(debugTestingLayout)
         }
-        presetsLayout.addView(wifiPreset, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
-
-        val usbPreset = Button(this).apply {
-            text = "USB (Local)"
-            textSize = 11f
-            setBackgroundColor(Color.parseColor("#37474F"))
-            setTextColor(Color.WHITE)
-            setOnClickListener {
-                urlEditText.setText("ws://127.0.0.1:8000/ingest-events")
-            }
-        }
-        presetsLayout.addView(usbPreset, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        controlsPanel.addView(presetsLayout)
 
         val defaultDevice = prefs.getString(KEY_DEVICE, Build.MODEL) ?: Build.MODEL
         deviceEditText = EditText(this).apply {

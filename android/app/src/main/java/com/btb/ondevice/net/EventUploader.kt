@@ -42,6 +42,7 @@ interface EventUploaderListener {
     fun onTreatDownlink(ts: Double) {}
     fun onConfigDownlink(configJson: String) {}
     fun onTorchDownlink(enabled: Boolean) {}
+    fun onCueDownlink(sound: String, light: String?) {}
     fun onFlipDownlink() {}
     fun onPrivacyDownlink(enabled: Boolean) {}
     /** T2.5: the server refused the station's identity (4401) or revoked it (4410): pair again. */
@@ -318,6 +319,12 @@ class EventUploader(
                 "torch" -> {
                     val enabled = root["data"]?.jsonObject?.get("enabled")?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true
                     listener?.onTorchDownlink(enabled)
+                }
+                "cue" -> {
+                    val data = root["data"]?.jsonObject
+                    val sound = data?.get("sound")?.jsonPrimitive?.content ?: "squeak"
+                    val light = data?.get("light")?.jsonPrimitive?.content
+                    listener?.onCueDownlink(sound, light)
                 }
                 "flip" -> {
                     listener?.onFlipDownlink()

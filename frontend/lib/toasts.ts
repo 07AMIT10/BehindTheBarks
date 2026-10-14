@@ -18,6 +18,7 @@ export type Toast = {
   count: number;
   sticky: boolean;
   createdAt: number;
+  snapshot?: string | null;
 };
 
 let counter = 0;
@@ -39,6 +40,7 @@ export function toastFromNotification(list: Toast[], item: NotificationItem, dog
     count: existing ? existing.count + 1 : 1,
     sticky: negative,
     createdAt: existing ? existing.createdAt : nowMs,
+    snapshot: item.state.snapshot ?? existing?.snapshot ?? null,
   };
   const rest = list.filter((t) => t.id !== base.id);
   return [base, ...rest].slice(0, MAX_TOASTS);

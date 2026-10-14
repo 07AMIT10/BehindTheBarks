@@ -71,6 +71,8 @@ export default function VideoPanel({
   const imgRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [layers, setLayers] = useState<Layers>({ box: true, skeleton: true, face: true });
+  const [nightVision, setNightVision] = useState(false);
+  const [smartZoom, setSmartZoom] = useState(false);
   const [modeSheetOpen, setModeSheetOpen] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   const [videoOk, setVideoOk] = useState(false);
@@ -78,6 +80,10 @@ export default function VideoPanel({
   const [watchdogPaused, setWatchdogPaused] = useState(false);
   const [resumeKey, setResumeKey] = useState(0);
   const watchdogRef = useRef<StreamWatchdog | null>(null);
+
+  const bbox = frame?.dog_detected && frame.bbox ? frame.bbox : null;
+  const zoomOriginX = bbox ? Math.max(10, Math.min(90, ((bbox[1] + bbox[3]) / 2) * 100)) : 50;
+  const zoomOriginY = bbox ? Math.max(10, Math.min(90, ((bbox[0] + bbox[2]) / 2) * 100)) : 50;
 
   useEffect(() => {
     const isMuted = idle || paused || privacyMode || effectiveMode === "blackout" || effectiveMode === "privacy";
@@ -322,13 +328,17 @@ export default function VideoPanel({
     <section aria-label="Live video of the feeding area" ref={boxRef}
       className="relative h-full min-h-0 overflow-hidden rounded-xl bg-[#1B1D1F] sm:min-h-[320px] lg:min-h-[480px]">
       <div
-        className="absolute inset-0 flex items-center justify-center transition-transform duration-300"
+        className="absolute inset-0 flex items-center justify-center transition-all duration-300"
         style={{
+          transformOrigin: smartZoom ? `${zoomOriginX}% ${zoomOriginY}%` : "center center",
           transform: `rotate(${rotation}deg)${
             isSideways && size.w > 0 && size.h > 0
-              ? ` scale(${Math.min(size.w / size.h, size.h / size.w)})`
+              ? ` scale(${Math.min(size.w / size.h, size.h / size.w) * (smartZoom ? 1.75 : 1)})`
+              : smartZoom
+              ? " scale(1.75)"
               : ""
           }`,
+          filter: nightVision ? "brightness(1.45) contrast(1.25) saturate(0.85)" : undefined,
         }}
       >
         {!watchdogPaused && stream && (
@@ -483,6 +493,20 @@ export default function VideoPanel({
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.0 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.0 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
               <span className="hidden sm:inline">Flip</span>
             </button>
+            <button type="button" aria-pressed={nightVision} onClick={() => setNightVision((v) => !v)}
+              title={nightVision ? "Turn off Night Vision shader" : "Turn on Night Vision shader (boost low-light shadow details)"}
+              className="flex h-11 md:h-8 items-center gap-1 rounded-sm px-2 sm:px-2.5 text-[12px] sm:text-[12px] font-semibold transition-all active:scale-95"
+              style={nightVision ? { background: "rgba(16, 185, 129, 0.22)", color: "#A7F3D0", border: "1px solid rgba(16, 185, 129, 0.4)" } : { color: "#A0A5AD" }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+              <span>{nightVision ? "Night ON" : "Night"}</span>
+            </button>
+            <button type="button" aria-pressed={smartZoom} onClick={() => setSmartZoom((z) => !z)}
+              title={smartZoom ? "Reset zoom" : "Smart Zoom: Follow dog bounding box"}
+              className="flex h-11 md:h-8 items-center gap-1 rounded-sm px-2 sm:px-2.5 text-[12px] sm:text-[12px] font-semibold transition-all active:scale-95"
+              style={smartZoom ? { background: "rgba(59, 130, 246, 0.22)", color: "#93C5FD", border: "1px solid rgba(59, 130, 246, 0.4)" } : { color: "#A0A5AD" }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+              <span>{smartZoom ? "Zoom ON" : "Zoom"}</span>
+            </button>
             {onSetMode ? (
               <button
                 type="button"
@@ -568,6 +592,18 @@ export default function VideoPanel({
                 className="flex h-11 items-center justify-center gap-2 rounded-xl px-3 text-[14px] font-semibold text-[#D6D8DB] ring-1 ring-white/10 active:scale-95">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
                 Rotate{rotation !== 0 ? ` ${rotation}°` : ""}
+              </button>
+              <button type="button" aria-pressed={nightVision} onClick={() => setNightVision((v) => !v)}
+                className="flex h-11 items-center justify-center gap-2 rounded-xl px-3 text-[14px] font-semibold ring-1 ring-white/10 active:scale-95"
+                style={nightVision ? { background: "rgba(16, 185, 129, 0.22)", color: "#A7F3D0", borderColor: "rgba(16, 185, 129, 0.4)" } : { color: "#D6D8DB" }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                {nightVision ? "Night ON" : "Night Vision"}
+              </button>
+              <button type="button" aria-pressed={smartZoom} onClick={() => setSmartZoom((z) => !z)}
+                className="flex h-11 items-center justify-center gap-2 rounded-xl px-3 text-[14px] font-semibold ring-1 ring-white/10 active:scale-95"
+                style={smartZoom ? { background: "rgba(59, 130, 246, 0.22)", color: "#93C5FD", borderColor: "rgba(59, 130, 246, 0.4)" } : { color: "#D6D8DB" }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                {smartZoom ? "Zoom ON" : "Smart Zoom"}
               </button>
               {onSetMode ? (
                 <button

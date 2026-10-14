@@ -178,6 +178,12 @@ class RemotePipeline:
         log.info("remote: sent camera flip to phone (%s)", "sent" if sent else "no phone")
         return sent
 
+    def send_cue(self, sound: str = "squeak", light: str | None = None) -> bool:
+        """Send a multi-sensory attention cue (sound chime + light pattern) to the station phone."""
+        sent = self._post({"type": "cue", "data": {"sound": str(sound), "light": light}})
+        log.info("remote: sent cue sound=%s light=%s to phone (%s)", sound, light, "sent" if sent else "no phone")
+        return sent
+
     def set_policy(self, mode: str, *, preview: dict | None = None, audio: bool | None = None,
                    viewers: dict | None = None) -> bool:
         """T3.1: send one `policy` downlink (mode + preview params + audio + viewer counts), then

@@ -4,7 +4,7 @@ import { hhmm } from "@/lib/format";
 import type { Toast } from "@/lib/toasts";
 import EmotionIcon from "./EmotionIcon";
 
-type Props = { toasts: Toast[]; onDismiss: (id: string) => void; onView: (ts: number) => void };
+type Props = { toasts: Toast[]; onDismiss: (id: string) => void; onView: (ts: number, toast?: Toast) => void };
 
 function statusLine(t: Toast): string | null {
   if (t.status === "dashboard_only") return "Would send to owner";
@@ -21,6 +21,11 @@ export default function ToastStack({ toasts, onDismiss, onView }: Props) {
         const words = t.title.split(" ");
         const last = words.pop();
         const line = statusLine(t);
+        const imgSrc = t.snapshot
+          ? t.snapshot.startsWith("data:") || t.snapshot.startsWith("http") || t.snapshot.startsWith("/")
+            ? t.snapshot
+            : `data:image/jpeg;base64,${t.snapshot}`
+          : null;
         return (
           <div key={t.id} role={t.kind === "negative" ? "alert" : "status"}
             className="pointer-events-auto relative overflow-hidden rounded-lg border border-border bg-surface shadow-[var(--shadow-toast)]">
@@ -41,10 +46,20 @@ export default function ToastStack({ toasts, onDismiss, onView }: Props) {
                   <div className="font-mono text-[12px] text-muted">{hhmm(t.ts)}</div>
                 </div>
                 {t.body && <div className="line-clamp-2 text-small text-text-soft">{t.body}</div>}
+                {imgSrc && (
+                  <div
+                    onClick={() => onView(t.ts, t)}
+                    className="mt-1 cursor-pointer overflow-hidden rounded border border-border/80 bg-black/40 hover:opacity-90"
+                    style={{ maxHeight: "80px", maxWidth: "140px" }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={imgSrc} alt="Alert snapshot" className="h-full w-full object-cover" />
+                  </div>
+                )}
                 {line && <div className="text-[12px] text-muted" title={t.detail}>{line}</div>}
                 {t.kind === "negative" && (
                   <div className="mt-1.5 flex gap-2">
-                    <button type="button" onClick={() => onView(t.ts)} className="h-11 md:h-8 rounded-sm bg-accent px-3 text-[12px] font-semibold text-accent-fg">View moment</button>
+                    <button type="button" onClick={() => onView(t.ts, t)} className="h-11 md:h-8 rounded-sm bg-accent px-3 text-[12px] font-semibold text-accent-fg">View moment</button>
                     <button type="button" onClick={() => onDismiss(t.id)} className="h-11 md:h-8 rounded-sm border border-border px-3 text-[12px] font-semibold text-text">Dismiss</button>
                   </div>
                 )}

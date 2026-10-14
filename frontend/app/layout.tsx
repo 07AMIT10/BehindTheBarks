@@ -8,9 +8,24 @@ const plexMono = IBM_Plex_Mono({ variable: "--font-plex-mono", subsets: ["latin"
 export const metadata: Metadata = {
   title: "WagWatch · Behind The Barks",
   description: "Real-time multimodal dog perception and well-being monitor",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "WagWatch",
+  },
+  icons: {
+    icon: "/icon.svg",
+    apple: "/icon.svg",
+  },
 };
 
-export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover" };
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#0B0F19",
+};
 
 // Runs before first paint: apply the saved (or system) theme so there is no light->dark flash.
 // The phone camera page (/camera) is always dark (ui/screens/05-08), whatever the saved theme.

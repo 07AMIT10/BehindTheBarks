@@ -14,12 +14,13 @@ type Props = {
   nowSec: number;
   selected: number | null;
   onSelect: (index: number) => void;
+  onViewMoment?: (span: Span) => void;
 };
 
 const TREAT_ICON = "M3 13h18a9 5 0 0 1-18 0zM12 3v6";
 const BELL_ICON = "M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20.5a2 2 0 0 0 4 0";
 
-export default function Timeline({ spans, audio, treats, notifications, nowSec, selected, onSelect }: Props) {
+export default function Timeline({ spans, audio, treats, notifications, nowSec, selected, onSelect, onViewMoment }: Props) {
   const w = timelineWindow(spans, nowSec);
   const laid = layoutSpans(spans, w, nowSec);
   const sounds = groupAudio(audio, w);
@@ -130,6 +131,16 @@ export default function Timeline({ spans, audio, treats, notifications, nowSec, 
           </div>
           <div className="min-w-0 grow text-[14px] text-text">{sel.reason}</div>
           <div className="whitespace-nowrap text-[12px] text-text-soft">{sourceLabel(sel.source)} · {pct(sel.confidence)}</div>
+          {sel.snapshot && (
+            <button
+              type="button"
+              onClick={() => onViewMoment?.(sel)}
+              className="flex items-center gap-1 rounded bg-black/40 px-2.5 py-1 text-xs font-semibold text-white hover:bg-black/60 transition-colors active:scale-95"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+              <span>Snapshot</span>
+            </button>
+          )}
         </div>
       )}
     </section>

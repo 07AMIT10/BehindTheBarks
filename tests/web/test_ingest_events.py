@@ -990,3 +990,19 @@ def test_camera_flip_downlink(tmp_path):
 
         down = ws.receive_json()
         assert down["type"] == "flip"
+
+
+def test_cue_downlink(tmp_path):
+    c, _ = remote_client(tmp_path)
+    now = time.time()
+    with c, c.websocket_connect("/ingest-events") as ws:
+        ws.send_text(hello_msg(phone_time=now))
+        assert ws.receive_json()["type"] == "hello_ack"
+
+        res = c.post("/cue", json={"sound": "squeak", "light": "double_blink"}).json()
+        assert res["ok"] is True and res["sound"] == "squeak" and res["light"] == "double_blink" and res["sent"] is True
+
+        down = ws.receive_json()
+        assert down["type"] == "cue"
+        assert down["data"]["sound"] == "squeak"
+        assert down["data"]["light"] == "double_blink"

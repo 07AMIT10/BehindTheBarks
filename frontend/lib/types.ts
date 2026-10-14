@@ -97,6 +97,7 @@ export type Span = {
   confidence: number;
   reason: string;
   source: "rules" | "llm" | "fused";
+  snapshot?: string | null;
 };
 
 export type NotificationItem = {

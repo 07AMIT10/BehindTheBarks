@@ -65,9 +65,9 @@ function applyStationEmotion(sv: StationView, e: EmotionState, changed: boolean,
     const last = spans[spans.length - 1];
     if (!last || (isNew && last.emotion !== e.emotion) || changed) {
       const closed = last ? [...spans.slice(0, -1), { ...last, end: e.ts }] : spans;
-      spans = [...closed, { emotion: e.emotion, start: e.ts, end: e.ts, confidence: e.confidence, reason: e.reason, source: e.source }];
+      spans = [...closed, { emotion: e.emotion, start: e.ts, end: e.ts, confidence: e.confidence, reason: e.reason, source: e.source, snapshot: e.snapshot ?? null }];
     } else {
-      spans = [...spans.slice(0, -1), { ...last, end: e.ts, confidence: e.confidence, reason: e.reason, source: e.source }];
+      spans = [...spans.slice(0, -1), { ...last, end: e.ts, confidence: e.confidence, reason: e.reason, source: e.source, snapshot: last.snapshot ?? e.snapshot ?? null }];
     }
   }
   return {

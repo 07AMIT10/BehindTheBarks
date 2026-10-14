@@ -1075,6 +1075,23 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         enabled = False if get_fn is None else bool(get_fn())
         return {"enabled": enabled}
 
+    @app.post("/cue")
+    async def trigger_cue(ctx: Ctx = Depends(auth_ctx), station: str | None = None, body: dict | None = None) -> dict:
+        check_rate_limit("cue", 2.0, ctx.household_id)
+        lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
+        target_station = station or (body.get("station") if isinstance(body, dict) else None)
+        ch = _resolve_channel(lr, target_station, ctx.household_id)
+        if target_station and ch is None:
+            raise HTTPException(404, f"station {target_station!r} is not active")
+        pipeline = ch.pipeline if ch else ctx.pipeline
+        fn = getattr(pipeline, "send_cue", None)
+        if fn is None:
+            raise HTTPException(400, "web.pipeline must support 'send_cue'")
+        sound = body.get("sound", "squeak") if isinstance(body, dict) else "squeak"
+        light = body.get("light") if isinstance(body, dict) else None
+        sent = bool(fn(sound=sound, light=light))
+        return {"ok": True, "sound": sound, "light": light, "sent": sent}
+
     @app.get("/profile")
     async def get_profile(ctx: Ctx = Depends(auth_ctx)) -> dict:
         """The pet profile every viewer sees: header, captions, toasts."""

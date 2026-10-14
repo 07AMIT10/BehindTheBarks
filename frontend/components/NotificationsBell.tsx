@@ -6,9 +6,14 @@ import { hhmm } from "@/lib/format";
 import type { NotificationItem } from "@/lib/types";
 import EmotionIcon from "./EmotionIcon";
 
-type Props = { notifications: NotificationItem[]; dogName: string; onOpen: () => void };
+type Props = {
+  notifications: NotificationItem[];
+  dogName: string;
+  onOpen: () => void;
+  onSelectMoment?: (moment: NotificationItem) => void;
+};
 
-export default function NotificationsBell({ notifications, dogName, onOpen }: Props) {
+export default function NotificationsBell({ notifications, dogName, onOpen, onSelectMoment }: Props) {
   const [open, setOpen] = useState(false);
   const unread = notifications.filter((n) => !n.read).length;
   const toggle = () => {
@@ -29,7 +34,16 @@ export default function NotificationsBell({ notifications, dogName, onOpen }: Pr
         <div className="absolute right-0 top-12 z-40 flex max-h-96 w-80 flex-col overflow-y-auto rounded-lg border border-border bg-surface p-2 shadow-[var(--shadow-toast)]">
           {notifications.length === 0 && <div className="p-4 text-small text-muted">No notifications yet.</div>}
           {[...notifications].reverse().map((n) => (
-            <div key={n.id} className="flex gap-3 rounded-md p-2 hover:bg-surface-2">
+            <div
+              key={n.id}
+              onClick={() => {
+                if (onSelectMoment) {
+                  onSelectMoment(n);
+                  setOpen(false);
+                }
+              }}
+              className="flex cursor-pointer gap-3 rounded-md p-2 hover:bg-surface-2 transition-colors"
+            >
               <EmotionIcon emotion={n.state.emotion} size={22} />
               <div className="flex min-w-0 grow flex-col">
                 <div className="flex items-baseline gap-2">

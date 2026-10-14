@@ -10,6 +10,7 @@ import { useBackend } from "@/lib/useBackend";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useNow } from "@/lib/useNow";
 import { batteryDisplay, batteryLevelClass, isTelemetryStale } from "@/lib/battery";
+import type { NotificationItem } from "@/lib/types";
 import AuthModal from "./AuthModal";
 import ClipList from "./ClipList";
 import DemoBanner from "./DemoBanner";
@@ -32,6 +33,9 @@ import DeleteHouseholdModal from "./DeleteHouseholdModal";
 import ProfileModal from "./ProfileModal";
 import StationGrid from "./StationGrid";
 import DebugDrawer from "./DebugDrawer";
+import MomentModal, { type MomentDetail } from "./MomentModal";
+import SoundboardDrawer from "./SoundboardDrawer";
+import type { Toast } from "@/lib/toasts";
 
 export default function Dashboard() {
   const backend = useBackend(); // backend.readAll / backend.http are used by Tasks 6 and 8
@@ -68,6 +72,7 @@ export default function Dashboard() {
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [showGrid, setShowGrid] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
+  const [soundboardOpen, setSoundboardOpen] = useState(false);
   const stations = state.status?.stations ?? [];
   const hasMultipleStations = stations.length > 1;
   const projector = useMemo(() => new URLSearchParams(window.location.search).get("size") === "projector", []);
@@ -125,11 +130,44 @@ export default function Dashboard() {
   }, [isPairingOpen, state.status?.paired_station, stations, initialStationCount]);
   const mode = state.status?.mode ?? "live";
   const demo = mode === "demo";
-  const viewMoment = useCallback((ts: number) => {
+  const [activeMoment, setActiveMoment] = useState<MomentDetail | null>(null);
+
+  const viewMoment = useCallback((ts: number, toast?: Toast) => {
     const i = spanAt(state.spans, ts);
-    if (i >= 0) setSelectedSpan(i);
+    if (i >= 0) {
+      setSelectedSpan(i);
+      const sp = state.spans[i];
+      setActiveMoment({
+        emotion: sp.emotion,
+        ts: sp.start,
+        reason: sp.reason,
+        confidence: sp.confidence,
+        source: sp.source,
+        snapshot: sp.snapshot ?? toast?.snapshot ?? null,
+        duration_s: sp.end > sp.start ? sp.end - sp.start : undefined,
+      });
+    } else if (toast?.emotion) {
+      setActiveMoment({
+        emotion: toast.emotion,
+        ts: toast.ts,
+        reason: toast.body || toast.title,
+        snapshot: toast.snapshot ?? null,
+      });
+    }
     document.getElementById("timeline")?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [state.spans]);
+
+  const onSelectNotification = useCallback((n: NotificationItem) => {
+    setActiveMoment({
+      emotion: n.state.emotion,
+      ts: n.state.ts,
+      reason: n.state.reason,
+      confidence: n.state.confidence,
+      source: n.state.source,
+      snapshot: n.state.snapshot ?? null,
+    });
+  }, []);
+
   const flashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const onTreat = useCallback(() => {
     setTreatFlash(true);
@@ -293,7 +331,12 @@ export default function Dashboard() {
             );
           })()}
           <ThemeToggle />
-          <NotificationsBell notifications={state.notifications} dogName={profile.dog_name} onOpen={backend.readAll} />
+          <NotificationsBell
+            notifications={state.notifications}
+            dogName={profile.dog_name}
+            onOpen={backend.readAll}
+            onSelectMoment={onSelectNotification}
+          />
           {backend.authStatus?.debug && (
             <button
               type="button"
@@ -425,8 +468,16 @@ export default function Dashboard() {
                 nowMs={nowMs} nowSec={nowSec} paused={paused} idle={idle} projector={projector} dogName={profile.dog_name}
                 lastDogTs={state.lastDogTs} lastSeenEmotion={lastSeenEmotion} />
             </div>
-            <div className="hidden [grid-area:treat] lg:block">
+            <div className="hidden [grid-area:treat] lg:flex lg:flex-col lg:gap-2">
               <TreatButton onTreat={onTreat} flash={treatFlash} />
+              <button
+                type="button"
+                onClick={() => setSoundboardOpen(true)}
+                title="Play soundboard chimes and flashlight cues"
+                className="flex h-11 items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 text-xs font-semibold text-text hover:bg-surface-2 transition-all active:scale-95 shadow-xs"
+              >
+                <span>🐾 Soundboard & Cues</span>
+              </button>
             </div>
             <div className="[grid-area:signals]">
               <SignalsPanel history={state.history} defaultOpen={!projector && !isMobile} />
@@ -443,8 +494,26 @@ export default function Dashboard() {
               </svg>
             </button>
             <div className={timelineOpen ? "" : "hidden lg:block"}>
-              <Timeline spans={state.spans} audio={state.audio} treats={state.treats} notifications={state.notifications}
-                nowSec={nowSec} selected={selectedSpan} onSelect={setSelectedSpan} />
+              <Timeline
+                spans={state.spans}
+                audio={state.audio}
+                treats={state.treats}
+                notifications={state.notifications}
+                nowSec={nowSec}
+                selected={selectedSpan}
+                onSelect={setSelectedSpan}
+                onViewMoment={(sp) =>
+                  setActiveMoment({
+                    emotion: sp.emotion,
+                    ts: sp.start,
+                    reason: sp.reason,
+                    confidence: sp.confidence,
+                    source: sp.source,
+                    snapshot: sp.snapshot,
+                    duration_s: sp.end > sp.start ? sp.end - sp.start : undefined,
+                  })
+                }
+              />
             </div>
           </div>
           </>
@@ -491,12 +560,36 @@ export default function Dashboard() {
         saveSettings={saveSettings}
       />
       {!demo && (
-        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-bg/90 p-3 backdrop-blur lg:hidden"
+        <div className="fixed inset-x-0 bottom-0 z-20 flex gap-2 border-t border-border bg-bg/90 p-3 backdrop-blur lg:hidden"
           style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}>
-          <TreatButton onTreat={onTreat} flash={treatFlash} />
+          <div className="grow">
+            <TreatButton onTreat={onTreat} flash={treatFlash} />
+          </div>
+          <button
+            type="button"
+            onClick={() => setSoundboardOpen(true)}
+            aria-label="Soundboard cues"
+            className="flex h-12 items-center justify-center gap-1.5 rounded-xl border border-border bg-surface px-3 text-xs font-semibold text-text active:scale-95"
+          >
+            <span>🐾 Cues</span>
+          </button>
         </div>
       )}
       <ToastStack toasts={state.toasts} onDismiss={backend.dismissToast} onView={viewMoment} />
+      <MomentModal
+        isOpen={!!activeMoment}
+        onClose={() => setActiveMoment(null)}
+        dogName={profile.dog_name}
+        moment={activeMoment}
+      />
+      <SoundboardDrawer
+        isOpen={soundboardOpen}
+        onClose={() => setSoundboardOpen(false)}
+        http={backend.http}
+        token={token}
+        stationId={state.focusedStation !== "default" ? state.focusedStation : undefined}
+        dogName={profile.dog_name}
+      />
       <DebugDrawer
         open={debugOpen}
         onClose={() => setDebugOpen(false)}
