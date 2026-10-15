@@ -59,14 +59,14 @@ android {
         create("release") {
             if (releaseKeystoreFile.exists()) {
                 storeFile = releaseKeystoreFile
-                storePassword = System.getenv("BTB_KEYSTORE_PASSWORD")
-                    ?: project.findProperty("btbKeystorePassword") as? String
+                storePassword = System.getenv("BTB_KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() }
+                    ?: (project.findProperty("btbKeystorePassword") as? String)?.takeIf { it.isNotBlank() }
                     ?: "behindthebarks"
-                keyAlias = System.getenv("BTB_KEY_ALIAS")
-                    ?: project.findProperty("btbKeyAlias") as? String
+                keyAlias = System.getenv("BTB_KEY_ALIAS")?.takeIf { it.isNotBlank() }
+                    ?: (project.findProperty("btbKeyAlias") as? String)?.takeIf { it.isNotBlank() }
                     ?: "btb_release"
-                keyPassword = System.getenv("BTB_KEY_PASSWORD")
-                    ?: project.findProperty("btbKeyPassword") as? String
+                keyPassword = System.getenv("BTB_KEY_PASSWORD")?.takeIf { it.isNotBlank() }
+                    ?: (project.findProperty("btbKeyPassword") as? String)?.takeIf { it.isNotBlank() }
                     ?: "behindthebarks"
             }
         }
