@@ -88,6 +88,8 @@ export type Status = {
   stations?: StationSummary[]; // T4.1 / T4.2
   paired_station?: { id: string; name: string; mode_ceiling?: string };
   revoked_station?: { id: string };
+  fallback?: boolean;
+  server_origin?: string;
 };
 
 export type Span = {

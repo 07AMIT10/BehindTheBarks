@@ -206,7 +206,7 @@ export default function Dashboard() {
   return (
     <div className={projector ? "projector" : undefined}>
       <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-3 px-3 pb-28 pt-2 sm:gap-4 sm:px-4 lg:gap-5 lg:p-8">
-        <Header dogName={profile.dog_name} location={profile.location}>
+        <Header dogName={profile.dog_name} location={profile.location} fallback={Boolean(state.status?.fallback)}>
           <button
             type="button"
             onClick={() => openPairModal("station")}

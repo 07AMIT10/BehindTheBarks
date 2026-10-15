@@ -9,11 +9,21 @@ services:
     envVars:
       - key: WEB_PIPELINE
         value: remote
+      # Standby fallback configuration: runs identical multi-household authentication as the Dell Inspiron
+      - key: BTB_AUTH_MODE
+        value: households
+      # Marks this instance as the standby fallback service
+      - key: BTB_IS_FALLBACK
+        value: "1"
+      # Automatically restore latest state / database backup from R2 if credentials are provided
+      - key: BTB_AUTO_RESTORE
+        value: "1"
       # TLS-only (docs/SECURITY_HARDENING.md): Render terminates TLS and sets X-Forwarded-Proto, so
       # plain-http requests get 308 / 403 and the session cookie is always Secure. /health is exempt.
       - key: BTB_FORCE_HTTPS
         value: "1"
-      # BTB_DASHBOARD_PIN is intentionally NOT set here: this repo is public, so a
-      # PIN in the Blueprint would be public knowledge. Set BTB_DASHBOARD_PIN (and
-      # BTB_API_TOKEN / BTB_INGEST_TOKEN) manually in the Render dashboard instead.
-      # See docs/USER_ONBOARDING_GUIDE.md ("Production PIN").
+      # Optional external database URL (e.g. Supabase, Neon, or Render Postgres) for shared persistent state
+      - key: DATABASE_URL
+        sync: false
+      - key: BTB_DATABASE_URL
+        sync: false

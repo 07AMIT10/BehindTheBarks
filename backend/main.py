@@ -974,10 +974,16 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
 
     @app.get("/health")
     async def health() -> dict:
+        import os
+        is_fallback = bool(os.getenv("BTB_IS_FALLBACK", "0") in ("1", "true", "True"))
+        if is_fallback:
+            return {"ok": True, "fallback": True, "server": "render"}
         return {"ok": True}
 
     @app.get("/status")
     async def status(ctx: Ctx = Depends(auth_ctx), station: str | None = None) -> dict:
+        import os
+        is_fallback = bool(os.getenv("BTB_IS_FALLBACK", "0") in ("1", "true", "True"))
         lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
         if station:
             ch = _resolve_channel(lr, station, ctx.household_id)
@@ -987,6 +993,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                     "station_cap": "full", "privacy_mode": False,
                     "pipeline_status": None, "max_idle_s": 180.0,
                     "viewers": {"video": 0, "audio": 0},
+                    "fallback": is_fallback,
+                    "server_origin": "render" if is_fallback else "self-hosted",
                 }
             st = dict(ch.runtime.status())
             s_cap = getattr(ch.pipeline, "station_cap", "full")
@@ -997,6 +1005,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             st["max_idle_s"] = float(web.get("video", {}).get("max_idle_s", 180.0))
             st["viewers"] = ch.tracker.viewer_counts if ch.tracker else {"video": 0, "audio": 0}
             st["mode_info"] = {"household_mode": ch.policy.household_mode, "station_cap": s_cap, "effective": eff}
+            st["fallback"] = is_fallback
+            st["server_origin"] = "render" if is_fallback else "self-hosted"
             return st
 
         ch = _resolve_channel(lr, None, ctx.household_id)
@@ -1021,6 +1031,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         }
 
         st["stations"] = _build_stations_list(lr, ctx.household_id, getattr(ctx, "mode_ceiling", "full"))
+        st["fallback"] = is_fallback
+        st["server_origin"] = "render" if is_fallback else "self-hosted"
         return st
 
     @app.get("/events")

@@ -1,4 +1,4 @@
-type Props = { dogName: string; location: string; children?: React.ReactNode };
+type Props = { dogName: string; location: string; fallback?: boolean; children?: React.ReactNode };
 
 function Logo({ size }: { size: number }) {
   return (
@@ -18,13 +18,20 @@ function Logo({ size }: { size: number }) {
   );
 }
 
-export default function Header({ dogName, location, children }: Props) {
+export default function Header({ dogName, location, fallback, children }: Props) {
   return (
     <header className="flex h-[52px] items-center gap-2 lg:h-12 lg:gap-6">
       <div className="hidden items-center gap-3 lg:flex">
         <Logo size={32} />
         <div className="flex flex-col">
-          <div className="text-[19px] font-bold tracking-[-0.01em] leading-tight text-text">WagWatch</div>
+          <div className="flex items-center gap-2">
+            <span className="text-[19px] font-bold tracking-[-0.01em] leading-tight text-text">WagWatch</span>
+            {fallback && (
+              <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30" title="Dell primary backend offline — running on Render standby fallback">
+                Render Fallback
+              </span>
+            )}
+          </div>
           <div className="text-[12px] font-medium text-accent tracking-wide uppercase">Behind The Barks</div>
         </div>
       </div>
