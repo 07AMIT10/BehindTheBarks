@@ -1013,7 +1013,7 @@ class MainActivity : Activity() {
     private fun refreshPairingUi() {
         val paired = !prefs.getString(KEY_STATION_ID, null).isNullOrBlank()
         unpairButton?.visibility = if (paired) View.VISIBLE else View.GONE
-        toggleButton.visibility = if (paired) View.VISIBLE else View.GONE
+        toggleButton.visibility = if (paired || com.btb.ondevice.BuildConfig.DEBUG) View.VISIBLE else View.GONE
         refreshHouseholdLabel()
 
         val currentPrefsUrl = prefs.getString(KEY_URL, DEFAULT_URL) ?: DEFAULT_URL

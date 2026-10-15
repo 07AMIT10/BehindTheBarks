@@ -95,9 +95,12 @@ export default function SoundboardDrawer({
     setFeedback(`Sent ${cue.label} to ${dogName}'s station`);
     try {
       const tokenParam = token ? `?token=${encodeURIComponent(token)}` : "";
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
       const res = await fetch(`${http}/cue${tokenParam}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
+        credentials: "include",
         body: JSON.stringify({
           sound: cue.sound,
           light: cue.light,
