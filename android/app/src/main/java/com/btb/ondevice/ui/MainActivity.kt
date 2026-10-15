@@ -978,7 +978,7 @@ class MainActivity : Activity() {
             when (val result = PairingFlow.pairAndSave(prefs, target, deviceName, StationKey.getOrCreate())) {
                 is PairResult.Ok -> {
                     urlEditText.setText(target.wsUrl)
-                    refreshHouseholdLabel()
+                    refreshPairingUi()
                     Toast.makeText(this@MainActivity, "✓ Station paired — start monitoring", Toast.LENGTH_LONG).show()
                 }
                 PairResult.InvalidCode -> Toast.makeText(this@MainActivity, "That pairing code is expired or used", Toast.LENGTH_LONG).show()
@@ -997,7 +997,7 @@ class MainActivity : Activity() {
             .remove(StationPrefs.HOUSEHOLD_ID)
             .remove(StationPrefs.PAIR_URL)
             .apply()
-        refreshHouseholdLabel()
+        refreshPairingUi()
         if (isMonitoring) stopMonitoringService()
         setMonitoringUi(false)
         statusTextView.text = REMOVED_MESSAGE
