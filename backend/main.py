@@ -1734,9 +1734,54 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             rt.phone_close(session, code)
 
     frontend_out = Path(__file__).resolve().parent.parent / "frontend" / "out"
+
+    def _serve_apk() -> FileResponse:
+        apk_candidates = [
+            frontend_out / "wagwatch.apk",
+            frontend_out / "app-debug.apk",
+            frontend_out / "download" / "WagWatch.apk",
+            Path(__file__).resolve().parent.parent / "android" / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk",
+        ]
+        for candidate in apk_candidates:
+            if candidate.is_file():
+                return FileResponse(
+                    path=str(candidate),
+                    filename="WagWatch.apk",
+                    media_type="application/vnd.android.package-archive",
+                )
+        raise HTTPException(status_code=404, detail="APK build not found")
+
+    @app.get("/wagwatch.apk")
+    async def get_wagwatch_apk() -> FileResponse:
+        return _serve_apk()
+
+    @app.get("/download/apk")
+    async def get_download_apk() -> FileResponse:
+        return _serve_apk()
+
+    @app.get("/app-debug.apk")
+    async def get_app_debug_apk() -> FileResponse:
+        return _serve_apk()
+
     if frontend_out.is_dir():
         from fastapi.staticfiles import StaticFiles
-        app.mount("/", StaticFiles(directory=str(frontend_out), html=True), name="frontend")
+        from starlette.types import Scope
+        from starlette.responses import Response
+
+        class CleanStaticFiles(StaticFiles):
+            async def get_response(self, path: str, scope: Scope) -> Response:
+                response = await super().get_response(path, scope)
+                if response.status_code == 404:
+                    clean_path = path.rstrip("/")
+                    if not clean_path:
+                        clean_path = "index"
+                    html_path = clean_path + ".html"
+                    full_path, stat_result = self.lookup_path(html_path)
+                    if stat_result:
+                        return self.file_response(full_path, stat_result, scope)
+                return response
+
+        app.mount("/", CleanStaticFiles(directory=str(frontend_out), html=True), name="frontend")
 
     return app
 

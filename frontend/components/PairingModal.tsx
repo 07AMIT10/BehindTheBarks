@@ -201,9 +201,16 @@ export default function PairingModal({
           Regenerate code
         </button>
         <p className="mt-3 text-center text-[12px] leading-relaxed text-muted">
-          {kind === "station"
-            ? "Open the WagWatch app on the spare phone, tap Pair by QR, and scan this code. The phone can pair before monitoring starts."
-            : "Send this link to the person you want to invite. Opening it adds them as a viewer of this household only."}
+          {kind === "station" ? (
+            <>
+              Open WagWatch on the spare phone, tap <strong>Pair by QR</strong>, and scan this code. Don&apos;t have the app yet?{" "}
+              <a href="/download" target="_blank" rel="noopener noreferrer" className="text-emerald-400 font-semibold underline hover:text-emerald-300">
+                Download WagWatch APK
+              </a>
+            </>
+          ) : (
+            "Send this link to the person you want to invite. Opening it adds them as a viewer of this household only."
+          )}
         </p>
       </div>
     </div>

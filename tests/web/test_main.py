@@ -59,3 +59,24 @@ def test_session_log_written(tmp_path):
         c.post("/treat")
     logs = list((tmp_path / "out").glob("session-*.jsonl"))
     assert logs and '"type":"treat"' in logs[0].read_text()
+
+
+def test_apk_and_download_routes(tmp_path):
+    with client(tmp_path) as c:
+        # /download should resolve to 200 (redirecting or serving download.html)
+        r_dl = c.get("/download")
+        assert r_dl.status_code == 200
+        assert "WagWatch" in r_dl.text
+
+        # /wagwatch.apk should return 200 with attachment header
+        r_apk = c.get("/wagwatch.apk")
+        assert r_apk.status_code == 200
+        assert r_apk.headers["content-type"] == "application/vnd.android.package-archive"
+        assert 'filename="WagWatch.apk"' in r_apk.headers["content-disposition"]
+
+        # /download/apk and /app-debug.apk alias routes
+        r_dl_apk = c.get("/download/apk")
+        assert r_dl_apk.status_code == 200
+        r_debug = c.get("/app-debug.apk")
+        assert r_debug.status_code == 200
+
