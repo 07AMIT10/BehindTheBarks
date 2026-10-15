@@ -197,9 +197,10 @@ function withStatus(s: DashboardState, next: Status, at: number): DashboardState
     const charging = Boolean(mergedPhone.charging);
     const alert = shouldToast(prevPct, nextPct, charging);
     if (alert) {
+      const label = mergedPhone.device || "Station";
       const msg = alert === "critical"
-        ? `Station battery critical (${Math.round(nextPct!)}%)`
-        : `Station battery low (${Math.round(nextPct!)}%)`;
+        ? `${label} battery critical (${Math.round(nextPct!)}%)`
+        : `${label} battery low (${Math.round(nextPct!)}%)`;
       toasts = systemToast(toasts, msg, at);
     }
   }

@@ -46,4 +46,20 @@ describe("toasts", () => {
     expect(t).toHaveLength(1);
     expect(t[0].title).toBe("DebugPhone battery low (19%)");
   });
+  it("deduplicates and updates battery alerts when device label or severity changes", () => {
+    let t = systemToast([], "Station battery critical (9%)", 0);
+    expect(t).toHaveLength(1);
+    expect(t[0].title).toBe("Station battery critical (9%)");
+
+    // Later status update resolves the specific station name 'DebugPhone': must update in-place, NOT stack
+    t = systemToast(t, "DebugPhone battery critical (9%)", 500);
+    expect(t).toHaveLength(1);
+    expect(t[0].title).toBe("DebugPhone battery critical (9%)");
+
+    // Severity transitions from low to critical: must update in-place, NOT stack
+    let t2 = systemToast([], "DebugPhone battery low (20%)", 0);
+    t2 = systemToast(t2, "DebugPhone battery critical (9%)", 60000);
+    expect(t2).toHaveLength(1);
+    expect(t2[0].title).toBe("DebugPhone battery critical (9%)");
+  });
 });

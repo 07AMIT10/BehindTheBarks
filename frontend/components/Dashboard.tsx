@@ -176,6 +176,32 @@ export default function Dashboard() {
     void treat();
   }, [treat]);
 
+  const [activeCueId, setActiveCueId] = useState<string | null>(null);
+  const cueTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const triggerQuickCue = useCallback(
+    async (sound: string, light?: string, label: string = "Cue") => {
+      const cueKey = sound + (light ? `_${light}` : "");
+      setActiveCueId(cueKey);
+      clearTimeout(cueTimer.current);
+      cueTimer.current = setTimeout(() => setActiveCueId(null), 1200);
+      try {
+        const stationId = state.focusedStation !== "default" ? state.focusedStation : undefined;
+        const tokenParam = token ? `?token=${encodeURIComponent(token)}` : "";
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+        await fetch(`${backend.http}/cue${tokenParam}`, {
+          method: "POST",
+          headers,
+          credentials: "include",
+          body: JSON.stringify({ sound, light, station: stationId }),
+        });
+      } catch (e) {
+        console.warn("Failed to trigger quick cue", e);
+      }
+    },
+    [backend.http, token, state.focusedStation]
+  );
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
@@ -463,6 +489,7 @@ export default function Dashboard() {
                 onPeek={backend.peek}
                 modeRequestResult={state.status?.phone?.last_mode_request_result ?? null}
                 station={state.focusedStation !== "default" ? state.focusedStation : undefined}
+                onOpenSoundboard={() => setSoundboardOpen(true)}
               />
             </div>
             <div className="[grid-area:card]">
@@ -472,14 +499,74 @@ export default function Dashboard() {
             </div>
             <div className="hidden [grid-area:treat] lg:flex lg:flex-col lg:gap-2">
               <TreatButton onTreat={onTreat} flash={treatFlash} />
-              <button
-                type="button"
-                onClick={() => setSoundboardOpen(true)}
-                title="Play soundboard chimes and flashlight cues"
-                className="flex h-11 items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 text-xs font-semibold text-text hover:bg-surface-2 transition-all active:scale-95 shadow-xs"
-              >
-                <span>🐾 Soundboard & Cues</span>
-              </button>
+              <div className="flex flex-col gap-1.5 rounded-xl border border-border bg-surface p-2.5 shadow-xs">
+                <div className="flex items-center justify-between px-1">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-muted">
+                    Quick Attention Cues
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSoundboardOpen(true)}
+                    className="text-[11px] font-semibold text-accent hover:underline flex items-center gap-1"
+                  >
+                    <span>All cues 🎛️</span>
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => triggerQuickCue("squeak", undefined, "Squeaky Toy 🧸")}
+                    className={`flex h-10 items-center justify-center gap-1.5 rounded-lg border px-2 text-xs font-semibold transition-all active:scale-95 ${
+                      activeCueId === "squeak"
+                        ? "border-[#EC4899] bg-[#EC4899]/20 text-[#F472B6]"
+                        : "border-border bg-surface-2 text-text hover:bg-surface-3"
+                    }`}
+                    title="Play high-pitch squeak to get dog's attention"
+                  >
+                    <span>🧸</span>
+                    <span>Squeak</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => triggerQuickCue("doorbell", undefined, "Chime Bell 🔔")}
+                    className={`flex h-10 items-center justify-center gap-1.5 rounded-lg border px-2 text-xs font-semibold transition-all active:scale-95 ${
+                      activeCueId === "doorbell"
+                        ? "border-[#10B981] bg-[#10B981]/20 text-[#34D399]"
+                        : "border-border bg-surface-2 text-text hover:bg-surface-3"
+                    }`}
+                    title="Play ding-dong alert chime"
+                  >
+                    <span>🔔</span>
+                    <span>Chime</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => triggerQuickCue("whistle", undefined, "Focus Whistle 🎵")}
+                    className={`flex h-10 items-center justify-center gap-1.5 rounded-lg border px-2 text-xs font-semibold transition-all active:scale-95 ${
+                      activeCueId === "whistle"
+                        ? "border-[#3B82F6] bg-[#3B82F6]/20 text-[#60A5FA]"
+                        : "border-border bg-surface-2 text-text hover:bg-surface-3"
+                    }`}
+                    title="Play dog focus whistle"
+                  >
+                    <span>🎵</span>
+                    <span>Whistle</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => triggerQuickCue("squeak", "double_blink", "Squeak + Beacon ✨")}
+                    className={`flex h-10 items-center justify-center gap-1.5 rounded-lg border px-2 text-xs font-semibold transition-all active:scale-95 ${
+                      activeCueId === "squeak_double_blink"
+                        ? "border-[#F59E0B] bg-[#F59E0B]/20 text-[#FBBF24]"
+                        : "border-border bg-surface-2 text-text hover:bg-surface-3"
+                    }`}
+                    title="Play squeak and flash light beacon"
+                  >
+                    <span>✨</span>
+                    <span>Flash+Squeak</span>
+                  </button>
+                </div>
+              </div>
             </div>
             <div className="[grid-area:signals]">
               <SignalsPanel history={state.history} defaultOpen={!projector && !isMobile} />
@@ -562,19 +649,67 @@ export default function Dashboard() {
         saveSettings={saveSettings}
       />
       {!demo && (
-        <div className="fixed inset-x-0 bottom-0 z-20 flex gap-2 border-t border-border bg-bg/90 p-3 backdrop-blur lg:hidden"
-          style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}>
-          <div className="grow">
-            <TreatButton onTreat={onTreat} flash={treatFlash} />
+        <div className="fixed inset-x-0 bottom-0 z-20 flex flex-col gap-1.5 border-t border-border bg-bg/95 p-2 backdrop-blur lg:hidden"
+          style={{ paddingBottom: "max(10px, env(safe-area-inset-bottom))" }}>
+          <div className="flex gap-2">
+            <div className="grow">
+              <TreatButton onTreat={onTreat} flash={treatFlash} />
+            </div>
+            <button
+              type="button"
+              onClick={() => setSoundboardOpen(true)}
+              aria-label="Soundboard and chimes"
+              className="flex h-[60px] items-center justify-center gap-1.5 rounded-lg border border-border bg-surface px-4 text-xs font-bold text-text active:scale-95 shadow-xs"
+            >
+              <span>🔔 Chimes</span>
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => setSoundboardOpen(true)}
-            aria-label="Soundboard cues"
-            className="flex h-12 items-center justify-center gap-1.5 rounded-xl border border-border bg-surface px-3 text-xs font-semibold text-text active:scale-95"
-          >
-            <span>🐾 Cues</span>
-          </button>
+          <div className="flex items-center justify-between gap-1.5 overflow-x-auto pb-0.5">
+            <button
+              type="button"
+              onClick={() => triggerQuickCue("squeak", undefined, "Squeak 🧸")}
+              className={`flex h-8 flex-1 items-center justify-center gap-1 rounded-md border px-2 text-[11px] font-semibold transition-all active:scale-95 whitespace-nowrap ${
+                activeCueId === "squeak"
+                  ? "border-[#EC4899] bg-[#EC4899]/20 text-[#F472B6]"
+                  : "border-border bg-surface text-text"
+              }`}
+            >
+              <span>🧸 Squeak</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => triggerQuickCue("doorbell", undefined, "Chime 🔔")}
+              className={`flex h-8 flex-1 items-center justify-center gap-1 rounded-md border px-2 text-[11px] font-semibold transition-all active:scale-95 whitespace-nowrap ${
+                activeCueId === "doorbell"
+                  ? "border-[#10B981] bg-[#10B981]/20 text-[#34D399]"
+                  : "border-border bg-surface text-text"
+              }`}
+            >
+              <span>🔔 Chime</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => triggerQuickCue("whistle", undefined, "Whistle 🎵")}
+              className={`flex h-8 flex-1 items-center justify-center gap-1 rounded-md border px-2 text-[11px] font-semibold transition-all active:scale-95 whitespace-nowrap ${
+                activeCueId === "whistle"
+                  ? "border-[#3B82F6] bg-[#3B82F6]/20 text-[#60A5FA]"
+                  : "border-border bg-surface text-text"
+              }`}
+            >
+              <span>🎵 Whistle</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => triggerQuickCue("squeak", "double_blink", "Flash ✨")}
+              className={`flex h-8 flex-1 items-center justify-center gap-1 rounded-md border px-2 text-[11px] font-semibold transition-all active:scale-95 whitespace-nowrap ${
+                activeCueId === "squeak_double_blink"
+                  ? "border-[#F59E0B] bg-[#F59E0B]/20 text-[#FBBF24]"
+                  : "border-border bg-surface text-text"
+              }`}
+            >
+              <span>✨ Flash</span>
+            </button>
+          </div>
         </div>
       )}
       <ToastStack toasts={state.toasts} onDismiss={backend.dismissToast} onView={viewMoment} />

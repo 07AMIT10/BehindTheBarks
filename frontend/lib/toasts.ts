@@ -47,9 +47,30 @@ export function toastFromNotification(list: Toast[], item: NotificationItem, dog
 }
 
 export function systemToast(list: Toast[], title: string, nowMs: number): Toast[] {
-  const existingIndex = list.findIndex((t) => t.kind === "system" && t.title === title);
+  const isBattery = title.toLowerCase().includes("battery");
+  const existingIndex = list.findIndex((t) => {
+    if (t.kind !== "system") return false;
+    if (t.title === title) return true;
+    if (isBattery && t.title.toLowerCase().includes("battery")) {
+      return true;
+    }
+    return false;
+  });
+
   if (existingIndex !== -1) {
     const existing = list[existingIndex];
+    // If the title changed (e.g. generic 'Station battery' -> 'DebugPhone battery', or low -> critical),
+    // update the toast title and timestamp in-place without creating a stacked duplicate!
+    if (existing.title !== title) {
+      const updated: Toast = {
+        ...existing,
+        title,
+        ts: nowMs / 1000,
+        createdAt: nowMs,
+      };
+      return [updated, ...list.filter((_, idx) => idx !== existingIndex)].slice(0, MAX_TOASTS);
+    }
+    // Same title: throttle within 60s
     if (nowMs - existing.createdAt < 60000) {
       return list;
     }

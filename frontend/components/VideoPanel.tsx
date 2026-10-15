@@ -39,6 +39,7 @@ type Props = {
   onPeek?: () => Promise<boolean>;
   modeRequestResult?: ModeRequestResult | null;
   station?: string;
+  onOpenSoundboard?: () => void;
 };
 
 const chip = "flex h-11 md:h-8 items-center rounded-lg px-3 text-[12px]";
@@ -72,6 +73,7 @@ export default function VideoPanel({
   onPeek,
   modeRequestResult = null,
   station,
+  onOpenSoundboard,
 }: Props) {
   const boxRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -526,6 +528,13 @@ export default function VideoPanel({
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.0 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.0 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
               <span className="hidden sm:inline">Flip</span>
             </button>
+            {onOpenSoundboard && (
+              <button type="button" onClick={onOpenSoundboard} title="Soundboard: play chimes, squeaks, and attention cues"
+                className="flex h-11 md:h-8 items-center gap-1 rounded-sm px-2 sm:px-2.5 text-[12px] sm:text-[12px] font-semibold text-[#D6D8DB] hover:text-white transition-all active:scale-95">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" /></svg>
+                <span>Chimes</span>
+              </button>
+            )}
             <button type="button" aria-pressed={nightVision} onClick={() => setNightVision((v) => !v)}
               title={nightVision ? "Turn off Night Vision shader" : "Turn on Night Vision shader (boost low-light shadow details)"}
               className="flex h-11 md:h-8 items-center gap-1 rounded-sm px-2 sm:px-2.5 text-[12px] sm:text-[12px] font-semibold transition-all active:scale-95"
@@ -622,6 +631,13 @@ export default function VideoPanel({
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.0 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.0 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
                 Flip
               </button>
+              {onOpenSoundboard && (
+                <button type="button" onClick={() => { setControlsOpen(false); onOpenSoundboard(); }}
+                  className="flex h-11 items-center justify-center gap-2 rounded-xl px-3 text-[14px] font-semibold text-[#D6D8DB] ring-1 ring-white/10 active:scale-95">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" /></svg>
+                  Chimes & Cues
+                </button>
+              )}
               <button type="button" onClick={rotateVideo}
                 className="flex h-11 items-center justify-center gap-2 rounded-xl px-3 text-[14px] font-semibold text-[#D6D8DB] ring-1 ring-white/10 active:scale-95">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>

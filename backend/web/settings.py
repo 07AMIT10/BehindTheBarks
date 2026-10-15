@@ -80,7 +80,17 @@ def _truthy(v: str | None) -> bool:
 
 
 def load_config(path: str | Path = "config.yaml", env: Mapping[str, str] | None = None) -> dict:
-    env = os.environ if env is None else env
+    if env is None:
+        dotenv_file = Path(".env")
+        if dotenv_file.exists():
+            for line in dotenv_file.read_text().splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, _, v = line.partition("=")
+                    k = k.strip()
+                    v = v.strip().strip("'\"")
+                    os.environ.setdefault(k, v)
+        env = os.environ
     p = Path(path)
     raw = (yaml.safe_load(p.read_text()) if p.exists() else None) or {}
     cfg = dict(raw)
@@ -91,8 +101,9 @@ def load_config(path: str | Path = "config.yaml", env: Mapping[str, str] | None 
     notify = cfg["web"].setdefault("notify", {})
     if env.get("NOTIFY_MODE"):
         notify["mode"] = env["NOTIFY_MODE"]
-    if env.get("BTB_DATABASE_URL"):
-        cfg["web"]["database_url"] = env["BTB_DATABASE_URL"].strip()
+    db_url = env.get("BTB_DATABASE_URL") or env.get("DATABASE_URL")
+    if db_url:
+        cfg["web"]["database_url"] = db_url.strip()
     if env.get("BTB_DEMO_VIDEO_SOURCE"):
         cfg["web"].setdefault("demo", {})["video_source"] = env["BTB_DEMO_VIDEO_SOURCE"].strip().lower()
     if env.get("BTB_AUTH_MODE"):
