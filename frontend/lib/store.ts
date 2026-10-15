@@ -163,9 +163,19 @@ function withStatus(s: DashboardState, next: Status, at: number): DashboardState
     toasts = systemToast(toasts, now.online ? "AI back online · fused readings resumed" : "AI offline · rules only", at);
   }
 
+  // Preserve previous status properties (stations, phone) when next is a partial status
+  const mergedStations = next.stations ?? s.status?.stations ?? [];
+  const mergedPhone = next.phone ?? s.status?.phone ?? null;
+  const mergedStatus: Status = {
+    ...(s.status ?? {}),
+    ...next,
+    stations: mergedStations.length > 0 ? mergedStations : undefined,
+    phone: mergedPhone,
+  };
+
   // T6.2: Low battery alert toasts
   const oldStations = s.status?.stations ?? [];
-  const newStations = next.stations ?? [];
+  const newStations = mergedStations;
   if (newStations.length > 0) {
     for (const newSt of newStations) {
       const oldSt = oldStations.find((o) => o.id === newSt.id);
@@ -181,10 +191,10 @@ function withStatus(s: DashboardState, next: Status, at: number): DashboardState
         toasts = systemToast(toasts, msg, at);
       }
     }
-  } else if (next.phone) {
+  } else if (mergedPhone) {
     const prevPct = s.status?.phone?.battery_pct ?? null;
-    const nextPct = next.phone.battery_pct ?? null;
-    const charging = Boolean(next.phone.charging);
+    const nextPct = mergedPhone.battery_pct ?? null;
+    const charging = Boolean(mergedPhone.charging);
     const alert = shouldToast(prevPct, nextPct, charging);
     if (alert) {
       const msg = alert === "critical"
@@ -194,7 +204,7 @@ function withStatus(s: DashboardState, next: Status, at: number): DashboardState
     }
   }
 
-  return { ...s, status: next, toasts };
+  return { ...s, status: mergedStatus, toasts };
 }
 
 function applyEnvelope(s: DashboardState, env: Envelope, at: number, touchSpans: boolean, live: boolean): DashboardState {

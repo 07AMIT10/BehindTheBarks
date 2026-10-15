@@ -47,6 +47,20 @@ export function toastFromNotification(list: Toast[], item: NotificationItem, dog
 }
 
 export function systemToast(list: Toast[], title: string, nowMs: number): Toast[] {
+  const existingIndex = list.findIndex((t) => t.kind === "system" && t.title === title);
+  if (existingIndex !== -1) {
+    const existing = list[existingIndex];
+    if (nowMs - existing.createdAt < 60000) {
+      return list;
+    }
+    const updated: Toast = {
+      ...existing,
+      count: existing.count + 1,
+      ts: nowMs / 1000,
+      createdAt: nowMs,
+    };
+    return [updated, ...list.filter((_, idx) => idx !== existingIndex)].slice(0, MAX_TOASTS);
+  }
   const t: Toast = { id: nextId(), kind: "system", title, body: "", ts: nowMs / 1000, count: 1, sticky: false, createdAt: nowMs };
   return [t, ...list].slice(0, MAX_TOASTS);
 }

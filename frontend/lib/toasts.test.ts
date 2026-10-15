@@ -33,8 +33,17 @@ describe("toasts", () => {
   });
   it("keeps at most MAX_TOASTS", () => {
     let t: ReturnType<typeof systemToast> = [];
-    for (let i = 0; i < 10; i++) t = systemToast(t, `s${i}`, i);
+    for (let i = 0; i < 10; i++) t = systemToast(t, `s${i}`, i * 100);
     expect(t).toHaveLength(MAX_TOASTS);
     expect(t[0].title).toBe("s9");
+  });
+  it("deduplicates identical system toasts and throttles rapid re-triggers", () => {
+    let t = systemToast([], "DebugPhone battery low (19%)", 0);
+    // Rapid duplicate within 60s
+    t = systemToast(t, "DebugPhone battery low (19%)", 1000);
+    t = systemToast(t, "DebugPhone battery low (19%)", 2000);
+    t = systemToast(t, "DebugPhone battery low (19%)", 3000);
+    expect(t).toHaveLength(1);
+    expect(t[0].title).toBe("DebugPhone battery low (19%)");
   });
 });
