@@ -28,6 +28,50 @@ enum class ViewMode(val wire: String, val rank: Int) {
     fun minOf(other: ViewMode): ViewMode = if (this.rank <= other.rank) this else other
 }
 
+/** Configurable UI descriptor for viewing modes. Allows reordering and future extensibility. */
+data class ModeConfig(
+    val mode: ViewMode,
+    val title: String,
+    val subtitle: String,
+    val icon: String,
+    val enabled: Boolean = true,
+)
+
+object ViewModeRegistry {
+    /**
+     * Central configurable mode list. Order defines UI display sequence.
+     * FULL is first/recommended for dog camera monitoring.
+     */
+    val DISPLAY_OPTIONS: List<ModeConfig> = listOf(
+        ModeConfig(
+            mode = ViewMode.FULL,
+            title = "Full",
+            subtitle = "Live video & perception (Recommended)",
+            icon = "👁️",
+        ),
+        ModeConfig(
+            mode = ViewMode.LIMITED,
+            title = "Limited",
+            subtitle = "Blurred snapshots & privacy",
+            icon = "🖼️",
+        ),
+        ModeConfig(
+            mode = ViewMode.PRIVACY,
+            title = "Privacy",
+            subtitle = "Barks and behaviour only (No video)",
+            icon = "🔇",
+        ),
+        ModeConfig(
+            mode = ViewMode.BLACKOUT,
+            title = "Blackout",
+            subtitle = "Nothing leaves the phone",
+            icon = "⛔",
+        ),
+    )
+
+    fun activeOptions(): List<ModeConfig> = DISPLAY_OPTIONS.filter { it.enabled }
+}
+
 /** A server-sent viewing policy (T3.1 `policy` downlink). */
 data class Policy(
     val mode: ViewMode = ViewMode.FULL,

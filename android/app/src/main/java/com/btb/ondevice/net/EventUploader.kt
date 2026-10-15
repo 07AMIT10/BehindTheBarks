@@ -317,7 +317,9 @@ class EventUploader(
                     listener?.onConfigDownlink(data)
                 }
                 "torch" -> {
-                    val enabled = root["data"]?.jsonObject?.get("enabled")?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true
+                    val enabled = root["data"]?.jsonObject?.get("enabled")?.jsonPrimitive?.content?.toBooleanStrictOrNull()
+                        ?: root["enabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
+                        ?: true
                     listener?.onTorchDownlink(enabled)
                 }
                 "cue" -> {

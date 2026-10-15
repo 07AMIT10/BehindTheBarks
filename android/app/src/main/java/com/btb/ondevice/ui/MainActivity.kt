@@ -128,6 +128,10 @@ class MainActivity : Activity() {
                     }
                 }
 
+                override fun onTorchStateChanged(enabled: Boolean) {
+                    runOnUiThread { updateTorchButton(enabled) }
+                }
+
                 override fun isUiInFront(): Boolean = uiResumed
 
                 override fun onModeApprovalRequested(requestedWire: String) {
@@ -390,10 +394,10 @@ class MainActivity : Activity() {
             textSize = 12f
             setBackgroundColor(Color.parseColor("#37474F"))
             setTextColor(Color.WHITE)
-            isEnabled = false
+            isEnabled = true
             setOnClickListener {
-                val on = monitorService?.toggleTorch() ?: false
-                updateTorchButton(on)
+                val newState = monitorService?.toggleTorch() ?: false
+                updateTorchButton(monitorService?.isTorchOn() ?: newState)
             }
         }
         toolsRow.addView(torchButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
@@ -412,13 +416,13 @@ class MainActivity : Activity() {
         }
         toolsRow.addView(flipButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
 
-        // T3.2: one button that shows the current mode and opens the 4-option chooser.
+        // Viewing mode button: shows the current mode and opens the 4-option chooser.
         privacyButton = Button(this).apply {
-            text = "🛡️ Full"
+            text = "👁️ Full"
             textSize = 12f
             setBackgroundColor(Color.parseColor("#37474F"))
             setTextColor(Color.WHITE)
-            isEnabled = false
+            isEnabled = true
             setOnClickListener { showModeChooser() }
         }
         toolsRow.addView(privacyButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -1129,15 +1133,13 @@ class MainActivity : Activity() {
         toggleButton.text = if (on) "Stop Monitoring" else "Start Monitoring"
         toggleButton.setBackgroundColor(Color.parseColor(if (on) "#FF1744" else "#00E676"))
         dimButton.isEnabled = on
-        torchButton.isEnabled = on
+        torchButton.isEnabled = true
         flipButton.isEnabled = on
-        privacyButton.isEnabled = on
-        if (on) {
-            updatePrivacyButton(monitorService?.isPrivacyMode() ?: false)
-            monitorService?.effectiveMode()?.let { setModeButton(it) }
-        } else {
-            updateTorchButton(false)
-            updatePrivacyButton(false)
+        privacyButton.isEnabled = true
+        val currentMode = monitorService?.effectiveMode() ?: com.btb.ondevice.capture.ViewMode.FULL
+        setModeButton(currentMode)
+        if (!on) {
+            updateTorchButton(monitorService?.isTorchOn() ?: false)
             flipButton.text = "🔄 Flip"
             describe(flipButton)
         }
@@ -1176,28 +1178,23 @@ class MainActivity : Activity() {
         torchButton.contentDescription = if (on) "Light, on" else "Light, off"
     }
 
-    /** T3.2: the four viewing modes, with one line each. This control is the ONLY place the cap can
-     *  be raised: the dashboard can lower it, but raising always needs the person holding the phone. */
+    /** Configurable viewing mode chooser: displays configurable options with Full (recommended) at top. */
     private fun showModeChooser() {
-        val modes = com.btb.ondevice.capture.ViewMode.entries.toTypedArray()
-        val labels = arrayOf(
-            "⛔ Blackout\nNothing leaves the phone",
-            "🔇 Privacy\nBarks and behaviour only",
-            "🖼️ Limited\nBlurred snapshots",
-            "👁️ Full\nLive video",
-        )
+        val options = com.btb.ondevice.capture.ViewModeRegistry.activeOptions()
+        val modes = options.map { it.mode }.toTypedArray()
+        val labels = options.map { "${it.icon} ${it.title}\n${it.subtitle}" }.toTypedArray()
         val current = monitorService?.effectiveMode() ?: com.btb.ondevice.capture.ViewMode.FULL
-        // Each row is a touch target of at least 48dp (the framework rows are only about 40dp at large fonts).
+        val initialIdx = modes.indexOf(current).let { if (it >= 0) it else 0 }
         val rows = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_single_choice, labels) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View =
                 super.getView(position, convertView, parent).also { it.minimumHeight = dp(MIN_TOUCH_DP) }
         }
         android.app.AlertDialog.Builder(this)
-            .setTitle("What may be shared?")
-            .setSingleChoiceItems(rows, modes.indexOf(current)) { dialog, which ->
-                monitorService?.setStationCapFromDevice(modes[which])
-                updatePrivacyButton(modes[which] == com.btb.ondevice.capture.ViewMode.BLACKOUT)
-                setModeButton(modes[which])
+            .setTitle("Viewing Mode")
+            .setSingleChoiceItems(rows, initialIdx) { dialog, which ->
+                val selected = modes[which]
+                monitorService?.setStationCapFromDevice(selected)
+                setModeButton(selected)
                 dialog.dismiss()
             }
             .setNegativeButton("Cancel", null)
@@ -1212,22 +1209,16 @@ class MainActivity : Activity() {
     }
 
     private fun updatePrivacyButton(on: Boolean) {
-        if (on) {
-            privacyButton.text = "🛡️ Privacy ON"
-            privacyButton.setBackgroundColor(Color.parseColor("#D32F2F"))
-            privacyButton.setTextColor(Color.WHITE)
-        } else {
-            privacyButton.text = "🛡️ Privacy"
-            privacyButton.setBackgroundColor(Color.parseColor("#37474F"))
-            privacyButton.setTextColor(Color.WHITE)
-        }
-        describe(privacyButton)
+        val currentMode = monitorService?.effectiveMode() ?: (if (on) com.btb.ondevice.capture.ViewMode.BLACKOUT else com.btb.ondevice.capture.ViewMode.FULL)
+        setModeButton(currentMode)
     }
 
     /** The sharing-mode button. Its label names the mode, and TalkBack hears the same words. */
     private fun setModeButton(mode: com.btb.ondevice.capture.ViewMode) {
         privacyButton.text = modeButtonLabel(mode)
         privacyButton.contentDescription = "Sharing: ${spokenLabel(modeButtonLabel(mode))}. Tap to change."
+        val isOff = mode == com.btb.ondevice.capture.ViewMode.BLACKOUT
+        privacyButton.setBackgroundColor(Color.parseColor(if (isOff) "#D32F2F" else "#37474F"))
     }
 
     override fun onResume() {

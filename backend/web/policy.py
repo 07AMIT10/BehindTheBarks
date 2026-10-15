@@ -65,7 +65,7 @@ class Policy:
         viewers: Active viewer counts {"video": int, "audio": int}.
     """
 
-    def __init__(self, household_mode: str = "privacy", preview: dict | None = None,
+    def __init__(self, household_mode: str = "full", preview: dict | None = None,
                  viewers: dict | None = None) -> None:
         self.household_mode = parse_mode(household_mode)
         self.preview = dict(preview or DEFAULT_PREVIEW)

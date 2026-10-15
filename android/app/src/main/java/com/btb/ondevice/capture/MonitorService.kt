@@ -76,6 +76,8 @@ interface MonitorServiceListener {
     fun isUiInFront(): Boolean = false
     /** T3.4: active remote viewer count changed. */
     fun onViewersCountChanged(videoViewers: Int, audioViewers: Int) {}
+    /** Flashlight / torch state changed (remote or local). */
+    fun onTorchStateChanged(enabled: Boolean) {}
 }
 
 class MonitorService : Service(), LifecycleOwner {
@@ -107,7 +109,10 @@ class MonitorService : Service(), LifecycleOwner {
     // controller is the single place that rule lives (and it is unit-tested without Android).
     // `lazy` because it reads the persisted cap, which needs a Context.
     private val modeController: ModeController by lazy {
-        ModeController(stationCap = ViewMode.fromWire(readStationCap()) ?: ViewMode.FULL)
+        ModeController(
+            stationCap = ViewMode.fromWire(readStationCap()) ?: ViewMode.FULL,
+            allowOwnerRaiseWithoutPrompt = true,
+        )
     }
     private var previewEncoder: PreviewEncoder? = null
     private var previewLadder = PreviewLadder()
@@ -469,6 +474,10 @@ class MonitorService : Service(), LifecycleOwner {
                 }
                 override fun onTorchDownlink(enabled: Boolean) {
                     cameraSource?.setTorch(enabled)
+                    val on = cameraSource?.isTorchOn() ?: enabled
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        listener?.onTorchStateChanged(on)
+                    }
                 }
                 override fun onCueDownlink(sound: String, light: String?) {
                     playCue(sound, light)
@@ -641,8 +650,22 @@ class MonitorService : Service(), LifecycleOwner {
         cameraSource?.detachPreview()
     }
 
-    fun setTorch(enabled: Boolean): Boolean = cameraSource?.setTorch(enabled) ?: false
-    fun toggleTorch(): Boolean = cameraSource?.toggleTorch() ?: false
+    fun setTorch(enabled: Boolean): Boolean {
+        val ok = cameraSource?.setTorch(enabled) ?: false
+        val on = cameraSource?.isTorchOn() ?: enabled
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            listener?.onTorchStateChanged(on)
+        }
+        return ok
+    }
+
+    fun toggleTorch(): Boolean {
+        val newOn = cameraSource?.toggleTorch() ?: false
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            listener?.onTorchStateChanged(newOn)
+        }
+        return newOn
+    }
     fun isTorchOn(): Boolean = cameraSource?.isTorchOn() ?: false
     fun hasFlashUnit(): Boolean = cameraSource?.hasFlashUnit() ?: false
     fun flipCamera(): Boolean = cameraSource?.flipCamera() ?: false

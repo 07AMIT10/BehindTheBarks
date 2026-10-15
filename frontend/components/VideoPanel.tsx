@@ -171,27 +171,40 @@ export default function VideoPanel({
 
   useEffect(() => {
     // Sync initial torch state from server
-    const tokenParam = token ? `?token=${encodeURIComponent(token)}` : "";
-    fetch(`${http}/torch${tokenParam}`, { headers: getAuthHeaders() })
+    const q = new URLSearchParams();
+    if (token) q.set("token", token);
+    if (station) q.set("station", station);
+    const qs = q.toString() ? `?${q.toString()}` : "";
+    fetch(`${http}/torch${qs}`, { headers: getAuthHeaders() })
       .then((r) => r.json())
       .then((d) => {
         if (typeof d.enabled === "boolean") setTorchOn(d.enabled);
       })
       .catch(() => {});
-  }, [http, token, getAuthHeaders]);
+  }, [http, token, station, getAuthHeaders]);
 
   const toggleTorch = async () => {
+    const next = !torchOn;
+    setTorchOn(next);
     try {
-      const tokenParam = token ? `?token=${encodeURIComponent(token)}` : "";
-      const res = await fetch(`${http}/torch${tokenParam}`, {
+      const q = new URLSearchParams();
+      if (token) q.set("token", token);
+      if (station) q.set("station", station);
+      const qs = q.toString() ? `?${q.toString()}` : "";
+      const res = await fetch(`${http}/torch${qs}`, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ enabled: !torchOn }),
+        body: JSON.stringify({ enabled: next, station }),
       });
       const data = await res.json();
-      if (data.ok) setTorchOn(data.enabled);
+      if (data.ok && typeof data.enabled === "boolean") {
+        setTorchOn(data.enabled);
+      } else {
+        setTorchOn(!next);
+      }
     } catch (e) {
       console.warn("Torch failed", e);
+      setTorchOn(!next);
     }
   };
 

@@ -2,6 +2,54 @@ import type { ModeRequestResult, ViewMode } from "./types";
 
 export const MODE_ORDER: readonly ViewMode[] = ["blackout", "privacy", "limited", "full"] as const;
 
+export interface ModeDefinition {
+  mode: ViewMode;
+  label: string;
+  desc: string;
+  icon: string;
+  enabled: boolean;
+}
+
+/**
+ * Configurable viewing mode definitions and presentation sequence.
+ * Modify order or enabled status here to change what is displayed.
+ * Full is placed first (recommended) for pet monitoring.
+ */
+export const CONFIGURABLE_MODES: readonly ModeDefinition[] = [
+  {
+    mode: "full",
+    label: "Full",
+    desc: "Live video and sound (Recommended)",
+    icon: "👁️",
+    enabled: true,
+  },
+  {
+    mode: "limited",
+    label: "Limited",
+    desc: "Blurred snapshots every 10 s",
+    icon: "🖼️",
+    enabled: true,
+  },
+  {
+    mode: "privacy",
+    label: "Privacy",
+    desc: "Barks and behaviour only (No video)",
+    icon: "🔇",
+    enabled: true,
+  },
+  {
+    mode: "blackout",
+    label: "Blackout",
+    desc: "Nothing leaves the phone",
+    icon: "⛔",
+    enabled: true,
+  },
+] as const;
+
+export const DISPLAY_MODES: readonly ViewMode[] = CONFIGURABLE_MODES
+  .filter((m) => m.enabled)
+  .map((m) => m.mode);
+
 export const MODE_METADATA: Record<ViewMode, { label: string; desc: string; icon: string }> = {
   blackout: {
     label: "Blackout",

@@ -237,9 +237,9 @@ def test_pin_mode_still_serves_one_legacy_household(tmp_path):
 
 def test_mode_change_in_one_household_never_affects_another(two_households):
     app_, c, h1_cookie, h2_cookie, s1, s2 = two_households
-    # Household 2 starts in privacy mode by default
+    # Household 2 starts in full mode by default
     as_owner(c, h2_cookie)
-    assert c.get("/mode").json() == {"household_mode": "privacy", "station_cap": "full", "effective": "privacy"}
+    assert c.get("/mode").json() == {"household_mode": "full", "station_cap": "full", "effective": "full"}
 
     # Household 1 owner sets mode to blackout
     as_owner(c, h1_cookie)
@@ -249,7 +249,7 @@ def test_mode_change_in_one_household_never_affects_another(two_households):
 
     # Household 2 is completely unaffected
     as_owner(c, h2_cookie)
-    assert c.get("/mode").json() == {"household_mode": "privacy", "station_cap": "full", "effective": "privacy"}
+    assert c.get("/mode").json() == {"household_mode": "full", "station_cap": "full", "effective": "full"}
     assert c.get("/privacy").json() == {"privacy_mode": False}
 
 

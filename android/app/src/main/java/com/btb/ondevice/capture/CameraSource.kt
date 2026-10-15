@@ -6,6 +6,8 @@ import android.util.Size
 import android.view.OrientationEventListener
 import android.view.Surface
 import android.view.WindowManager
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -216,52 +218,72 @@ class CameraSource(
 
     fun setTorch(enabled: Boolean): Boolean {
         torchEnabled = enabled
-        val cam = camera ?: return false
-        return if (cam.cameraInfo.hasFlashUnit()) {
-            ContextCompat.getMainExecutor(context).execute {
-                cam.cameraControl.enableTorch(enabled)
+        val cam = camera
+        if (cam != null && cam.cameraInfo.hasFlashUnit()) {
+            return try {
+                ContextCompat.getMainExecutor(context).execute {
+                    try {
+                        cam.cameraControl.enableTorch(enabled)
+                    } catch (e: Exception) {
+                        android.util.Log.e("CameraSource", "enableTorch failed: ${e.message}")
+                    }
+                }
+                true
+            } catch (e: Exception) {
+                android.util.Log.e("CameraSource", "setTorch failed: ${e.message}")
+                setSystemTorch(enabled)
             }
-            true
-        } else {
+        }
+        return setSystemTorch(enabled)
+    }
+
+    private fun setSystemTorch(enabled: Boolean): Boolean {
+        return try {
+            val cm = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager ?: return false
+            for (id in cm.cameraIdList) {
+                val chars = cm.getCameraCharacteristics(id)
+                val hasFlash = chars.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+                val facing = chars.get(CameraCharacteristics.LENS_FACING)
+                if (hasFlash && facing == CameraCharacteristics.LENS_FACING_BACK) {
+                    cm.setTorchMode(id, enabled)
+                    return true
+                }
+            }
+            false
+        } catch (e: Exception) {
+            android.util.Log.w("CameraSource", "System torch fallback failed: ${e.message}")
             false
         }
     }
 
-    fun toggleTorch(): Boolean = setTorch(!torchEnabled)
+    fun toggleTorch(): Boolean {
+        val target = !torchEnabled
+        val ok = setTorch(target)
+        return if (ok) target else torchEnabled
+    }
 
     fun isTorchOn(): Boolean = torchEnabled
 
     fun pulseTorch(pattern: String = "double_blink") {
-        val cam = camera ?: return
-        if (!cam.cameraInfo.hasFlashUnit()) return
         val wasOn = torchEnabled
         val handler = android.os.Handler(android.os.Looper.getMainLooper())
         when (pattern) {
             "double_blink" -> {
-                cam.cameraControl.enableTorch(true)
-                handler.postDelayed({ cam.cameraControl.enableTorch(false) }, 150)
-                handler.postDelayed({ cam.cameraControl.enableTorch(true) }, 300)
-                handler.postDelayed({
-                    cam.cameraControl.enableTorch(wasOn)
-                    torchEnabled = wasOn
-                }, 450)
+                setTorch(true)
+                handler.postDelayed({ setTorch(false) }, 150)
+                handler.postDelayed({ setTorch(true) }, 300)
+                handler.postDelayed({ setTorch(wasOn) }, 450)
             }
             "beacon" -> {
                 for (i in 0..2) {
-                    handler.postDelayed({ cam.cameraControl.enableTorch(true) }, i * 400L)
-                    handler.postDelayed({ cam.cameraControl.enableTorch(false) }, i * 400L + 200L)
+                    handler.postDelayed({ setTorch(true) }, i * 400L)
+                    handler.postDelayed({ setTorch(false) }, i * 400L + 200L)
                 }
-                handler.postDelayed({
-                    cam.cameraControl.enableTorch(wasOn)
-                    torchEnabled = wasOn
-                }, 1300)
+                handler.postDelayed({ setTorch(wasOn) }, 1300)
             }
             else -> {
-                cam.cameraControl.enableTorch(true)
-                handler.postDelayed({
-                    cam.cameraControl.enableTorch(wasOn)
-                    torchEnabled = wasOn
-                }, 300)
+                setTorch(true)
+                handler.postDelayed({ setTorch(wasOn) }, 300)
             }
         }
     }

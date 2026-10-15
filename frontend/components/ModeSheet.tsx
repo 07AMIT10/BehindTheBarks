@@ -1,7 +1,7 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useState, useRef } from "react";
 import { useDialog } from "@/lib/useDialog";
 import type { ModeRequestResult, ViewMode } from "../lib/types";
-import { MODE_METADATA, MODE_ORDER, isModeAllowed, modeRank, modeResultLabel } from "../lib/modes";
+import { CONFIGURABLE_MODES, isModeAllowed } from "../lib/modes";
 
 interface ModeSheetProps {
   isOpen: boolean;
@@ -27,33 +27,10 @@ export const ModeSheet: React.FC<ModeSheetProps> = ({
   isOwner = true,
   onSetMode,
   onPeek,
-  requestResult = null,
 }) => {
-  const [pendingMode, setPendingMode] = useState<ViewMode | null>(null);
-  // The result timestamp when this request was sent: only a newer result answers it (an old one for the same mode does not).
-  const [baselineTs, setBaselineTs] = useState<number | null>(null);
-  const [countdown, setCountdown] = useState<number>(60);
-  const [timedOut, setTimedOut] = useState<boolean>(false);
+  const [selectedMode, setSelectedMode] = useState<ViewMode | null>(null);
+  const [noticeMsg, setNoticeMsg] = useState<string | null>(null);
   const [peekMsg, setPeekMsg] = useState<string | null>(null);
-
-  const answered = pendingMode !== null && requestResult !== null && requestResult.mode === pendingMode && requestResult.ts !== baselineTs;
-  const resultLabel = answered && requestResult ? modeResultLabel(requestResult.result) : null;
-
-  // Countdown timer for pending approval; the phone's answer stops it.
-  useEffect(() => {
-    if (!pendingMode || timedOut || answered || modeRank(effectiveMode) >= modeRank(pendingMode)) return;
-    const interval = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          setTimedOut(true);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [pendingMode, timedOut, effectiveMode, answered]);
 
   const dialogRef = useRef<HTMLDivElement>(null);
   useDialog(dialogRef, isOpen, onClose);
@@ -64,14 +41,17 @@ export const ModeSheet: React.FC<ModeSheetProps> = ({
     if (!isModeAllowed(mode, modeCeiling)) return;
     if (!isOwner) return;
 
-    setTimedOut(false);
-    setBaselineTs(requestResult?.ts ?? null);
-    const res = await onSetMode(mode);
-    if (res?.status === "pending") {
-      setPendingMode(mode);
-      setCountdown(60);
-    } else {
-      setPendingMode(null);
+    setSelectedMode(mode);
+    try {
+      const res = await onSetMode(mode);
+      if (res?.status === "pending") {
+        setNoticeMsg("Mode request sent to station phone");
+      } else {
+        setNoticeMsg(null);
+        setTimeout(() => onClose(), 350);
+      }
+    } catch {
+      setSelectedMode(null);
     }
   };
 
@@ -87,11 +67,11 @@ export const ModeSheet: React.FC<ModeSheetProps> = ({
     setTimeout(() => setPeekMsg(null), 4000);
   };
 
-  const showPendingNotice = pendingMode !== null && (answered || timedOut || modeRank(effectiveMode) < modeRank(pendingMode));
-
   return (
     <div
-      role="dialog" ref={dialogRef} tabIndex={-1}
+      role="dialog"
+      ref={dialogRef}
+      tabIndex={-1}
       aria-modal="true"
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-4"
       onClick={onClose}
@@ -116,41 +96,25 @@ export const ModeSheet: React.FC<ModeSheetProps> = ({
           </button>
         </div>
 
-        {/* Pending Approval Notice */}
-        {showPendingNotice && (
-          <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 text-xs text-amber-200">
-            {resultLabel || timedOut ? (
-              <div className="flex items-center justify-between">
-                <span role="status">{resultLabel ?? modeResultLabel("timeout")}</span>
-                <button
-                  onClick={() => {
-                    setPendingMode(null);
-                    setTimedOut(false);
-                  }}
-                  className="rounded px-2 py-1 font-medium bg-amber-600/40 hover:bg-amber-600/60"
-                >
-                  Dismiss
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-2">
-                  <span className="inline-block h-2 w-2 animate-ping rounded-full bg-amber-400" />
-                  Waiting for approval on the phone…
-                </span>
-                <span className="font-mono font-medium text-amber-300">{countdown}s</span>
-              </div>
-            )}
+        {/* Optional status notice (non-blocking) */}
+        {noticeMsg && (
+          <div className="mt-4 flex items-center justify-between rounded-xl border border-sky-500/30 bg-sky-500/10 p-3 text-xs text-sky-200">
+            <span>{noticeMsg}</span>
+            <button
+              onClick={() => setNoticeMsg(null)}
+              className="rounded px-2 py-0.5 font-medium bg-sky-600/40 hover:bg-sky-600/60"
+            >
+              Dismiss
+            </button>
           </div>
         )}
 
         {/* Mode Options List */}
         <div className="mt-4 space-y-2">
-          {MODE_ORDER.map((mode) => {
-            const meta = MODE_METADATA[mode];
-            const isCurrent = mode === effectiveMode;
+          {CONFIGURABLE_MODES.filter((m) => m.enabled).map((config) => {
+            const mode = config.mode;
+            const isCurrent = (selectedMode ? selectedMode === mode : mode === effectiveMode);
             const isAllowed = isModeAllowed(mode, modeCeiling);
-            const isPendingThisMode = pendingMode === mode && !timedOut && !answered && modeRank(effectiveMode) < modeRank(pendingMode);
             const disabled = !isAllowed || (!isOwner && !isCurrent);
 
             return (
@@ -167,10 +131,10 @@ export const ModeSheet: React.FC<ModeSheetProps> = ({
                 }`}
               >
                 <div className="flex items-start gap-3">
-                  <span className="text-xl">{meta.icon}</span>
+                  <span className="text-xl">{config.icon}</span>
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-medium text-sm text-neutral-100">{meta.label}</span>
+                      <span className="font-medium text-sm text-neutral-100">{config.label}</span>
                       {isCurrent && (
                         <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[12px] font-semibold text-emerald-400">
                           Active
@@ -182,21 +146,17 @@ export const ModeSheet: React.FC<ModeSheetProps> = ({
                         </span>
                       )}
                     </div>
-                    <p className="mt-0.5 text-xs text-neutral-400">{meta.desc}</p>
+                    <p className="mt-0.5 text-xs text-neutral-400">{config.desc}</p>
                   </div>
                 </div>
 
                 {!isAllowed && (
                   <span
-                    className="flex items-center gap-1 text-[12px] text-neutral-400"
-                    title="Exceeds your access ceiling"
+                    className="ml-2 rounded border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-400"
+                    title={`The station cap is currently ${stationCap}`}
                   >
-                    🔒 Locked
+                    Capped
                   </span>
-                )}
-
-                {isPendingThisMode && (
-                  <span className="text-xs text-amber-400 animate-pulse font-medium">Pending…</span>
                 )}
               </button>
             );

@@ -235,7 +235,7 @@ class HouseholdRegistry:
         # (T2.9): a disabled interpreter and a dashboard-only notifier unless the owner opted in.
         interpreter = self.build_interpreter(cfg, llm_enabled)
         notifier = self.make_notifier(cfg) if self.make_notifier else DashboardOnlyNotifier()
-        policy = Policy(household_mode="privacy")
+        policy = Policy(household_mode="full")
         tracker = ViewerTracker(household_id=hid, policy=policy, pipeline=pipeline, clock=self.clock)
         tracker.register_kick_callback(hub.kick_all_viewers)
         limited = Limited(clock=self.clock)

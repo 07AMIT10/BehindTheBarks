@@ -73,7 +73,7 @@ export default function Dashboard() {
   const [showGrid, setShowGrid] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [soundboardOpen, setSoundboardOpen] = useState(false);
-  const stations = state.status?.stations ?? [];
+  const stations = useMemo(() => state.status?.stations ?? [], [state.status?.stations]);
   const hasMultipleStations = stations.length > 1;
   const projector = useMemo(() => new URLSearchParams(window.location.search).get("size") === "projector", []);
   const profile = state.status?.profile ?? { dog_name: "Your dog", location: "", zone_label: "feeding area" };
