@@ -68,6 +68,8 @@ open class TelemetrySampler(
     private val degradeLevel: () -> DegradeLevel = { DegradeLevel.L0_NORMAL },
     private val previewEncoder: () -> PreviewEncoder? = { null },
     private val previewRung: () -> Int = { 0 },
+    /** T3.9: true while live audio is leaving the phone right now. */
+    private val audioStreaming: () -> Boolean = { false },
     private val sampleIntervalMs: Long = 10_000L,
     private val clock: () -> Double = { System.currentTimeMillis() / 1000.0 },
     private val scope: CoroutineScope,
@@ -101,6 +103,8 @@ open class TelemetrySampler(
         val queueBytes = up?.queueBytes() ?: 0L
         val spoolBytes = up?.spool?.sizeBytes ?: 0L
         val previewDropped = up?.previewDroppedBackpressure?.get() ?: 0L
+        val audioFrames = up?.audioFramesSent?.get() ?: 0L
+        val audioDropped = up?.audioDroppedBackpressure?.get() ?: 0L
         val pe = previewEncoder()
         val previewFps = pe?.config?.fps ?: 0.0
         val degrade = degradeLevel().name
@@ -139,6 +143,9 @@ open class TelemetrySampler(
                 put("mem_mb", memMb)
                 put("degrade_level", degrade)
                 put("ladder_rung", previewRung())
+                put("audio_streaming", audioStreaming())
+                put("audio_frames_sent", audioFrames)
+                put("audio_dropped_backpressure", audioDropped)
             }
         }.toString()
     }

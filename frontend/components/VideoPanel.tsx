@@ -3,11 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FrameEvent } from "@/lib/contracts";
 import { durationLabel, hhmmss } from "@/lib/format";
-import { PAUSED_NOTICE } from "@/lib/phone";
+import { PAUSED_NOTICE, type StationState } from "@/lib/phone";
 import { drawOverlay, fitContain, type Layers } from "@/lib/overlay";
 import { StreamWatchdog } from "@/lib/watchdog";
+import { useListen } from "@/lib/useListen";
 import type { ModeRequestResult, ViewMode } from "@/lib/types";
 import { ModeSheet } from "./ModeSheet";
+import { ListenButton, ListenStatus } from "./ListenButton";
 
 type Props = {
   http: string;
@@ -30,6 +32,8 @@ type Props = {
   stationCap?: ViewMode;
   householdMode?: ViewMode;
   modeCeiling?: ViewMode;
+  stationState?: StationState;  // phone.ts stationState(): hides Listen when idle/paused/dropped
+  signedIn?: boolean;  // false (household sign-out) stops listening and hides the control
   isOwner?: boolean;
   onSetMode?: (mode: ViewMode) => Promise<{ status: "applied" | "pending"; mode: ViewMode } | undefined>;
   onPeek?: () => Promise<boolean>;
@@ -61,6 +65,8 @@ export default function VideoPanel({
   stationCap = "full",
   householdMode = "full",
   modeCeiling = "full",
+  stationState,
+  signedIn = true,
   isOwner = true,
   onSetMode,
   onPeek,
@@ -80,6 +86,17 @@ export default function VideoPanel({
   const [watchdogPaused, setWatchdogPaused] = useState(false);
   const [resumeKey, setResumeKey] = useState(0);
   const watchdogRef = useRef<StreamWatchdog | null>(null);
+  const listenStation: StationState =
+    stationState ?? (idle ? "idle" : blackoutPaused ? "paused" : dropped ? "dropped" : "live");
+  const listen = useListen({
+    effectiveMode: effectiveMode ?? "blackout",
+    viewerCeiling: modeCeiling,
+    stationState: listenStation,
+    signedIn,
+    token,
+    station,
+    maxIdleSec,
+  });
 
   const bbox = frame?.dog_detected && frame.bbox ? frame.bbox : null;
   const zoomOriginX = bbox ? Math.max(10, Math.min(90, ((bbox[1] + bbox[3]) / 2) * 100)) : 50;
@@ -483,9 +500,12 @@ export default function VideoPanel({
 
       {/* Bottom controls bar: responsive and mobile-adaptive */}
       <div className="absolute inset-x-2 bottom-2 z-20 flex flex-wrap items-center justify-between gap-1.5 sm:inset-x-4 sm:bottom-4 sm:gap-2">
-        <div className={`${chip} hidden gap-2 text-[#D6D8DB] text-[12px] sm:text-[12px] sm:flex`} style={scrim}>
-          <span>Pose {kp} kp</span>
-          <span>Face {facePts} pts</span>
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <div className={`${chip} hidden gap-2 text-[#D6D8DB] text-[12px] sm:text-[12px] sm:flex`} style={scrim}>
+            <span>Pose {kp} kp</span>
+            <span>Face {facePts} pts</span>
+          </div>
+          <ListenStatus control={listen} />
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
@@ -548,6 +568,7 @@ export default function VideoPanel({
                 <span>{privacyMode ? "Privacy ON" : "Privacy"}</span>
               </button>
             ) : null}
+            <ListenButton control={listen} variant="bar" />
           </div>
 
           <div role="group" aria-label="Overlay layers" className="hidden gap-0.5 rounded-md p-1 sm:flex" style={scrim}>
@@ -645,6 +666,9 @@ export default function VideoPanel({
                   {privacyMode ? "Privacy ON" : "Privacy"}
                 </button>
               ) : null}
+            </div>
+            <div className="mt-3">
+              <ListenButton control={listen} variant="sheet" />
             </div>
             <div className="mt-3 flex gap-2">
               {(["box", "skeleton", "face"] as const).map((k) => (

@@ -38,6 +38,9 @@ import com.btb.ondevice.capture.MonitorServiceListener
 import com.btb.ondevice.net.ConnectionState
 import com.btb.ondevice.net.PairResult
 import com.btb.ondevice.net.StationKey
+import com.btb.ondevice.net.UrlCheck
+import com.btb.ondevice.net.UrlPolicy
+import com.btb.ondevice.BuildConfig
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import com.btb.ondevice.util.PairingTarget
@@ -66,6 +69,7 @@ class MainActivity : Activity() {
     private lateinit var viewersBadge: TextView
     private lateinit var disconnectViewersButton: Button
     private lateinit var ambientViewersText: TextView
+    private lateinit var listeningBadge: TextView
 
     private lateinit var prefs: SharedPreferences
 
@@ -124,7 +128,7 @@ class MainActivity : Activity() {
 
                 override fun onViewersCountChanged(videoViewers: Int, audioViewers: Int) {
                     runOnUiThread {
-                        updateViewersUi(videoViewers)
+                        updateViewersUi(videoViewers, audioViewers)
                     }
                 }
 
@@ -456,6 +460,19 @@ class MainActivity : Activity() {
         viewersRow.addView(disconnectViewersButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         controlsPanel.addView(viewersRow)
 
+        // T3.9: people listening to the microphone (Full mode only). Own row, hidden at zero.
+        val listeningRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        listeningBadge = TextView(this).apply {
+            setTextColor(Color.parseColor("#FFB74D"))
+            textSize = 12f
+            visibility = View.GONE
+        }
+        listeningRow.addView(listeningBadge, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        controlsPanel.addView(listeningRow)
+
         root.addView(controlsScroll)
 
         // 5. Ambient / Station Mode Fullscreen Overlay (pitch black to save power & prevent OLED burn-in)
@@ -528,7 +545,7 @@ class MainActivity : Activity() {
         setContentView(root)
         enforceTouchTargets(controlsPanel)
         enforceTouchTargets(floatingPill)
-        applyAccessibility(viewersRow)
+        applyAccessibility(viewersRow, listeningRow)
         refreshPairingUi()
         requestPermissionsIfNeeded()
         // A rotation or font change recreates this screen while the service keeps capturing.
@@ -570,7 +587,7 @@ class MainActivity : Activity() {
      * is always in the tree when it is shown. Focus follows the order the controls are added, which
      * is top to bottom as drawn.
      */
-    private fun applyAccessibility(viewers: LinearLayout) {
+    private fun applyAccessibility(viewers: LinearLayout, listening: LinearLayout) {
         previewView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         overlayView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         statusTextView.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
@@ -578,7 +595,10 @@ class MainActivity : Activity() {
         viewers.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         viewersBadge.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         disconnectViewersButton.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
-        disconnectViewersButton.contentDescription = "Disconnect all viewers"
+        disconnectViewersButton.contentDescription = "Disconnect all viewers and listeners"
+        listening.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        listeningBadge.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        listeningBadge.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         dimButton.contentDescription = "Station Dim: black screen, camera stays on"
         collapseButton.contentDescription = "Hide the control panel"
         ambientOverlay.contentDescription = "Station Dim is on. Tap to wake the screen."
@@ -607,7 +627,7 @@ class MainActivity : Activity() {
             val linkUrl = uri.getQueryParameter("url")
             val linkToken = uri.getQueryParameter("token")
             val linkDevice = uri.getQueryParameter("device")
-            if (!linkUrl.isNullOrBlank()) {
+            if (!linkUrl.isNullOrBlank() && allowedServerLink(linkUrl)) {
                 val host = runCatching { android.net.Uri.parse(linkUrl).host }.getOrNull() ?: linkUrl
                 // A deep link is attacker-controllable (any web page can fire one): confirm before it
                 // touches the stored configuration, and never take a token for a different host.
@@ -950,9 +970,10 @@ class MainActivity : Activity() {
      * payload fills in the server settings. Returns the parsed target, or null when the text is not a payload.
      */
     private fun applyPairingPayload(rawText: String): PairingTarget? {
-        val target = QrDecoder.parsePairingText(rawText)
+        val target = QrDecoder.parsePairingText(rawText, BuildConfig.DEBUG)
         when (target) {
             is PairingTarget.Code -> pairStation(target)  // v2: signed identity (T2.5)
+            is PairingTarget.Rejected -> Toast.makeText(this, target.reason, Toast.LENGTH_LONG).show()  // H2
             is PairingTarget.Manual -> {
                 val config = target.config
                 urlEditText.setText(config.url)
@@ -979,7 +1000,7 @@ class MainActivity : Activity() {
         Toast.makeText(this, "Pairing station…", Toast.LENGTH_SHORT).show()
         MainScope().launch {
             val deviceName = prefs.getString(KEY_DEVICE, Build.MODEL) ?: Build.MODEL
-            when (val result = PairingFlow.pairAndSave(prefs, target, deviceName, StationKey.getOrCreate())) {
+            when (val result = PairingFlow.pairAndSave(prefs, target, deviceName, StationKey.getOrCreate(), BuildConfig.DEBUG)) {
                 is PairResult.Ok -> {
                     urlEditText.setText(target.wsUrl)
                     refreshPairingUi()
@@ -987,6 +1008,7 @@ class MainActivity : Activity() {
                 }
                 PairResult.InvalidCode -> Toast.makeText(this@MainActivity, "That pairing code is expired or used", Toast.LENGTH_LONG).show()
                 is PairResult.Failed -> Toast.makeText(this@MainActivity, "Pairing failed: ${result.detail}", Toast.LENGTH_LONG).show()
+                is PairResult.Refused -> Toast.makeText(this@MainActivity, result.reason, Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -1060,8 +1082,22 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * True when [url] may be used by this build (H2). A refusal says why in a toast and changes nothing:
+     * the typed text stays in the field and no preference is written.
+     */
+    private fun allowedServerLink(url: String): Boolean {
+        val check = UrlPolicy.check(url, BuildConfig.DEBUG)
+        if (check is UrlCheck.Rejected) {
+            Toast.makeText(this, check.reason, Toast.LENGTH_LONG).show()
+            return false
+        }
+        return true
+    }
+
     private fun startMonitoringService() {
         val url = urlEditText.text.toString().trim()
+        if (!allowedServerLink(url)) return
         val device = deviceEditText.text.toString().trim()
         // A paired station (households, T2.5) identifies itself with its id and Keystore key, not the shared token.
         val stationId = prefs.getString(KEY_STATION_ID, null)?.takeIf { it.isNotBlank() }
@@ -1124,7 +1160,7 @@ class MainActivity : Activity() {
         setMonitoringUi(false)
         statusTextView.text = "● Idle · Ready"
         overlayView.updateState(OverlayState())
-        updateViewersUi(0)
+        updateViewersUi(0, 0)
     }
 
     /** The controls that depend on monitoring. Used on start, on stop and when a recreated screen reattaches. */
@@ -1150,19 +1186,29 @@ class MainActivity : Activity() {
         view.contentDescription = spokenLabel(view.text.toString())
     }
 
-    private fun updateViewersUi(count: Int) {
-        if (count > 0) {
-            val label = if (count == 1) "👁️ 1 viewer watching" else "👁️ $count viewers watching"
-            viewersBadge.text = label
+    /** T3.4 video viewers and T3.9 audio listeners. Disconnect kicks everyone, so it shows for either. */
+    private fun updateViewersUi(videoCount: Int, audioCount: Int) {
+        val videoLabel = if (videoCount > 0) {
+            if (videoCount == 1) "👁️ 1 viewer watching" else "👁️ $videoCount viewers watching"
+        } else null
+        if (videoLabel != null) {
+            viewersBadge.text = videoLabel
             viewersBadge.visibility = View.VISIBLE
-            disconnectViewersButton.visibility = View.VISIBLE
-            ambientViewersText.text = label
-            ambientViewersText.visibility = View.VISIBLE
         } else {
             viewersBadge.visibility = View.GONE
-            disconnectViewersButton.visibility = View.GONE
-            ambientViewersText.visibility = View.GONE
         }
+        val listeningLabel = ListenerIndicator.rowText(audioCount)
+        if (listeningLabel != null) {
+            listeningBadge.text = listeningLabel
+            listeningBadge.contentDescription = ListenerIndicator.description(audioCount)
+            listeningBadge.visibility = View.VISIBLE
+        } else {
+            listeningBadge.visibility = View.GONE
+        }
+        disconnectViewersButton.visibility = if (videoLabel != null || listeningLabel != null) View.VISIBLE else View.GONE
+        val ambient = listOfNotNull(videoLabel, listeningLabel).joinToString("\n")
+        ambientViewersText.text = ambient
+        ambientViewersText.visibility = if (ambient.isNotEmpty()) View.VISIBLE else View.GONE
     }
 
     private fun updateTorchButton(on: Boolean) {

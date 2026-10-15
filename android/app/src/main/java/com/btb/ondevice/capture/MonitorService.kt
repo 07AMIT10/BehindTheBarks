@@ -20,6 +20,7 @@ import androidx.core.app.NotificationCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
+import com.btb.ondevice.audio.AdpcmCodec
 import com.btb.ondevice.audio.AudioPipeline
 import com.btb.ondevice.audio.YamnetClassifier
 import com.btb.ondevice.config.DataConfig
@@ -35,12 +36,16 @@ import com.btb.ondevice.net.EventSpool
 import com.btb.ondevice.net.EventUploader
 import com.btb.ondevice.net.EventUploaderListener
 import com.btb.ondevice.net.StationKey
+import com.btb.ondevice.net.UrlCheck
+import com.btb.ondevice.net.UrlPolicy
+import com.btb.ondevice.BuildConfig
 import com.btb.ondevice.pipeline.AndroidMemoryProvider
 import com.btb.ondevice.pipeline.AndroidThermalProvider
 import com.btb.ondevice.pipeline.InferenceExecutor
 import com.btb.ondevice.pipeline.MemoryGuard
 import com.btb.ondevice.pipeline.OnDevicePipeline
 import com.btb.ondevice.pipeline.ThermalGovernor
+import com.btb.ondevice.ui.ListenerIndicator
 import com.btb.ondevice.ui.OverlayState
 import com.btb.ondevice.vision.DogDetector
 import com.btb.ondevice.vision.FaceLandmarker
@@ -122,6 +127,10 @@ class MonitorService : Service(), LifecycleOwner {
     private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
     private var currentVideoViewers: Int = 0
     private var currentAudioViewers: Int = 0
+    /** T3.9: sequence of audio frames in this monitoring session. Only advanced for frames actually built. */
+    private val audioSeq = AtomicLong(0L)
+    /** Reused PCM16 view of one chunk for the ADPCM encoder (only the microphone thread touches it). */
+    private val audioShorts = ShortArray(AdpcmCodec.CHUNK_SAMPLES)
     private var currentStatusText: String = "Monitoring room with camera & audio..."
     private val approvalHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val approvalTimeout = Runnable { resolveRaise(RaiseResult.TIMEOUT) }
@@ -220,6 +229,7 @@ class MonitorService : Service(), LifecycleOwner {
             return
         }
         val prevVideoViewers = modeController.policy.videoViewers
+        val prevAudioViewers = modeController.policy.audioViewers
         val policy = Policy(
             mode = parsed,
             previewFps = previewFps,
@@ -238,6 +248,9 @@ class MonitorService : Service(), LifecycleOwner {
         currentAudioViewers = audioViewers
         if (prevVideoViewers == 0 && videoViewers > 0) {
             playViewerChime()
+        }
+        if (ListenerIndicator.chimesOn(prevAudioViewers, audioViewers)) {
+            playListenerChime()
         }
         updateNotification()
         listener?.onViewersCountChanged(videoViewers, audioViewers)
@@ -373,6 +386,14 @@ class MonitorService : Service(), LifecycleOwner {
         val serverUrl = intent?.getStringExtra(EXTRA_SERVER_URL)
             ?: intent?.getStringExtra("server_url")
             ?: defaultUrl
+        // H2, defence in depth: the UI refuses these links too. A refused start still calls startForeground
+        // (the system requires it for a foreground start), shows the reason in the notification and stops.
+        val linkCheck = UrlPolicy.check(serverUrl, BuildConfig.DEBUG)
+        if (linkCheck is UrlCheck.Rejected && !isRunning.get()) {
+            startForeground(NOTIFICATION_ID, buildNotification(linkCheck.reason))
+            stopSelf()
+            return START_NOT_STICKY
+        }
         val deviceName = intent?.getStringExtra(EXTRA_DEVICE_NAME)
             ?: intent?.getStringExtra("device_name")
             ?: defaultDevice
@@ -390,6 +411,7 @@ class MonitorService : Service(), LifecycleOwner {
         if (!isRunning.compareAndSet(false, true)) return
         isServiceRunning = true
         modeController.beginSession()
+        audioSeq.set(0L)
         cancelApprovalNotification()
 
         // 1. Foreground Notification
@@ -558,6 +580,7 @@ class MonitorService : Service(), LifecycleOwner {
             degradeLevel = { pipeline?.scheduler?.getLevel() ?: com.btb.ondevice.pipeline.DegradeLevel.L0_NORMAL },
             previewEncoder = { previewEncoder },
             previewRung = { previewLadder.currentRung },
+            audioStreaming = { isAudioStreaming() },
             sampleIntervalMs = 10_000L,
             scope = CoroutineScope(Dispatchers.Default),
         )
@@ -634,6 +657,8 @@ class MonitorService : Service(), LifecycleOwner {
                 ByteBuffer.wrap(pcm16).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shortArray)
                 val events = pipe.pushAudioPcm16(ts, shortArray)
                 events.forEach { up.sendAudio(it) }
+                // T3.9: live audio, only in Full mode with a listener (AudioStreamGate), same AudioRecord.
+                streamAudioChunk(up, pcm16)
             }
         )
         micSource = mic
@@ -682,6 +707,53 @@ class MonitorService : Service(), LifecycleOwner {
             }, 600)
         } catch (e: Exception) {
             Log.w("MonitorService", "Failed to play treat chime: ${e.message}")
+        }
+    }
+
+    /**
+     * T3.9: encode one 100 ms microphone chunk and hand it to the uploader. Runs on the microphone thread
+     * after the blackout return and YAMNet, so it never delays perception. Any failure is logged and the
+     * chunk skipped: the recorder thread must keep running.
+     */
+    private fun streamAudioChunk(up: EventUploader, pcm16: ByteArray) {
+        if (!modeController.shouldStreamAudio()) return
+        if (pcm16.size != AdpcmCodec.PCM16_PAYLOAD_BYTES) return
+        try {
+            val seq = audioSeq.getAndIncrement() and AUDIO_U32_MASK
+            val tMs = android.os.SystemClock.elapsedRealtime() and AUDIO_U32_MASK
+            val payload = if (AUDIO_CODEC == AdpcmCodec.CODEC_IMA_ADPCM) {
+                ByteBuffer.wrap(pcm16).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(audioShorts)
+                AdpcmCodec.encodeBlock(audioShorts)
+            } else {
+                pcm16
+            }
+            up.sendAudioChunk(AdpcmCodec.packFrame(AUDIO_CODEC, seq, tMs, payload))
+        } catch (t: Throwable) {
+            Log.w("MonitorService", "audio chunk skipped: ${t.message}")
+        }
+    }
+
+    /** True while live audio is actually leaving the phone: the gate is open and the socket is up. */
+    fun isAudioStreaming(): Boolean =
+        modeController.shouldStreamAudio() && uploader?.connectionState == ConnectionState.CONNECTED
+
+    /** T3.9 listener chime: a low prompt then a beep, distinct from the video chime (ACK, BEEP2) and the treat chime. */
+    private fun playListenerChime() {
+        try {
+            val toneGen = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 100)
+            toneGen.startTone(android.media.ToneGenerator.TONE_PROP_PROMPT, 200)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                try {
+                    toneGen.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 200)
+                } catch (_: Exception) {}
+            }, 220)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                try {
+                    toneGen.release()
+                } catch (_: Exception) {}
+            }, 600)
+        } catch (e: Exception) {
+            Log.w("MonitorService", "Failed to play listener chime: ${e.message}")
         }
     }
 
@@ -847,12 +919,13 @@ class MonitorService : Service(), LifecycleOwner {
             PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
         )
 
-        val displayText = if (currentVideoViewers > 0) {
-            val s = if (currentVideoViewers == 1) "1 viewer watching" else "$currentVideoViewers viewers watching"
-            "$s · $statusText"
+        val viewerPart = if (currentVideoViewers > 0) {
+            if (currentVideoViewers == 1) "1 viewer watching" else "$currentVideoViewers viewers watching"
         } else {
-            statusText
+            null
         }
+        val displayText = listOfNotNull(viewerPart, ListenerIndicator.countText(currentAudioViewers), statusText)
+            .joinToString(" · ")
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("WagWatch Monitor")
@@ -862,7 +935,7 @@ class MonitorService : Service(), LifecycleOwner {
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPendingIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)
 
-        if (currentVideoViewers > 0) {
+        if (currentVideoViewers > 0 || currentAudioViewers > 0) {
             val kickIntent = Intent(this, MonitorService::class.java).apply {
                 action = ACTION_KICK_VIEWERS
             }
@@ -972,11 +1045,15 @@ class MonitorService : Service(), LifecycleOwner {
         const val EXTRA_DEVICE_NAME = "extra_device_name"
         const val EXTRA_TOKEN = "extra_token"
         const val EXTRA_STATION_ID = "extra_station_id"
-        const val DEFAULT_SERVER_URL = "ws://10.0.2.2:8000/ingest-events"
+        // The build default (debug: ws:// for the emulator; release: wss://, see the H2 build guard).
+        const val DEFAULT_SERVER_URL = com.btb.ondevice.BuildConfig.DEFAULT_INGEST_URL
         /** Set with the service's own running flag, so an activity can check it before it restarts anything. */
         @Volatile
         var isServiceRunning: Boolean = false
 
+        /** T3.9: codec of the live audio frames (AdpcmCodec.CODEC_IMA_ADPCM; PCM16 = 0 is for debugging). */
+        const val AUDIO_CODEC = AdpcmCodec.CODEC_IMA_ADPCM
+        private const val AUDIO_U32_MASK = 0xFFFFFFFFL
         const val KEY_STATION_CAP = "station_cap"   // T3.2: the cap the person holding the phone allows
     }
 }

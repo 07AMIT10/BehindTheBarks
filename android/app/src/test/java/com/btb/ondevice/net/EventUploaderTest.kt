@@ -674,4 +674,129 @@ class EventUploaderTest {
         assertThat(sent[2]).isEqualTo("""{"type":"mode_result","data":{"mode":"full","result":"timeout"}}""")
         uploader.stop()
     }
+
+    /** A full ADPCM audio frame for tests: 0x02 | codec 1 | seq 7 | t_ms 1234 | 804-byte block. */
+    private fun adpcmFrame(seq: Long = 7L): ByteArray {
+        val samples = ShortArray(com.btb.ondevice.audio.AdpcmCodec.CHUNK_SAMPLES) { (it % 300).toShort() }
+        return com.btb.ondevice.audio.AdpcmCodec.packFrame(
+            com.btb.ondevice.audio.AdpcmCodec.CODEC_IMA_ADPCM, seq, 1234L,
+            com.btb.ondevice.audio.AdpcmCodec.encodeBlock(samples),
+        )
+    }
+
+    @Test
+    fun `sendAudioChunk sends a binary 0x02 ADPCM frame of 814 bytes and counts it`() = runBlocking {
+        val binaries = CompletableDeferred<ByteString>()
+        val connected = CompletableDeferred<Unit>()
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (text.contains(""""type":"hello"""")) {
+                    webSocket.send("""{"type":"hello_ack","server_time":1700000000.0}""")
+                }
+            }
+
+            override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                binaries.complete(bytes)
+            }
+        }))
+        val uploader = EventUploader(
+            serverUrl = server.url("/ingest-events").toString(),
+            deviceName = "test-galaxy",
+            spool = spool,
+            listener = object : EventUploaderListener {
+                override fun onStateChanged(state: ConnectionState) {
+                    if (state == ConnectionState.CONNECTED) connected.complete(Unit)
+                }
+            }
+        )
+        uploader.start()
+        withTimeout(5000) { connected.await() }
+
+        val frame = adpcmFrame()
+        assertThat(uploader.sendAudioChunk(frame)).isTrue()
+
+        val received = withTimeout(5000) { binaries.await() }
+        assertThat(received.size).isEqualTo(814)
+        assertThat(received[0]).isEqualTo(EventUploader.KIND_AUDIO)
+        assertThat(received[1]).isEqualTo(1.toByte())
+        assertThat(uploader.audioFramesSent.get()).isEqualTo(1L)
+        assertThat(uploader.audioBytesSent.get()).isEqualTo(814L)
+        assertThat(uploader.audioDroppedBackpressure.get()).isEqualTo(0L)
+        uploader.stop()
+    }
+
+    @Test
+    fun `sendAudioChunk refuses when not connected and sends nothing`() {
+        val uploader = EventUploader(
+            serverUrl = server.url("/ingest-events").toString(),
+            deviceName = "test-galaxy",
+            spool = spool,
+        )
+        assertThat(uploader.sendAudioChunk(adpcmFrame())).isFalse()
+        assertThat(uploader.audioFramesSent.get()).isEqualTo(0L)
+        assertThat(uploader.audioDroppedBackpressure.get()).isEqualTo(0L)
+    }
+
+    @Test
+    fun `sendAudioChunk drops and counts a chunk over the queue limit`() = runBlocking {
+        val connected = CompletableDeferred<Unit>()
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (text.contains(""""type":"hello"""")) {
+                    webSocket.send("""{"type":"hello_ack","server_time":1700000000.0}""")
+                }
+            }
+        }))
+        // A negative limit makes every chunk "backed up" (queueSize() is never below zero), so the
+        // drop path is exercised deterministically without racing the socket writer.
+        val uploader = EventUploader(
+            serverUrl = server.url("/ingest-events").toString(),
+            deviceName = "test-galaxy",
+            spool = spool,
+            audioMaxQueueBytes = -1L,
+            listener = object : EventUploaderListener {
+                override fun onStateChanged(state: ConnectionState) {
+                    if (state == ConnectionState.CONNECTED) connected.complete(Unit)
+                }
+            }
+        )
+        uploader.start()
+        withTimeout(5000) { connected.await() }
+
+        assertThat(uploader.sendAudioChunk(adpcmFrame(1))).isFalse()
+        assertThat(uploader.sendAudioChunk(adpcmFrame(2))).isFalse()
+        assertThat(uploader.audioDroppedBackpressure.get()).isEqualTo(2L)
+        assertThat(uploader.audioFramesSent.get()).isEqualTo(0L)
+        uploader.stop()
+    }
+
+    @Test
+    fun `sendAudioChunk rejects anything that is not an audio frame`() = runBlocking {
+        val connected = CompletableDeferred<Unit>()
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (text.contains(""""type":"hello"""")) {
+                    webSocket.send("""{"type":"hello_ack","server_time":1700000000.0}""")
+                }
+            }
+        }))
+        val uploader = EventUploader(
+            serverUrl = server.url("/ingest-events").toString(),
+            deviceName = "test-galaxy",
+            spool = spool,
+            listener = object : EventUploaderListener {
+                override fun onStateChanged(state: ConnectionState) {
+                    if (state == ConnectionState.CONNECTED) connected.complete(Unit)
+                }
+            }
+        )
+        uploader.start()
+        withTimeout(5000) { connected.await() }
+
+        val preview = adpcmFrame().also { it[0] = EventUploader.KIND_PREVIEW }
+        assertThat(uploader.sendAudioChunk(preview)).isFalse()
+        assertThat(uploader.sendAudioChunk(ByteArray(4))).isFalse()
+        assertThat(uploader.audioFramesSent.get()).isEqualTo(0L)
+        uploader.stop()
+    }
 }

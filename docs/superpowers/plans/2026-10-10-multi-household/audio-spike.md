@@ -1,5 +1,10 @@
 # Live Audio Architecture Spike Memo (T3.7)
 
+> **Superseded (2026-10-11).** The numbers in this memo are unmeasured estimates. It names Android 14 and
+> battery figures that were not measured; the test phone is a Samsung SM-E075F on Android 16. The
+> implemented design is in `docs/AUDIO_WIRE.md`, and the measured figures are in `docs/AUDIO_MEASUREMENTS.md`.
+> Read those two documents for current facts. This memo is kept for its reasoning and is not updated.
+
 **Document**: `docs/superpowers/plans/2026-10-10-multi-household/audio-spike.md`  
 **Date**: 2026-10-10  
 **Target Hardware**: Samsung Galaxy A07 (SM-E075F, MediaTek Helio G99 / MT6789, Android 14 / API 34)  

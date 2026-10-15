@@ -176,4 +176,38 @@ class TelemetrySamplerTest {
         testScheduler.advanceTimeBy(2000)
         assertThat(sampleCalls.get()).isEqualTo(2)
     }
+
+    @Test
+    fun `telemetry reports audio streaming state and audio counters`() {
+        val uploader = EventUploader(serverUrl = "ws://127.0.0.1:9/ingest-events", deviceName = "t")
+        uploader.audioFramesSent.addAndGet(5L)
+        uploader.audioDroppedBackpressure.addAndGet(2L)
+
+        val sampler = TelemetrySampler(
+            uploader = { uploader },
+            batteryProvider = FakeBatteryProvider(),
+            thermalProvider = FakeThermalProvider(),
+            memoryProvider = FakeMemoryProvider(),
+            metricsTracker = { null },
+            audioStreaming = { true },
+            clock = { 1700000000.0 },
+            scope = TestScope(StandardTestDispatcher()),
+        )
+        val data = Json.parseToJsonElement(sampler.sample()).jsonObject["data"]!!.jsonObject
+        assertThat(data["audio_streaming"]?.jsonPrimitive?.boolean).isTrue()
+        assertThat(data["audio_frames_sent"]?.jsonPrimitive?.int).isEqualTo(5)
+        assertThat(data["audio_dropped_backpressure"]?.jsonPrimitive?.int).isEqualTo(2)
+
+        val idle = TelemetrySampler(
+            uploader = { null },
+            batteryProvider = FakeBatteryProvider(),
+            thermalProvider = FakeThermalProvider(),
+            memoryProvider = FakeMemoryProvider(),
+            metricsTracker = { null },
+            scope = TestScope(StandardTestDispatcher()),
+        )
+        val idleData = Json.parseToJsonElement(idle.sample()).jsonObject["data"]!!.jsonObject
+        assertThat(idleData["audio_streaming"]?.jsonPrimitive?.boolean).isFalse()
+        assertThat(idleData["audio_frames_sent"]?.jsonPrimitive?.int).isEqualTo(0)
+    }
 }

@@ -23,6 +23,8 @@ data class PairedStation(val stationId: String, val householdId: String, val ser
 sealed interface PairResult {
     data class Ok(val pairing: PairedStation) : PairResult
     data object InvalidCode : PairResult
+    /** The server link is one this build may not use (H2); nothing was sent. */
+    data class Refused(val reason: String) : PairResult
     data class Failed(val detail: String) : PairResult
 }
 
@@ -52,7 +54,20 @@ object StationPairing {
         return if (trimmed.endsWith("/pair")) trimmed else "$trimmed/pair"
     }
 
-    suspend fun pair(baseHttpUrl: String, code: String, deviceName: String, signer: Signer): PairResult =
+    suspend fun pair(
+        baseHttpUrl: String,
+        code: String,
+        deviceName: String,
+        signer: Signer,
+        allowCleartext: Boolean,
+    ): PairResult {
+        // Defence in depth: the pair_url is an HTTP call, so the same link rule applies (H2).
+        val check = UrlPolicy.check(baseHttpUrl, allowCleartext)
+        if (check is UrlCheck.Rejected) return PairResult.Refused(check.reason)
+        return pairRequest(baseHttpUrl, code, deviceName, signer)
+    }
+
+    private suspend fun pairRequest(baseHttpUrl: String, code: String, deviceName: String, signer: Signer): PairResult =
         withContext(Dispatchers.IO) {
             val body = buildJsonObject {
                 put("code", code)

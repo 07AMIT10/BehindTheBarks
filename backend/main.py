@@ -11,6 +11,7 @@ import asyncio
 import base64
 import contextlib
 import hashlib
+import json
 import logging
 import secrets
 import time
@@ -36,6 +37,8 @@ from backend.store.models import Viewer as _ViewerRow
 from backend.web.ingest import CLOSE_REVOKED
 from backend.web.auth import Ctx
 from backend.web.limited import limit_jpeg
+from backend.web.limits import RateLimiter
+from backend.web.security import SecurityMiddleware, build_csp, inline_script_hashes
 from backend.web.modes import ModeError, min_mode, mode_rank, parse_mode
 from backend.web.policy import Policy, build_events_only_slate, build_privacy_slate
 from backend.web.registry import LEGACY, HouseholdRegistry
@@ -47,12 +50,12 @@ from backend.web.tuning import DbTuningStore, Tuning, TuningError
 VIEWER_COOKIE = "btb_session"
 STATION_AUTH_PREFIX = b"btb-auth-v1|"  # the signed challenge message: nonce | station_id | device
 SESSION_MAX_AGE_S = 31_536_000  # a year: the recovery key, not a password reset, is the escape hatch
-MAX_LIMITER_KEYS = 4096  # in-memory limiter dicts are pruned past this many keys
 HOUSEHOLD_CREATES_PER_HOUR = 5  # web.auth.household_creates_per_hour overrides it
 from backend.web.debug_metrics import LoopLagMonitor, calculate_drain_pct_per_h, collect_server_metrics
 from backend.web.event_log import EventLog
+from backend.web.audio_hub import CLIENT_GONE, KICKED_AUDIO, AudioHub, _put_drop_oldest
 from backend.web.hub import DISCONNECTED_ALL, KICKED, Hub
-from backend.web.tracker import CLOSE_VIEWERS_KICKED, parse_ua_label
+from backend.web.tracker import CLOSE_VIEWERS_KICKED, ViewersKickedError, parse_ua_label
 from backend.web.ingest import CLOSE_BAD_HELLO, CLOSE_BUSY, CLOSE_REPLACED, HelloError, parse_hello
 from backend.web.ingest_events import (MAX_SKEW_S, PROTO_STATION, RemoteSession, bind_pipeline,
                                        parse_remote_hello)
@@ -185,6 +188,16 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         # credentialed requests cannot use "*": only the listed dev origins (web.cors_origins) get CORS
         app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_credentials=True,
                            allow_methods=["*"], allow_headers=["*"])
+    # H2/H3: security headers, dashboard CSP, households Origin check, TLS-only mode (backend/web/security.py)
+    frontend_out = Path(__file__).resolve().parent.parent / "frontend" / "out"
+    force_https = bool(web.get("force_https", False))
+    csp_cfg = web.get("csp") or {}
+    csp_policy = None
+    if bool(csp_cfg.get("enabled", True)):
+        extra = [str(o).strip().rstrip("/") for o in (csp_cfg.get("extra_connect_src") or []) if str(o).strip()]
+        csp_policy = build_csp(inline_script_hashes(frontend_out), [*cors_origins, *extra])
+    app.add_middleware(SecurityMiddleware, csp=csp_policy, force_https=force_https,
+                       origin_check=households_mode, allowed_origins=cors_origins)
     app.add_middleware(ToggleGzip, tuning=tuning)
     app.state.tuning = tuning
     # Demo MP4s: local files (default) or presigned R2 URLs. Misconfiguration fails at startup, not in the demo.
@@ -246,7 +259,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
 
     def _set_session_cookie(resp, token: str, req: Request) -> None:
         resp.set_cookie(VIEWER_COOKIE, token, httponly=True, samesite="lax", path="/",
-                        max_age=SESSION_MAX_AGE_S, secure=_is_https(req))
+                        max_age=SESSION_MAX_AGE_S, secure=force_https or _is_https(req))
 
     def _clear_session_cookie(resp) -> None:
         resp.delete_cookie(VIEWER_COOKIE, path="/")
@@ -323,20 +336,25 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     def _client_ip(req: Request) -> str:
         return req.client.host if req.client else "unknown"
 
+    # One limiter for every rate limit and lockout in this app (H4, backend/web/limits.py).
+    limiter = RateLimiter(clock=rt_clock)
+    LOCKOUT_DETAIL = "too many failed attempts; try again later"  # generic: no oracle on the code
+
+    def _lockout_key(name: str, req: Request) -> str:
+        """Refuse with 429 + Retry-After while this client IP is locked out for `name` (the failed
+        attempts of /pair, /auth/recover and /join each have their own per-IP counter)."""
+        key = f"{name}:{_client_ip(req)}"
+        wait = limiter.locked_for(key)
+        if wait > 0:
+            raise HTTPException(status_code=429, detail=LOCKOUT_DETAIL,
+                                headers={"Retry-After": RateLimiter.retry_after(wait)})
+        return key
+
     def _pair_attempt(req: Request) -> None:
         """10/min per IP and 100/hour globally: every /pair attempt counts, valid or not."""
-        now = time.time()
-        ip = req.client.host if req.client else "unknown"
-        recent = [t for t in pair_failures.get(ip, []) if now - t < 60]
-        recent.append(now)
-        pair_failures[ip] = recent
-        if len(pair_failures) > MAX_LIMITER_KEYS:
-            for k in [k for k, v in pair_failures.items() if not v or now - v[-1] >= 60]:
-                del pair_failures[k]
-        hourly = [t for t in pair_failures_global if now - t < 3600]
-        hourly.append(now)
-        pair_failures_global[:] = hourly
-        if len(recent) > 10 or len(hourly) > 100:
+        ok_ip = limiter.hit(f"pair:ip:{_client_ip(req)}", 10, 60)
+        ok_all = limiter.hit("pair:global", 100, 3600)
+        if not (ok_ip and ok_all):
             raise HTTPException(status_code=429, detail="too many pairing attempts; try again later")
 
     @app.post("/households/me/pairing")
@@ -406,6 +424,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         failure, so a caller cannot tell a used code from a wrong one."""
         if not households_mode:
             _pin_only_404()
+        lock_key = _lockout_key("pair", req)
         _pair_attempt(req)
         payload = body or {}
         code = str(payload.get("code") or "").strip()
@@ -434,9 +453,11 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                         "stations": st_list,
                         "paired_station": {"id": station.id, "name": station.name},
                     })
+                limiter.record_success(lock_key)
                 return {"station_id": station.id, "household_id": station.household_id,
                         "server_time": rt_clock()}
         except _BadPair:
+            limiter.record_failure(lock_key)
             return _bad_code()
 
     @app.delete("/stations/{station_id}")
@@ -468,6 +489,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             if ch is not None:
                 await ch.runtime.stop()
                 ch.hub.close()
+                ch.audio.kick_all(include_owners=True)  # the station is gone: its audio listeners leave too
                 del lr.channels[station_id]
                 if lr.default_channel_id == station_id:
                     lr.default_channel_id = next(iter(lr.channels.keys())) if lr.channels else None
@@ -485,17 +507,20 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         endpoints, but it may watch within its household."""
         if not households_mode:
             _pin_only_404()
+        lock_key = _lockout_key("join", req)
         check_rate_limit("join", 2.0, f"ip:{_client_ip(req)}")
         code = str((body or {}).get("code") or "").strip()
         label = str((body or {}).get("label") or "viewer")[:64].strip()
         with app.state.db_session() as s:
             consumed = store_repo.consume_pairing_code(s, code, kind=KIND_VIEWER)
             if consumed is None:
+                limiter.record_failure(lock_key)
                 raise HTTPException(status_code=400, detail="invalid_or_expired_code")
             household_id, ceiling = consumed.household_id, (consumed.mode_ceiling or "full")
             viewer, token = store_repo.create_viewer(
                 s, household_id=household_id, role=ROLE_VIEWER, label=label, mode_ceiling=ceiling)
             s.commit()
+        limiter.record_success(lock_key)
         resp = JSONResponse({"ok": True, "household_id": household_id})
         _set_session_cookie(resp, token, req)
         return resp
@@ -638,16 +663,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     create_limit = int((web.get("auth") or {}).get("household_creates_per_hour", HOUSEHOLD_CREATES_PER_HOUR))
 
     def _rate_limit_household_creates(req: Request) -> None:
-        now = time.time()
-        ip = req.client.host if req.client else "unknown"
-        recent = [t for t in household_creates.get(ip, []) if now - t < 3600]
-        if len(recent) >= create_limit:
+        if not limiter.hit(f"create:{_client_ip(req)}", create_limit, 3600.0, count_denied=False):
             raise HTTPException(status_code=429, detail="too many households from this address; try again later")
-        recent.append(now)
-        household_creates[ip] = recent
-        if len(household_creates) > MAX_LIMITER_KEYS:
-            for k in [k for k, v in household_creates.items() if not v or now - v[-1] >= 3600]:
-                del household_creates[k]
 
     @app.post("/households")
     async def create_household(req: Request, body: dict | None = None) -> dict:
@@ -675,14 +692,17 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     async def recover(req: Request, body: dict | None = None) -> dict:
         if not households_mode:
             _pin_only_404()
+        lock_key = _lockout_key("recover", req)
         check_rate_limit("recover", 5.0, f"ip:{_client_ip(req)}")
         key = str((body or {}).get("recovery_key") or "").strip()
         with app.state.db_session() as s:
             found = store_repo.recover_household(s, key)
             if found is None:
+                limiter.record_failure(lock_key)
                 raise HTTPException(status_code=401, detail="unknown recovery key")
             viewer, token = found
             s.commit()
+        limiter.record_success(lock_key)
         resp = JSONResponse({"ok": True})
         _set_session_cookie(resp, token, req)
         return resp
@@ -848,29 +868,16 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     rate_limit_cfg = web.get("rate_limits") or {}
     rate_limits_enabled = bool(rate_limit_cfg.get("enabled", auth_enabled))
 
-    rate_limits: dict[str, float] = {}
-    household_creates: dict[str, list[float]] = {}  # per-IP hourly buckets (households mode)
-    pair_failures: dict[str, list[float]] = {}  # per-minute /pair attempts
-    pair_failures_global: list[float] = []  # per-hour /pair attempts
-
     def check_rate_limit(action: str, min_interval_s: float, hid: str = LEGACY) -> None:
         if not rate_limits_enabled:
             return
         key = f"{hid}:{action}"  # one household's burst never limits another's
-        clock_fn = getattr(getattr(app.state, "rt", None), "clock", time.time)
-        now = clock_fn()
-        if len(rate_limits) > MAX_LIMITER_KEYS:  # keys are per household/IP and action: never let them pile up
-            for k in [k for k, t in rate_limits.items() if now - t > 3600]:
-                del rate_limits[k]
-        last = rate_limits.get(key, 0.0)
-        elapsed = now - last
-        if elapsed < min_interval_s:
-            wait_s = round(min_interval_s - elapsed, 2)
+        wait_s = limiter.check_interval(key, min_interval_s)
+        if wait_s > 0:
             raise HTTPException(
                 status_code=429,
                 detail=f"Rate limit exceeded for {action}. Please wait {wait_s}s before retrying."
             )
-        rate_limits[key] = now
 
     @app.get("/auth/status")
     async def auth_status() -> dict:
@@ -913,12 +920,6 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         clients = hub.client_count
         queue_depths = [q.qsize() for q in getattr(hub, "_clients", set())]
 
-        if households_mode:
-            entries = getattr(app.state.registry, "_households", {})
-            households_count = len(entries)
-        else:
-            households_count = 1
-
         pipeline = ctx.pipeline
         lr = app.state.registry.peek(ctx.household_id) if hasattr(app.state, "registry") else None
         if station:
@@ -950,7 +951,6 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 "clients": clients,
                 "queue_depths": queue_depths,
             },
-            "households": households_count,
             "station": {
                 "latest_telemetry": latest_telemetry,
                 "series": series,
@@ -1608,6 +1608,161 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 lr.tracker.leave_ws(q)
             lr.hub.unsubscribe(q)
 
+    # -- live audio (T3.9, A3.4): GET /audio, Full mode only --------------------------------------
+    AUDIO_CLOSE_NOT_FOUND = 4404  # the WebSocket has no HTTP status once the handshake is done
+    AUDIO_CLOSE_FORBIDDEN = 4403
+    AUDIO_CLOSE_MODE = 4412
+
+    async def _close_quietly(sock: WebSocket, code: int, reason: str) -> None:
+        try:
+            await sock.close(code=code, reason=reason)
+        except (RuntimeError, WebSocketDisconnect):
+            pass  # the client already went away
+
+    def _audio_hello(codec: int, station_id: str) -> str:
+        return json.dumps({"type": "audio_hello", "codec": codec, "rate": 16000, "chunk_ms": 100,
+                           "station": station_id})
+
+    async def _admit_audio(sock: WebSocket, ch, *, ceiling: str, viewer_id: str | None, label: str,
+                           owner: bool) -> None:
+        """Checks that need the station and the viewer, then the relay. The socket is already accepted,
+        so every refusal is a close with a code the dashboard can act on."""
+        if mode_rank(ceiling) < mode_rank("full"):
+            await _close_quietly(sock, AUDIO_CLOSE_FORBIDDEN, "audio needs full mode for this viewer")
+            return
+        if ch.tracker is not None and ch.tracker.is_kicked():
+            await _close_quietly(sock, CLOSE_VIEWERS_KICKED, "viewers disconnected by station")
+            return
+        if not _audio_allowed(ch, ceiling):
+            await _close_quietly(sock, AUDIO_CLOSE_FORBIDDEN, "audio is not permitted in the current mode")
+            return
+        await _relay_audio(sock, ch, ceiling=ceiling, viewer_id=viewer_id, label=label, owner=owner)
+
+    def _audio_allowed(ch, ceiling: str) -> bool:
+        """min(station cap, household mode, viewer ceiling) is full: the only state that carries audio."""
+        cap = getattr(ch.pipeline, "station_cap", "full")
+        return ch.policy.compute_effective(cap, ceiling) == "full"
+
+    async def _relay_audio(sock: WebSocket, ch, *, ceiling: str, viewer_id: str | None, label: str,
+                           owner: bool) -> None:
+        """One listener on one station. Registration is inside this coroutine and `finally` releases it, so
+        a client that drops before anything is sent never leaves a ghost listener (the /video lesson).
+        A watcher task reads the socket so an abrupt client drop is seen even when no frame is flowing."""
+        hub: AudioHub = ch.audio
+        tracker = ch.tracker
+        stream_id = str(uuid.uuid4())
+        q = hub.subscribe(owner=owner)
+
+        async def watch_client() -> None:
+            try:
+                while True:
+                    msg = await sock.receive()
+                    if msg["type"] == "websocket.disconnect":
+                        break
+            except (RuntimeError, WebSocketDisconnect):
+                pass
+            finally:
+                _put_drop_oldest(q, CLIENT_GONE)
+
+        watcher = asyncio.create_task(watch_client())
+        try:
+            try:
+                if tracker is not None:
+                    tracker.enter_audio(stream_id, viewer_id=viewer_id, label=label)
+            except ViewersKickedError:
+                await _close_quietly(sock, CLOSE_VIEWERS_KICKED, "viewers disconnected by station")
+                return
+            sent_codec = hub.last_codec if hub.last_codec in (0, 1) else 1
+            await sock.send_text(_audio_hello(sent_codec, ch.station_id))
+            while True:
+                try:
+                    item = await asyncio.wait_for(q.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    item = None
+                if item is CLIENT_GONE:
+                    return
+                if item is KICKED_AUDIO:
+                    await _close_quietly(sock, CLOSE_VIEWERS_KICKED, "viewers disconnected by station")
+                    return
+                if not _audio_allowed(ch, ceiling):  # re-checked on every frame and at least once a second
+                    await _close_quietly(sock, AUDIO_CLOSE_MODE, "audio not permitted in the current mode")
+                    return
+                if item is None:
+                    continue
+                if item[0] != sent_codec:  # the phone changed codec mid-stream: say so before the frames
+                    sent_codec = item[0]
+                    await sock.send_text(_audio_hello(sent_codec, ch.station_id))
+                await sock.send_bytes(item)
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            watcher.cancel()
+            hub.unsubscribe(q)
+            if tracker is not None:
+                tracker.leave_audio(stream_id)
+
+    async def _audio_households(sock: WebSocket) -> None:
+        """Households mode: the same credential and Origin guard as /ws. There is no household parameter:
+        the viewer's own household decides which stations exist for it."""
+        token = (sock.cookies.get(VIEWER_COOKIE) or "").strip()
+        if not token:
+            hdr = sock.headers.get("Authorization", "")
+            token = hdr[len("Bearer "):].strip() if hdr.startswith("Bearer ") else ""
+        await sock.accept()
+        origin = (sock.headers.get("origin") or "").strip().rstrip("/")
+        if origin and urlparse(origin).netloc not in {sock.headers.get("host", ""),
+                                                      sock.headers.get("x-forwarded-host", "")} \
+                and origin not in cors_origins:
+            await _close_quietly(sock, AUDIO_CLOSE_FORBIDDEN, "Forbidden origin")
+            return
+        if not token:
+            await _close_quietly(sock, 4401, "Unauthorized: no session")
+            return
+        with app.state.db_session() as s:
+            viewer = store_repo.viewer_by_token(s, token)
+            if viewer is None:
+                viewer_info = None
+            else:
+                viewer_info = (viewer.household_id, viewer.id, viewer.role, viewer.mode_ceiling or "full")
+        if viewer_info is None:
+            await _close_quietly(sock, 4401, "Unauthorized: session revoked or expired")
+            return
+        hid, vid, role, ceiling = viewer_info
+        lr = await app.state.registry.get(hid)
+        try:
+            ch = _resolve_channel(lr, sock.query_params.get("station") or None, hid)
+        except HTTPException:
+            ch = None
+        if ch is None:
+            await _close_quietly(sock, AUDIO_CLOSE_NOT_FOUND, "station not found in this household")
+            return
+        label = role if role == ROLE_OWNER else parse_ua_label(sock.headers.get("user-agent", ""))
+        await _admit_audio(sock, ch, ceiling=ceiling, viewer_id=vid, label=label,
+                           owner=(role == ROLE_OWNER))
+
+    @app.websocket("/audio")
+    async def audio(sock: WebSocket) -> None:
+        """Phone audio to a viewer (docs/AUDIO_WIRE.md): `audio_hello` text, then binary phone frames
+        without the 0x02 byte. Full mode only. Close codes: 4401 unauthorized, 4403 forbidden (ceiling below
+        full, or not full at connect), 4404 unknown station, 4411 kicked, 4412 mode dropped below full."""
+        if households_mode:
+            await _audio_households(sock)
+            return
+        if not verify_ws_auth(sock):
+            await sock.close(code=4401, reason="Unauthorized")
+            return
+        await sock.accept()
+        lr = app.state.registry.peek(LEGACY) or await app.state.registry.get(LEGACY)
+        try:
+            ch = _resolve_channel(lr, sock.query_params.get("station") or None, LEGACY)
+        except HTTPException:
+            ch = None
+        if ch is None:
+            await _close_quietly(sock, AUDIO_CLOSE_NOT_FOUND, "station not found")
+            return
+        label = parse_ua_label(sock.headers.get("user-agent", ""))
+        await _admit_audio(sock, ch, ceiling="full", viewer_id=None, label=label, owner=False)
+
     @app.websocket("/ingest")
     async def ingest(sock: WebSocket) -> None:
         """Phone camera: JSON hello, then binary 0x01+JPEG / 0x02+PCM16 (backend/web/ingest.py)."""
@@ -1762,7 +1917,6 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     @app.get("/app-debug.apk")
     async def get_app_debug_apk() -> FileResponse:
         return _serve_apk()
-
     if frontend_out.is_dir():
         from fastapi.staticfiles import StaticFiles
         from starlette.types import Scope

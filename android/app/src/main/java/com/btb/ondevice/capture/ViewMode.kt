@@ -1,5 +1,7 @@
 package com.btb.ondevice.capture
 
+import com.btb.ondevice.audio.AudioStreamGate
+
 /**
  * T3.1/T3.2 viewing modes, ordered by how much may leave the phone.
  *
@@ -298,10 +300,10 @@ class ModeController(
         return true
     }
 
-    /** Whether raw audio may be streamed (T3.9). */
+    /** Whether raw audio may be streamed right now (T3.9). The rule itself lives in [AudioStreamGate]. */
     @Synchronized
     fun shouldStreamAudio(): Boolean =
-        effectiveMode() == ViewMode.FULL && policy.audio && policy.audioViewers > 0
+        AudioStreamGate.shouldStream(effectiveMode(), policy.audio, policy.audioViewers)
 
     sealed class RequestOutcome {
         /** Applied immediately: it lowered exposure, or a raise was already approved. */

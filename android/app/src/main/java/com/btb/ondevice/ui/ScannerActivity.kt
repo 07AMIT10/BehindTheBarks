@@ -1,7 +1,9 @@
 package com.btb.ondevice.ui
 
-import android.Manifest
 import android.app.Activity
+import android.Manifest
+import android.widget.Toast
+import com.btb.ondevice.BuildConfig
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
@@ -121,10 +123,17 @@ class ScannerActivity : Activity(), LifecycleOwner {
             if (!armed) return
             val rgba = rgbaFrom(proxy)
             val text = rgba?.let { QrDecoder.decodeRgba(it, proxy.width, proxy.height) }
-            val target = text?.let { QrDecoder.parsePairingText(it) }
+            val target = text?.let { QrDecoder.parsePairingText(it, BuildConfig.DEBUG) }
             if (target is PairingTarget.Code && armed) {
                 armed = false
                 runOnUiThread { pair(target) }
+            } else if (target is PairingTarget.Rejected && armed) {
+                // H2: a link this build may not use. Say why and close, so a rescan starts clean.
+                armed = false
+                runOnUiThread {
+                    Toast.makeText(this, target.reason, Toast.LENGTH_LONG).show()
+                    finish()
+                }
             }
         } catch (t: Throwable) {
             Log.w("Scanner", "frame failed", t)
@@ -168,7 +177,7 @@ class ScannerActivity : Activity(), LifecycleOwner {
         val deviceName = prefs.getString(StationPrefs.DEVICE, android.os.Build.MODEL) ?: android.os.Build.MODEL
         showResult("Pairing this phone…", error = false, retry = false)
         scope.launch {
-            when (val result = PairingFlow.pairAndSave(prefs, target, deviceName, StationKey.getOrCreate())) {
+            when (val result = PairingFlow.pairAndSave(prefs, target, deviceName, StationKey.getOrCreate(), BuildConfig.DEBUG)) {
                 is PairResult.Ok -> {
                     showResult("✓ Paired. Close this screen, then tap Start Monitoring.", error = false, retry = false)
                     previewView.postDelayed({ finish() }, 2000)
@@ -182,6 +191,9 @@ class ScannerActivity : Activity(), LifecycleOwner {
                         "Pairing failed (${result.detail}). Check the dashboard is open on this computer, then tap Scan again."
                     }
                     showResult(message, error = true)
+                }
+                is PairResult.Refused -> {
+                    showResult(result.reason, error = true)
                 }
             }
         }

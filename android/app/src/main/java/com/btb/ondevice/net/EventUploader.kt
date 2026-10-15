@@ -88,8 +88,16 @@ class EventUploader(
     val listener: EventUploaderListener? = null,
     val clock: () -> Double = { System.currentTimeMillis() / 1000.0 },
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO),
+    /** Audio chunks are dropped above this queue depth (T3.9). Injectable so the drop can be tested. */
+    val audioMaxQueueBytes: Long = AUDIO_MAX_QUEUE_BYTES,
 ) {
     val previewDroppedBackpressure = java.util.concurrent.atomic.AtomicLong(0L)
+    /** Live audio frames handed to the socket (monotonic, T3.9). */
+    val audioFramesSent = java.util.concurrent.atomic.AtomicLong(0L)
+    /** Bytes of those frames, header included (monotonic). */
+    val audioBytesSent = java.util.concurrent.atomic.AtomicLong(0L)
+    /** Audio chunks dropped because the socket queue was above [audioMaxQueueBytes] (monotonic). */
+    val audioDroppedBackpressure = java.util.concurrent.atomic.AtomicLong(0L)
     /** Previews that reached the backpressure gate (monotonic). The ladder's drop ratio divides by this. */
     val previewsOffered = java.util.concurrent.atomic.AtomicLong(0L)
     @Volatile
@@ -105,6 +113,11 @@ class EventUploader(
 
     companion object {
         const val KIND_PREVIEW: Byte = 0x01
+        /** T3.9: live audio frame, `0x02 | codec | seq u32 LE | t_ms u32 LE | payload` (docs/AUDIO_WIRE.md). */
+        const val KIND_AUDIO: Byte = 0x02
+        const val AUDIO_HEADER_BYTES = 10
+        /** Audio is dropped, not queued, when more than this many bytes are waiting to go out. */
+        const val AUDIO_MAX_QUEUE_BYTES = 64 * 1024L
         const val CLOSE_BAD_HELLO = 4400
         const val CLOSE_UNAUTHORIZED = 4401
         const val CLOSE_REPLACED = 4408
@@ -568,6 +581,27 @@ class EventUploader(
         val sent = ws.send(msg.toByteString())
         if (!sent) {
             android.util.Log.w("EventUploader", "ws.send preview failed, queue=${ws.queueSize()}")
+        }
+        return sent
+    }
+
+    /**
+     * T3.9: send one complete audio frame (built by `AdpcmCodec.packFrame`, kind byte included) as a
+     * binary message. Refused when not connected; dropped and counted when the socket queue is backed up,
+     * because a late audio chunk is worse than a missing one. Never spooled.
+     */
+    fun sendAudioChunk(frame: ByteArray): Boolean {
+        if (connectionState != ConnectionState.CONNECTED) return false
+        val ws = webSocket ?: return false
+        if (frame.size < AUDIO_HEADER_BYTES || frame[0] != KIND_AUDIO) return false
+        if (ws.queueSize() > audioMaxQueueBytes) {
+            audioDroppedBackpressure.incrementAndGet()
+            return false
+        }
+        val sent = ws.send(frame.toByteString())
+        if (sent) {
+            audioFramesSent.incrementAndGet()
+            audioBytesSent.addAndGet(frame.size.toLong())
         }
         return sent
     }

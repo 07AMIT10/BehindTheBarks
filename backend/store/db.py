@@ -60,14 +60,25 @@ def normalize_db_url(url: str) -> str:
     return url
 
 
+def _ensure_sqlite_parent_dir(url: str) -> None:
+    """Create the directory holding a file-backed SQLite database (fresh clones and CI have no out/).
+
+    Handles `sqlite:///relative/x.db`, `sqlite:////abs/x.db` and `sqlite://` / `:memory:` (no file).
+    """
+    from sqlalchemy.engine import make_url
+
+    database = make_url(url).database
+    if not database or database == ":memory:" or database.startswith("file:"):
+        return
+    parent = os.path.dirname(os.path.abspath(database))
+    os.makedirs(parent, exist_ok=True)
+
+
 def make_engine(url: str, **kwargs: Any) -> Engine:
     """An engine configured per dialect: SQLite needs foreign keys and WAL, Postgres has pooling."""
     url = normalize_db_url(url)
     if url.startswith("sqlite"):
-        # A fresh checkout or container has no out/ yet; SQLite cannot create its own parent directory.
-        db_file = url.split("///", 1)[1] if "///" in url else ""
-        if db_file and db_file != ":memory:" and not db_file.startswith("file:"):
-            os.makedirs(os.path.dirname(os.path.abspath(db_file)), exist_ok=True)
+        _ensure_sqlite_parent_dir(url)
         kwargs.setdefault("connect_args", {})
         kwargs["connect_args"].setdefault("check_same_thread", False)
         engine = create_engine(url, **kwargs)

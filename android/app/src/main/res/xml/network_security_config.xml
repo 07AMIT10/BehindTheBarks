@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Release (and every non-debug) build: no cleartext traffic to any host. The app only speaks wss:// and
+     https:// here; ws:// and http:// are refused at the source by net/UrlPolicy.kt as well. The debug source
+     set overrides this file (src/debug/res/xml) to allow cleartext for the adb-reverse and LAN dev loop. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

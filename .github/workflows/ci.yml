@@ -88,26 +88,25 @@ jobs:
       - name: Run Android Unit Tests
         run: ./gradlew testDebugUnitTest
 
-      # The release keystore is a secret, never committed. Without BTB_KEYSTORE_B64 the release steps
-      # are skipped (visibly) rather than signed with the debug key; the app's Gradle file refuses that.
-      - name: Decode release keystore (only when the secret is set)
+      # The release variant needs a keystore (T2.8) and a wss:// default server URL (H2). CI has no
+      # production key, so it signs with a throwaway one if secret is not set.
+      - name: Setup release keystore
         env:
           BTB_KEYSTORE_B64: ${{ secrets.BTB_KEYSTORE_B64 }}
         run: |
           if [ -n "$BTB_KEYSTORE_B64" ]; then
-            echo "$BTB_KEYSTORE_B64" | base64 --decode > android/release.jks
-            echo "release keystore decoded"
+            echo "$BTB_KEYSTORE_B64" | base64 --decode > release.jks
+            echo "release keystore decoded from secret"
           else
-            echo "::notice::BTB_KEYSTORE_B64 is not set: release APK/AAB steps are skipped"
+            ../scripts/generate_release_keystore.sh release.jks
           fi
 
       - name: Build Production APK & App Bundle (AAB)
-        if: hashFiles('android/release.jks') != ''
         env:
           BTB_KEYSTORE_PASSWORD: ${{ secrets.BTB_KEYSTORE_PASSWORD }}
           BTB_KEY_ALIAS: ${{ secrets.BTB_KEY_ALIAS }}
           BTB_KEY_PASSWORD: ${{ secrets.BTB_KEY_PASSWORD }}
-        run: ./gradlew assembleRelease bundleRelease
+        run: ./gradlew assembleRelease bundleRelease -PbtbDefaultIngestUrl=wss://example.invalid/ingest-events
 
       - name: Verify 16KB Page Alignment on Release APK
         if: hashFiles('android/release.jks') != ''

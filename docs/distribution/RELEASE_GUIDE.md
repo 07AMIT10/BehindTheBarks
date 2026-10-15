@@ -25,11 +25,25 @@ export BTB_KEYSTORE_PATH="release.jks"
 export BTB_KEYSTORE_PASSWORD="behindthebarks"
 export BTB_KEY_ALIAS="btb_release"
 export BTB_KEY_PASSWORD="behindthebarks"
+export BTB_DEFAULT_INGEST_URL="wss://<your-host>/ingest-events"   # or -PbtbDefaultIngestUrl on the command line
 ```
+
+The release keystore check runs when a release task is requested, not when Gradle configures the project:
+debug builds, unit tests and `make android-build` need no keystore.
+
+CI (`.github/workflows/ci.yml`) creates a throwaway keystore for its release step and builds with a
+placeholder `wss://` URL. Its artifacts verify the build; they are not distributable, because an update
+signed with a different key will not install over a real release.
 
 ---
 
 ## 2. Building Release Packages
+
+**Every release build needs a `wss://` default server URL.** Release builds are TLS-only: the network
+security config, the in-app link check and the build itself all refuse `ws://` and `http://` (details and
+the one unsafe override in [`docs/ANDROID_TLS_POLICY.md`](../ANDROID_TLS_POLICY.md)). Without a `wss://` URL,
+`assembleRelease` and `bundleRelease` stop before compiling anything, with a message that names the fix.
+Pass `-PbtbDefaultIngestUrl=wss://<host>/ingest-events` (or set `BTB_DEFAULT_INGEST_URL`) to every command below.
 
 ### A0. Tester APK with the dashboard address baked in (multi-household)
 
@@ -57,7 +71,11 @@ sha256sum app/build/outputs/apk/release/app-release.apk
 
 Record the SHA-256 and size in your release notes so a tester can confirm they have the exact build.
 
-### A. Android App Bundle (`.aab`) for Google Play Store
+Optional check that the release APK is TLS-only (the manifest must reference the config, and the config must
+say `cleartextTrafficPermitted="false"`; the policy document shows the `aapt2` commands):
+```bash
+$ANDROID_HOME/build-tools/35.0.0/aapt2 dump xmltree --file AndroidManifest.xml app/build/outputs/apk/release/app-release.apk | grep networkSecurityConfig
+```
 
 ### A. Android App Bundle (`.aab`) for Google Play Store
 Google Play requires `.aab` format for all new app submissions:
@@ -66,7 +84,7 @@ export JAVA_HOME=$HOME/jdk17/jdk-17.0.20.1+1
 export PATH="$JAVA_HOME/bin:$PATH"
 export ANDROID_HOME=$HOME/Android/Sdk
 
-cd android && ./gradlew bundleRelease
+cd android && ./gradlew bundleRelease -PbtbDefaultIngestUrl=wss://<your-host>/ingest-events
 ```
 Output:
 `android/app/build/outputs/bundle/release/app-release.aab` (~52 MB)
@@ -78,7 +96,7 @@ jarsigner -verify -verbose -certs android/app/build/outputs/bundle/release/app-r
 
 ### B. Production APK (`.apk`) for F-Droid & Direct GitHub Releases
 ```bash
-cd android && ./gradlew assembleRelease
+cd android && ./gradlew assembleRelease -PbtbDefaultIngestUrl=wss://<your-host>/ingest-events
 ```
 Output:
 `android/app/build/outputs/apk/release/app-release.apk` (~64 MB)

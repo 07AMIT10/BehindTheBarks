@@ -153,3 +153,39 @@ def test_recovery_key_roundtrip(session):
     assert viewer.household_id == h.id and viewer.role == "owner"
     assert repo.viewer_by_token(session, token).id == viewer.id
     assert repo.recover_household(session, "wrong") is None
+
+
+def test_make_engine_creates_missing_sqlite_parent_dir(tmp_path):
+    """`sqlite:///out/btb.db` must work on a fresh clone where out/ does not exist yet (relative and absolute)."""
+    import os
+
+    cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        rel = db.make_engine("sqlite:///nested/rel/btb.db")
+        db.init_db(rel)
+        assert (tmp_path / "nested" / "rel" / "btb.db").is_file()
+        rel.dispose()
+    finally:
+        os.chdir(cwd)
+
+    absolute_dir = tmp_path / "abs" / "deeper"
+    abs_engine = db.make_engine(f"sqlite:///{absolute_dir}/btb.db")
+    db.init_db(abs_engine)
+    assert (absolute_dir / "btb.db").is_file()
+    abs_engine.dispose()
+
+
+def test_make_engine_memory_urls_touch_no_directory(tmp_path):
+    import os
+
+    cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        for url in ("sqlite://", "sqlite:///:memory:"):
+            engine = db.make_engine(url)
+            db.init_db(engine)
+            engine.dispose()
+        assert sorted(os.listdir(tmp_path)) == []
+    finally:
+        os.chdir(cwd)

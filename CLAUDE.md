@@ -222,6 +222,19 @@ are untouched; only the producer of the envelopes moves. (Plan:
      applies. The phone's `PreviewLadder` only lowers these under thermal pressure or upload backpressure
      (5 fps/640 px/q75 at the top rung down to 1 fps/320 px/q60), never raises them. Stamped at server receipt
      like `/ingest`; it feeds `pipeline.latest_frame_jpeg()`, not the rules.
+- **Live audio (T3.9, Full mode only).** Phone to server: binary `0x02` frame
+  `codec u8 | seq u32 LE | t_ms u32 LE | payload` (codec 0 PCM16 or 1 IMA-ADPCM; wire format and vectors in
+  `docs/AUDIO_WIRE.md`). The server validates it and never decodes it; a malformed frame is counted in
+  `dropped` and `audio_dropped_invalid`, and a valid one is relayed only when the station is in `full` and a
+  listener is connected (otherwise `audio_dropped_policy`). `GET /audio` (pin or households, optional
+  `?station=`, default station otherwise) sends one text `audio_hello`, `{"type":"audio_hello","codec":1,
+  "rate":16000,"chunk_ms":100,"station":"<id>"}` (again when the codec changes), then the phone frames as
+  binary without the `0x02` byte. Close codes: `4401` unauthorized, `4403` viewer ceiling below full or the
+  effective mode not full at connect (also a foreign Origin in households), `4404` unknown station (no HTTP
+  status exists after the handshake), `4411` kicked, `4412` effective mode fell below full while listening.
+  The policy `audio` flag is true exactly while the station is `full` with a listener; `viewers.audio`
+  counts listeners. `pipeline_status` and `status.phone` carry `audio_frames`, `audio_bytes`,
+  `audio_dropped_policy`, `audio_dropped_invalid` and `audio_clients`.
 - **Clocks:** `data.ts` is the phone's clock and every other timer (`no_dog_unknown_s`, `llm_stale_s`,
   cooldowns) compares against the server's. The server rebases `ts` by
   `server_time_at_hello − phone_time`, refreshed by each ping as the **median of the last

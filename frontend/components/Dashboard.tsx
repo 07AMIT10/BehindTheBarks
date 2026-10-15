@@ -456,6 +456,8 @@ export default function Dashboard() {
                 stationCap={backend.stationCap}
                 householdMode={backend.householdMode}
                 modeCeiling={backend.me?.mode_ceiling}
+                stationState={st}
+                signedIn={backend.authenticated}
                 isOwner={!backend.me || backend.me.role === "owner"}
                 onSetMode={backend.setViewMode}
                 onPeek={backend.peek}

@@ -54,6 +54,9 @@ PY = str(REPO / ".venv" / "bin" / "python")
 DEFAULT_REPORT = REPO / "docs" / "ACCEPTANCE_2026-10-10.md"
 MODE_SEQUENCE = ["privacy", "limited", "blackout", "full"]
 
+sys.path.insert(0, str(REPO))
+from backend.web import audio_codec as ac  # noqa: E402  (reference ADPCM codec, docs/AUDIO_WIRE.md)
+
 
 # ----------------------------------------------------------------------------- adb / phone helpers
 
@@ -1121,6 +1124,7 @@ def c15_station_revoke(ctx: Ctx) -> tuple[str, str]:
     if owner is None or not station:
         return FAIL, "check 13 did not pair a station; nothing to revoke"
     log_before_revoke = len(ctx.backend.log())
+    front = bring_app_front()   # the removed message is only read from the app's own window
     code, body = owner.call("DELETE", f"/stations/{station['id']}")
     t0 = time.monotonic()
     shown, took_msg, _ = poll(lambda: (any(REMOVED_TEXT in t for t in ui_texts(ui_xml())), None), 20.0, 1.0)
@@ -1134,7 +1138,7 @@ def c15_station_revoke(ctx: Ctx) -> tuple[str, str]:
     time.sleep(10.0)
     retries = ctx.backend.log()[len(log_mid):].count("phone connected")
     ok = (code == 200 and shown and gone and start_visible and retries == 0)
-    ev = (f"DELETE /stations/{station['id'][:8]}… -> {code}; app shows {removed_text!r} after {took_msg:.1f} s; "
+    ev = (f"{front}; DELETE /stations/{station['id'][:8]}… -> {code}; app shows {removed_text!r} after {took_msg:.1f} s; "
           f"Start Monitoring visible={start_visible}; /status phone null={gone} after {took_gone:.1f} s "
           f"(pipeline {pipe!r}); reconnect attempts in the 10 s after the close={retries}")
     return (PASS if ok else FAIL), ev
@@ -1197,6 +1201,202 @@ def c16_notification_approval(ctx: Ctx) -> tuple[str, str]:
     return (FAIL if FAIL in verdicts or not verdicts else PASS), "; ".join(parts)
 
 
+# ----------------------------------------------------------------------------- /audio (checks 17, 18)
+
+class AudioListener(threading.Thread):
+    """Keeps GET /audio open as a listener (the dashboard player's socket): records the audio_hello text,
+    every forwarded binary frame with its arrival time, and the close code when the server closes it."""
+
+    def __init__(self, path: str = "/audio", cookie: str | None = None) -> None:
+        super().__init__(daemon=True)
+        self.url = f"ws://127.0.0.1:{PORT}{path}"
+        self.cookie = cookie
+        self.hello: dict | None = None
+        self.frames: list[tuple[float, bytes]] = []
+        self.opened_at = 0.0
+        self.close_code: int | None = None
+        self.close_reason = ""
+        self.error: str | None = None
+        self.connected = threading.Event()
+        self._stop_req = threading.Event()
+
+    def run(self) -> None:
+        from websockets.exceptions import ConnectionClosed
+        from websockets.sync.client import connect
+        headers = {"Cookie": self.cookie} if self.cookie else None
+        try:
+            with connect(self.url, additional_headers=headers, open_timeout=5, max_size=None) as ws:
+                self.opened_at = time.monotonic()
+                self.connected.set()
+                while not self._stop_req.is_set():
+                    try:
+                        raw = ws.recv(timeout=0.5)
+                    except TimeoutError:
+                        continue
+                    if isinstance(raw, str):
+                        if self.hello is None:
+                            self.hello = json.loads(raw)
+                    else:
+                        self.frames.append((time.monotonic(), raw))
+        except ConnectionClosed as exc:  # the server closed after the handshake (4403, 4404, 4412, ...)
+            if exc.rcvd is not None:
+                self.close_code, self.close_reason = exc.rcvd.code, exc.rcvd.reason
+        except Exception as exc:  # the handshake itself was refused
+            self.error = f"{type(exc).__name__}: {exc}"
+        finally:
+            self.connected.set()
+
+    def stop(self) -> None:
+        self._stop_req.set()
+        self.join(5)
+
+
+def decode_audio_frames(frames: list[tuple[float, bytes]]) -> dict:
+    """Each forwarded frame has no 0x02 byte on the wire, so it is put back and parsed with the reference
+    codec (backend/web/audio_codec.py). Reports seq gaps, rejected frames and the RMS / peak of the decoded
+    samples (int16 units)."""
+    import struct
+    seqs: list[int] = []
+    errors = 0
+    chunks: list[np.ndarray] = []
+    for _, raw in frames:
+        try:
+            frame = ac.parse_frame(b"\x02" + raw)
+            if frame.codec == ac.CODEC_IMA_ADPCM:
+                samples = ac.decode_block(frame.payload)
+            else:
+                samples = list(struct.unpack("<%dh" % (len(frame.payload) // 2), frame.payload))
+            chunks.append(np.asarray(samples, dtype=np.float64))
+            seqs.append(frame.seq)
+        except ValueError:
+            errors += 1
+    gap_events = missing = 0
+    for a, b in zip(seqs, seqs[1:]):
+        delta = (b - a) % 2**32
+        if delta > 1:
+            gap_events += 1
+            missing += delta - 1
+    arr = np.concatenate(chunks) if chunks else np.zeros(0)
+    return {
+        "frames": len(frames), "decoded": len(seqs), "errors": errors, "gap_events": gap_events,
+        "missing_seq": missing, "samples": int(arr.size),
+        "rms": float(np.sqrt(np.mean(arr ** 2))) if arr.size else 0.0,
+        "peak": int(np.max(np.abs(arr))) if arr.size else 0,
+    }
+
+
+def audio_frames_counter() -> int:
+    return int(find_key(status(), "audio_frames") or 0)
+
+
+def c17_audio_stream(ctx: Ctx) -> tuple[str, str]:
+    """Full mode, one /audio listener: text audio_hello (codec 1, 16 kHz, 100 ms), about 10 frames/s over 10 s,
+    every frame decodes with the reference codec to 1600 samples, seq gaps counted, /status shows
+    viewers.audio == 1 and audio_frames rising, the phone shows '1 listening', then POST /mode privacy closes
+    the socket with 4412 within 3 s and audio_frames stays flat for 3 s. Full mode is restored at the end."""
+    recovery = recover_full_session()
+    lis: AudioListener | None = None
+    try:
+        if not poll(lambda: (status().get("effective_mode") == "full", None), 8.0)[0]:
+            return FAIL, f"effective mode is not full before the check ({recovery})"
+        before = audio_frames_counter()
+        lis = AudioListener()
+        lis.start()
+        lis.connected.wait(6)
+        if lis.error or not lis.opened_at:
+            return FAIL, f"/audio did not open: {lis.error}"
+        viewers_ok, took_v, _ = poll(lambda: ((status().get("viewers") or {}).get("audio") == 1, None), 8.0)
+        bring_app_front()
+        listening = [t for t in ui_texts(ui_xml()) if "listening" in t.lower()]
+        time.sleep(max(0.0, lis.opened_at + 10.0 - time.monotonic()))
+        window = [f for f in lis.frames if f[0] <= lis.opened_at + 10.0]
+        hello = lis.hello or {}
+        stats = decode_audio_frames(window)
+        rate = len(window) / 10.0
+        relayed = audio_frames_counter() - before
+        http("POST", "/mode", {"mode": "privacy"})
+        closed, took_c, _ = poll(lambda: (lis.close_code is not None or not lis.is_alive(), None), 3.0, 0.1)
+        a0 = audio_frames_counter()
+        time.sleep(3.0)
+        flat = audio_frames_counter() == a0
+        ok = (hello.get("type") == "audio_hello" and hello.get("codec") == 1 and hello.get("rate") == 16000
+              and hello.get("chunk_ms") == 100 and 8.0 <= rate <= 12.0 and stats["errors"] == 0
+              and stats["samples"] == 1600 * stats["decoded"] and stats["decoded"] > 0
+              and viewers_ok and bool(listening) and relayed > 0 and lis.close_code == 4412
+              and closed and took_c <= 3.0 and flat)
+        ev = (f"hello codec {hello.get('codec')}, rate {hello.get('rate')}, chunk {hello.get('chunk_ms')} ms; "
+              f"{rate:.1f} frames/s over 10 s "
+              f"({stats['frames']} frames, limit 8-12), {stats['decoded']} decoded, {stats['errors']} rejected, "
+              f"{stats['samples'] // max(1, stats['decoded'])} samples/frame, seq gap events {stats['gap_events']} "
+              f"(missing {stats['missing_seq']}); RMS {stats['rms']:.1f}, peak {stats['peak']} (int16); "
+              f"viewers.audio==1={viewers_ok} after {took_v:.1f} s; phone rows {listening[:2]}; audio_frames +{relayed}; "
+              f"POST /mode privacy -> close {lis.close_code} ({lis.close_reason!r}) after {took_c:.1f} s (limit 3); "
+              f"audio_frames flat for 3 s={flat}; {recovery}; {restore_exposure()}")
+        return (PASS if ok else FAIL), ev
+    finally:
+        if lis is not None:
+            lis.stop()
+        if status().get("effective_mode") != "full":
+            restore_exposure()
+
+
+def c18_audio_isolation(ctx: Ctx) -> tuple[str, str]:
+    """Households mode, live: household A's owner listens (positive control: frames arrive). A second household
+    (its own dog, no station) gets close 4404 and no frames, with and without ?station=<A's station>. An invite
+    viewer with mode_ceiling limited gets close 4403 and no frames."""
+    from urllib.parse import quote
+    owner_a = HH.get("A")
+    station_a = HH.get("A_station")
+    if owner_a is None or not station_a:
+        return FAIL, "check 13 did not pair a station; audio isolation needs it"
+    code, body = owner_a.call("POST", "/mode", {"mode": "full"})
+    control = AudioListener(path="/audio", cookie=owner_a.cookie_header())
+    other = HhClient()
+    code_o, created_o = other.call("POST", "/households", {"dog_name": "Pip", "location": "Porch"})
+    if code_o != 200:
+        return FAIL, f"POST /households (audio isolation) -> {code_o} {created_o}"
+    code_v, pr = owner_a.call("POST", "/households/me/pairing", {"kind": "viewer", "mode_ceiling": "limited"})
+    if code_v != 200 or "code" not in pr:
+        return FAIL, f"POST /households/me/pairing (viewer, limited) -> {code_v} {pr}"
+    viewer = HhClient()
+    code_j, joined = viewer.call("POST", "/join", {"code": pr["code"], "label": "limited-check"})
+    if code_j != 200:
+        return FAIL, f"POST /join -> {code_j} {joined}"
+    listeners = {
+        "other household, no station": AudioListener(path="/audio", cookie=other.cookie_header()),
+        "other household, A's station": AudioListener(
+            path=f"/audio?station={quote(str(station_a['id']))}", cookie=other.cookie_header()),
+        "limited invite viewer of A": AudioListener(path="/audio", cookie=viewer.cookie_header()),
+    }
+    try:
+        control.start()
+        control.connected.wait(6)
+        got_control, took_control, _ = poll(lambda: (len(control.frames) >= 10, None), 12.0, 0.3)
+        for lis in listeners.values():
+            lis.start()
+        for lis in listeners.values():
+            lis.connected.wait(6)
+        time.sleep(5.0)
+        parts = []
+        ok = got_control
+        # A refusal is any of these closes: the other household has no station of its own (4403 from the empty
+        # default channel, or 4404 for an unknown station); the limited viewer is refused by its ceiling (4403).
+        expect = {"other household, no station": {4403, 4404}, "other household, A's station": {4404},
+                  "limited invite viewer of A": {4403}}
+        for label, lis in listeners.items():
+            good = lis.close_code in expect[label] and len(lis.frames) == 0 and not lis.error
+            ok = ok and good
+            parts.append(f"{label}: close {lis.close_code} (expect {sorted(expect[label])}), frames {len(lis.frames)}"
+                         f"{', error ' + lis.error if lis.error else ''}")
+        ev = (f"A owner control: {len(control.frames)} frames in {took_control:.1f} s (must be >= 10); "
+              + "; ".join(parts) + f"; invite ceiling {pr.get('mode_ceiling', 'limited')}")
+        return (PASS if ok else FAIL), ev
+    finally:
+        for lis in [control, *listeners.values()]:
+            lis.stop()
+        owner_a.call("POST", "/mode", {"mode": "full"})
+
+
 PIN_CHECKS = [
     (1, "fresh_server_idle", c1_fresh_server_idle),
     (2, "connect", c2_connect),
@@ -1211,12 +1411,14 @@ PIN_CHECKS = [
     (11, "raise_approval", c11_raise_approval),
     (12, "blackout_not_stalled", c12_blackout_not_stalled),
     (16, "notification_approval", c16_notification_approval),
+    (17, "audio_stream", c17_audio_stream),
 ]
 
-# Households checks run in this order: 15 revokes the station, so it is last.
+# Households checks run in this order: 18 needs the station paired by 13, and 15 revokes the station, so it is last.
 HOUSEHOLDS_CHECKS = [
     (13, "households_pairing", c13_households_pairing),
     (14, "households_isolation_live", c14_households_isolation_live),
+    (18, "audio_isolation", c18_audio_isolation),
     (15, "station_revoke", c15_station_revoke),
 ]
 CHECKS = PIN_CHECKS + HOUSEHOLDS_CHECKS

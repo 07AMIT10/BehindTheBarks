@@ -41,12 +41,15 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 from backend.contracts import AudioEvent, FrameEvent, RulesLabel
+from backend.web import audio_codec
 from backend.web.ingest import CLOSE_BAD_HELLO, CLOSE_BUSY, CLOSE_REPLACED, FpsMeter, HelloError, MAX_DEVICE_LEN
 from backend.web.resource_alerts import evaluate_resource_alerts
 
 PROTO = 1
 PROTO_STATION = 2  # households mode: the hello carries a paired station_id and signs a challenge
 KIND_PREVIEW = 0x01
+KIND_AUDIO = 0x02  # phone audio frame: codec | seq | t_ms | payload (docs/AUDIO_WIRE.md)
+MAX_AUDIO_FRAME_BYTES = 4096  # the largest valid frame is 814 bytes (ADPCM); anything bigger is not audio
 
 EVENT_MODELS: dict[str, type] = {"frame": FrameEvent, "audio": AudioEvent, "rules": RulesLabel}
 
@@ -190,6 +193,13 @@ class RemoteSession:
         self.pings = 0
         self.previews = 0
         self.dropped = 0
+        # Phone audio (T3.9). `audio_frames`/`audio_bytes` count frames relayed to listeners; a frame that
+        # is well formed but not allowed right now (mode below full, nobody listening) is a policy drop,
+        # and a malformed one is also counted in `dropped`.
+        self.audio_frames = 0
+        self.audio_bytes = 0
+        self.audio_dropped_policy = 0
+        self.audio_dropped_invalid = 0
         self.offset = ClockOffset(offset_samples)
         self.offset.seed(self.server_time_at_hello, hello.phone_time)
         self._fps = FpsMeter(fps_window_s)
@@ -369,11 +379,14 @@ class RemoteSession:
         return "telemetry"
 
     def handle(self, data: bytes) -> str | None:
-        """Dispatch one binary message: 0x01 + JPEG preview. Returns "preview" or None."""
+        """Dispatch one binary message: 0x01 + JPEG preview or 0x02 audio frame. Returns "preview",
+        "audio" or None."""
         if not self.connected:
             return None
         now = self.clock()
         self.last_msg_ts = now
+        if len(data) >= 1 and data[0] == KIND_AUDIO:
+            return self._handle_audio(data)
         if len(data) < 2 or len(data) > self.max_message_bytes or data[0] != KIND_PREVIEW:
             self.dropped += 1
             return None
@@ -386,6 +399,31 @@ class RemoteSession:
         self.last_preview_ts = now
         self._preview_fps.add(now)
         return "preview"
+
+    def _handle_audio(self, data: bytes) -> str | None:
+        """0x02 audio frame. Validated like the codec module says (magic, codec in {0,1}, exact payload
+        length); the server never decodes it. Relayed only when the station's effective mode is full AND a
+        listener is connected (the hub is `runtime.audio_hub`, see audio_hub.py); otherwise dropped and counted."""
+        if len(data) > MAX_AUDIO_FRAME_BYTES:
+            return self._audio_invalid()
+        try:
+            audio_codec.parse_frame(data)
+        except ValueError:
+            return self._audio_invalid()
+        hub = getattr(self.runtime, "audio_hub", None)
+        listeners = hub.client_count if hub is not None else 0
+        if getattr(self.pipeline, "effective_mode", None) != "full" or listeners == 0:
+            self.audio_dropped_policy += 1
+            return None
+        hub.publish(bytes(data[1:]))
+        self.audio_frames += 1
+        self.audio_bytes += len(data)
+        return "audio"
+
+    def _audio_invalid(self) -> None:
+        self.dropped += 1
+        self.audio_dropped_invalid += 1
+        return None
 
     def _rebased(self, data: dict, now: float) -> dict:
         """The envelope's ts, moved onto the server clock. A ts that is not an epoch number, or that
@@ -440,6 +478,10 @@ class RemoteSession:
         since = now - (self.last_ping_ts if self.last_ping_ts is not None else self.server_time_at_hello)
         return round(self.ping_every_s - since, 1)
 
+    def _audio_clients(self) -> int:
+        hub = getattr(self.runtime, "audio_hub", None)
+        return hub.client_count if hub is not None else 0
+
     def _age(self, ts: float | None, now: float) -> float | None:
         return None if ts is None else round(max(0.0, now - ts), 2)
 
@@ -459,6 +501,9 @@ class RemoteSession:
             "ping_due_s": self.ping_due_s(now),
             "last_event_age_s": self._age(self.last_event_ts, now),
             "last_frame_age_s": self._age(self.last_frame_ts, now),
+            "audio_frames": self.audio_frames, "audio_bytes": self.audio_bytes,
+            "audio_dropped_policy": self.audio_dropped_policy, "audio_dropped_invalid": self.audio_dropped_invalid,
+            "audio_clients": self._audio_clients(),
             "station_cap": self.station_cap, "effective_mode": self.effective_mode,
             "last_mode_request_result": self.last_mode_request_result,
             "battery_pct": telem.get("battery_pct"),
@@ -480,6 +525,9 @@ class RemoteSession:
             "last_frame_age_s": self._age(self.last_frame_ts, now),
             "last_preview_age_s": self._age(self.last_preview_ts, now),
             "audio_ok": self.last_audio_ts is not None and now - self.last_audio_ts <= AUDIO_OK_S,
+            "audio_frames": self.audio_frames, "audio_bytes": self.audio_bytes,
+            "audio_dropped_policy": self.audio_dropped_policy, "audio_dropped_invalid": self.audio_dropped_invalid,
+            "audio_clients": self._audio_clients(),
             "station_cap": self.station_cap, "effective_mode": self.effective_mode,
             "battery_pct": telem.get("battery_pct"),
             "charging": telem.get("charging"),
