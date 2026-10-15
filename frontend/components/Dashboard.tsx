@@ -179,7 +179,7 @@ export default function Dashboard() {
   const [activeCueId, setActiveCueId] = useState<string | null>(null);
   const cueTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const triggerQuickCue = useCallback(
-    async (sound: string, light?: string, label: string = "Cue") => {
+    async (sound: string, light?: string, _label?: string) => {
       const cueKey = sound + (light ? `_${light}` : "");
       setActiveCueId(cueKey);
       clearTimeout(cueTimer.current);
