@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Generate the WagWatch app icon from one design: the heartbeat W.
+"""Generate the WagWatch app icon from one design: the cute dog paw.
 
-The W is a pulse trace (a heartbeat, a bark waveform, and the W of WagWatch). Its centre peak ends in an amber
-bead: the treat, and the watching eye. Colours come from the dashboard theme (frontend/app/globals.css).
+Colours come from the dashboard theme (frontend/app/globals.css):
+  Background: #0F1113
+  Accent (paw mark): #3FB8C1 (Teal)
 
 Writes:
   docs/brand/wagwatch-icon.svg                     master (1024 viewBox)
@@ -12,66 +13,100 @@ Writes:
   android/app/src/main/res/values/ic_launcher_colors.xml         adaptive background colour
   android/app/src/main/res/mipmap-anydpi-v26/ic_launcher*.xml    adaptive icon entries
   frontend/app/icon.svg                            Next.js app icon (served as the favicon)
+  frontend/public/icon.svg                         Public asset copy
   frontend/app/favicon.ico                         multi-size fallback
 
 Run from the repo root:  python3 scripts/brand/make_icon.py   (needs Pillow)
 """
 from __future__ import annotations
 
+import math
 import pathlib
 
 from PIL import Image, ImageDraw, ImageFilter
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-BG = (15, 17, 19)        # --background of the dark theme
-TEAL = (63, 184, 193)    # --accent (dark theme)
-AMBER = (245, 196, 81)   # the treat / the eye
-WHITE = (255, 255, 255)
+BG = (15, 17, 19)        # #0F1113 --background of the dark theme
+TEAL = (63, 184, 193)    # #3FB8C1 --accent (dark theme)
+CORNER = 224            # iOS/Android squircle radius on the 1024 master
 
-# An ECG strip that spells W, on a 1024 grid: flat lead-in and tail on the baseline (y=512), then the W
-# strokes. The centre peak is the amber bead.
-W_PTS = [(110, 512), (230, 512), (340, 700), (512, 380), (684, 700), (794, 512), (914, 512)]
-BEAD = (512, 380)
-STROKE = 56
-BEAD_R = 60
-CORNER = 224            # iOS-like squircle radius on the 1024 master
+# Palm pad cubic bezier segments on 1024 grid
+PALM_SEGS = [
+    ((300, 620), (330, 510), (450, 480), (512, 490)),
+    ((512, 490), (574, 480), (694, 510), (724, 620)),
+    ((724, 620), (734, 690), (684, 755), (630, 755)),
+    ((630, 755), (575, 755), (545, 715), (512, 715)),
+    ((512, 715), (479, 715), (449, 755), (394, 755)),
+    ((394, 755), (340, 755), (290, 690), (300, 620)),
+]
+
+PALM_PATH_D = (
+    "M 300,620 "
+    "C 330,510 450,480 512,490 "
+    "C 574,480 694,510 724,620 "
+    "C 734,690 684,755 630,755 "
+    "C 575,755 545,715 512,715 "
+    "C 479,715 449,755 394,755 "
+    "C 340,755 290,690 300,620 Z"
+)
+
+# 4 Toe Beans: (cx, cy, rx, ry, rot_deg)
+TOES = [
+    (245, 410, 62, 95, -30),
+    (410, 280, 70, 115, -10),
+    (614, 280, 70, 115, 10),
+    (779, 410, 62, 95, 30),
+]
 
 
 def hex_of(rgb: tuple[int, int, int]) -> str:
     return "#%02X%02X%02X" % rgb
 
 
+def cubic_bezier(p0, p1, p2, p3, n=30):
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        omt = 1 - t
+        x = omt**3 * p0[0] + 3 * omt**2 * t * p1[0] + 3 * omt * t**2 * p2[0] + t**3 * p3[0]
+        y = omt**3 * p0[1] + 3 * omt**2 * t * p1[1] + 3 * omt * t**2 * p2[1] + t**3 * p3[1]
+        pts.append((x, y))
+    return pts
+
+
 def svg_master(content_scale: float = 1.0, with_bg: bool = True) -> str:
-    """The master SVG. content_scale shrinks the mark about the centre (used for the adaptive safe zone)."""
+    """The master SVG. content_scale shrinks the mark about the centre."""
     t = f"translate(512 512) scale({content_scale}) translate(-512 -512)"
-    pts = " ".join(f"{x},{y}" for x, y in W_PTS)
     bg = (
         f'<rect width="1024" height="1024" rx="{CORNER}" fill="{hex_of(BG)}"/>' if with_bg else ""
+    )
+    toes_svg = "\n    ".join(
+        f'<ellipse cx="{cx}" cy="{cy}" rx="{rx}" ry="{ry}" transform="rotate({rot} {cx} {cy})" fill="{hex_of(TEAL)}"/>'
+        for cx, cy, rx, ry, rot in TOES
     )
     return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   {bg}
   <g transform="{t}">
-    <polyline points="{pts}" fill="none" stroke="{hex_of(TEAL)}" stroke-opacity="0.22" stroke-width="{STROKE * 2}"
-              stroke-linejoin="round" stroke-linecap="round"/>
-    <polyline points="{pts}" fill="none" stroke="{hex_of(TEAL)}" stroke-width="{STROKE}"
-              stroke-linejoin="round" stroke-linecap="round"/>
-    <circle cx="{BEAD[0]}" cy="{BEAD[1]}" r="{BEAD_R + 22}" fill="{hex_of(AMBER)}" fill-opacity="0.25"/>
-    <circle cx="{BEAD[0]}" cy="{BEAD[1]}" r="{BEAD_R}" fill="{hex_of(AMBER)}"/>
-    <circle cx="{BEAD[0] - 20}" cy="{BEAD[1] - 20}" r="13" fill="{hex_of(WHITE)}" fill-opacity="0.85"/>
+    <!-- Palm Pad -->
+    <path d="{PALM_PATH_D}" fill="{hex_of(TEAL)}"/>
+    <!-- Toe Beans -->
+    {toes_svg}
   </g>
 </svg>
 """
 
 
-def _thick_line(draw: ImageDraw.ImageDraw, a, b, width: int, fill) -> None:
-    draw.line([a, b], fill=fill, width=width)
-    r = width / 2
-    for x, y in (a, b):
-        draw.ellipse([x - r, y - r, x + r, y + r], fill=fill)
+def _draw_rotated_ellipse(target: Image.Image, cx: float, cy: float, rx: float, ry: float, angle_deg: float, fill) -> None:
+    pad = int(max(rx, ry) * 1.5)
+    temp = Image.new("RGBA", (pad * 2, pad * 2), (0, 0, 0, 0))
+    d = ImageDraw.Draw(temp)
+    d.ellipse([pad - rx, pad - ry, pad + rx, pad + ry], fill=fill)
+    rotated = temp.rotate(-angle_deg, resample=Image.BICUBIC)
+    target.alpha_composite(rotated, (int(cx - pad), int(cy - pad)))
 
 
 def render_png(size: int, with_bg: bool = True, content_scale: float = 1.0) -> Image.Image:
-    """Supersampled raster of the master: 4x, then downscaled, for clean edges and a soft glow."""
+    """Supersampled raster of the master: 4x, then downscaled, for crisp edges and soft glow."""
     ss = 4
     s = size * ss
     k = s / 1024.0
@@ -87,44 +122,47 @@ def render_png(size: int, with_bg: bool = True, content_scale: float = 1.0) -> I
         ImageDraw.Draw(layer).rounded_rectangle([0, 0, s - 1, s - 1], radius=int(CORNER * k), fill=BG + (255,))
         img = Image.alpha_composite(img, layer)
 
-    pts = [pt(p) for p in W_PTS]
-    w = int(STROKE * k * content_scale)
+    # Scaled palm polygon points
+    poly = []
+    for p0, p1, p2, p3 in PALM_SEGS:
+        poly.extend(cubic_bezier(pt(p0), pt(p1), pt(p2), pt(p3)))
 
+    # Soft ambient glow
     glow = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    gd = ImageDraw.Draw(glow)
-    for a, b in zip(pts, pts[1:]):
-        _thick_line(gd, a, b, w * 2, TEAL + (70,))
-    glow = glow.filter(ImageFilter.GaussianBlur(radius=int(24 * k * content_scale)))
+    ImageDraw.Draw(glow).polygon(poly, fill=TEAL + (75,))
+    for cx, cy, rx, ry, rot in TOES:
+        scx, scy = pt((cx, cy))
+        _draw_rotated_ellipse(glow, scx, scy, rx * k * content_scale, ry * k * content_scale, rot, TEAL + (75,))
+    glow = glow.filter(ImageFilter.GaussianBlur(radius=int(28 * k * content_scale)))
     img = Image.alpha_composite(img, glow)
 
-    line = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    ld = ImageDraw.Draw(line)
-    for a, b in zip(pts, pts[1:]):
-        _thick_line(ld, a, b, w, TEAL + (255,))
-    img = Image.alpha_composite(img, line)
-
-    bx, by = pt(BEAD)
-    br = BEAD_R * k * content_scale
-    halo = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    ImageDraw.Draw(halo).ellipse([bx - br - 22 * k, by - br - 22 * k, bx + br + 22 * k, by + br + 22 * k],
-                                 fill=AMBER + (70,))
-    img = Image.alpha_composite(img, halo.filter(ImageFilter.GaussianBlur(radius=int(8 * k))))
-    dot = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    dd = ImageDraw.Draw(dot)
-    dd.ellipse([bx - br, by - br, bx + br, by + br], fill=AMBER + (255,))
-    gr = 13 * k * content_scale
-    gx, gy = bx - 20 * k * content_scale, by - 20 * k * content_scale
-    dd.ellipse([gx - gr, gy - gr, gx + gr, gy + gr], fill=WHITE + (215,))
-    img = Image.alpha_composite(img, dot)
+    # Crisp solid paw
+    paw = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    ImageDraw.Draw(paw).polygon(poly, fill=TEAL + (255,))
+    for cx, cy, rx, ry, rot in TOES:
+        scx, scy = pt((cx, cy))
+        _draw_rotated_ellipse(paw, scx, scy, rx * k * content_scale, ry * k * content_scale, rot, TEAL + (255,))
+    img = Image.alpha_composite(img, paw)
 
     return img.resize((size, size), Image.LANCZOS)
 
 
 def write_vector_foreground(path: pathlib.Path) -> None:
     """Adaptive foreground: the mark scaled into the 66% safe zone, on a transparent canvas, 108dp."""
-    scale = 0.74
-    bx, by = BEAD
-    d = "M" + " L".join(f"{x},{y}" for x, y in W_PTS)
+    scale = 0.70
+    toes_xml = []
+    for cx, cy, rx, ry, rot in TOES:
+        d = f"M {cx - rx},{cy} a {rx},{ry} 0 1,0 {2 * rx},0 a {rx},{ry} 0 1,0 {-2 * rx},0"
+        toes_xml.append(f"""        <group
+            android:pivotX="{cx}"
+            android:pivotY="{cy}"
+            android:rotation="{rot}">
+            <path
+                android:fillColor="{hex_of(TEAL)}"
+                android:pathData="{d}" />
+        </group>""")
+    toes_str = "\n".join(toes_xml)
+
     path.write_text(f"""<?xml version="1.0" encoding="utf-8"?>
 <!-- Generated by scripts/brand/make_icon.py. Edit the generator, not this file. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
@@ -137,26 +175,12 @@ def write_vector_foreground(path: pathlib.Path) -> None:
         android:pivotY="512"
         android:scaleX="{scale}"
         android:scaleY="{scale}">
+        <!-- Palm Pad -->
         <path
-            android:pathData="{d}"
-            android:strokeColor="#{TEAL[0]:02X}{TEAL[1]:02X}{TEAL[2]:02X}"
-            android:strokeAlpha="0.22"
-            android:strokeWidth="{STROKE * 2}"
-            android:strokeLineCap="round"
-            android:strokeLineJoin="round" />
-        <path
-            android:pathData="{d}"
-            android:strokeColor="#{TEAL[0]:02X}{TEAL[1]:02X}{TEAL[2]:02X}"
-            android:strokeWidth="{STROKE}"
-            android:strokeLineCap="round"
-            android:strokeLineJoin="round" />
-        <path
-            android:fillColor="#{AMBER[0]:02X}{AMBER[1]:02X}{AMBER[2]:02X}"
-            android:pathData="M{bx - BEAD_R},{by} a{BEAD_R},{BEAD_R} 0 1,0 {2 * BEAD_R},0 a{BEAD_R},{BEAD_R} 0 1,0 {-2 * BEAD_R},0" />
-        <path
-            android:fillColor="#FFFFFF"
-            android:fillAlpha="0.85"
-            android:pathData="M{bx - 20 - 13},{by - 20} a13,13 0 1,0 26,0 a13,13 0 1,0 -26,0" />
+            android:fillColor="{hex_of(TEAL)}"
+            android:pathData="{PALM_PATH_D}" />
+        <!-- Toe Beans -->
+{toes_str}
     </group>
 </vector>
 """, encoding="utf-8")
@@ -206,13 +230,15 @@ def main() -> None:
 
     web = ROOT / "frontend" / "app"
     (web / "icon.svg").write_text(svg_master(), encoding="utf-8")
+    (ROOT / "frontend" / "public" / "icon.svg").write_text(svg_master(), encoding="utf-8")
     render_png(256).save(
         web / "favicon.ico",
         format="ICO",
         sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
     )
-    print("icon written")
+    print("cute paw icon written successfully across Android and Web")
 
 
 if __name__ == "__main__":
     main()
+

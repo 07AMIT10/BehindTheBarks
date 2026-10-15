@@ -818,7 +818,7 @@ class MonitorService : Service(), LifecycleOwner {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Behind the Barks Monitor",
+                "WagWatch Monitor",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "Runs on-device perception while capturing camera and audio"
@@ -855,7 +855,7 @@ class MonitorService : Service(), LifecycleOwner {
         }
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Behind the Barks Monitor")
+            .setContentTitle("WagWatch Monitor")
             .setContentText(displayText)
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setOngoing(true)

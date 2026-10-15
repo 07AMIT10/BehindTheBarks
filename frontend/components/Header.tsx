@@ -3,8 +3,17 @@ type Props = { dogName: string; location: string; children?: React.ReactNode };
 function Logo({ size }: { size: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
-      <rect x="1" y="1" width="30" height="30" rx="9" stroke="var(--accent)" strokeWidth="2" />
-      <path d="M7 17h4l2.5-6 4 11 2.5-5H25" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <rect x="1" y="1" width="30" height="30" rx="9" stroke="var(--accent)" strokeWidth="1.5" className="fill-accent/10" />
+      <g transform="translate(16 16) scale(0.025) translate(-512 -512)">
+        <path
+          d="M 300,620 C 330,510 450,480 512,490 C 574,480 694,510 724,620 C 734,690 684,755 630,755 C 575,755 545,715 512,715 C 479,715 449,755 394,755 C 340,755 290,690 300,620 Z"
+          fill="var(--accent)"
+        />
+        <ellipse cx="245" cy="410" rx="62" ry="95" transform="rotate(-30 245 410)" fill="var(--accent)" />
+        <ellipse cx="410" cy="280" rx="70" ry="115" transform="rotate(-10 410 280)" fill="var(--accent)" />
+        <ellipse cx="614" cy="280" rx="70" ry="115" transform="rotate(10 614 280)" fill="var(--accent)" />
+        <ellipse cx="779" cy="410" rx="62" ry="95" transform="rotate(30 779 410)" fill="var(--accent)" />
+      </g>
     </svg>
   );
 }

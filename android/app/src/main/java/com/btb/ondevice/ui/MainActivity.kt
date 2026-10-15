@@ -192,7 +192,7 @@ class MainActivity : Activity() {
 
         // 3. Floating Pill for collapsed/kiosk mode (top-center)
         floatingPill = TextView(this).apply {
-            text = "🐾 Behind The Barks · Tap to expand"
+            text = "🐾 WagWatch · Tap to expand"
             setTextColor(Color.WHITE)
             textSize = 12f
             setPadding(dp(32), dp(14), dp(32), dp(14))
@@ -249,7 +249,7 @@ class MainActivity : Activity() {
         }
 
         val title = TextView(this).apply {
-            text = "🐾 Behind The Barks"
+            text = "🐾 WagWatch"
             setTextColor(Color.WHITE)
             textSize = 17f
         }
@@ -477,7 +477,7 @@ class MainActivity : Activity() {
         }
 
         val ambientTitle = TextView(this).apply {
-            text = "🐾 Behind The Barks"
+            text = "🐾 WagWatch"
             setTextColor(Color.parseColor("#616161"))
             textSize = 20f
             gravity = Gravity.CENTER
@@ -809,7 +809,7 @@ class MainActivity : Activity() {
     private fun showPermissionDeniedDialog() {
         AlertDialog.Builder(this)
             .setTitle("Camera & Microphone Required")
-            .setMessage("Behind The Barks requires camera and microphone access to detect your dog's posture, expressions, and barking sounds.\n\nPlease grant permissions in App Settings to proceed.")
+            .setMessage("WagWatch requires camera and microphone access to detect your dog's posture, expressions, and barking sounds.\n\nPlease grant permissions in App Settings to proceed.")
             .setPositiveButton("Open Settings") { _, _ ->
                 try {
                     val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
@@ -844,7 +844,7 @@ class MainActivity : Activity() {
                     prefs.edit().putBoolean(KEY_BATTERY_TIP_SHOWN, true).apply()
                     AlertDialog.Builder(this)
                         .setTitle("🔋 Keep Monitoring Active")
-                        .setMessage("Android will stop camera streaming after 15 minutes unless battery optimization is disabled for Behind The Barks.\n\nWould you like to disable battery optimization for this camera station?")
+                        .setMessage("Android will stop camera streaming after 15 minutes unless battery optimization is disabled for WagWatch.\n\nWould you like to disable battery optimization for this camera station?")
                         .setPositiveButton("Disable Optimization") { _, _ ->
                             try {
                                 val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
@@ -888,7 +888,7 @@ class MainActivity : Activity() {
         }
         AlertDialog.Builder(this)
             .setTitle("Local Wi-Fi Server")
-            .setMessage("Enter the local IP address of your computer running the Behind The Barks server:")
+            .setMessage("Enter the local IP address of your computer running the WagWatch server:")
             .setView(input)
             .setPositiveButton("Set URL") { _, _ ->
                 val ip = input.text.toString().trim()
@@ -913,7 +913,7 @@ class MainActivity : Activity() {
         }
         AlertDialog.Builder(this)
             .setTitle("Cloud WSS Server")
-            .setMessage("Enter the domain or Cloudflare Tunnel of your Behind The Barks server:")
+            .setMessage("Enter the domain or Cloudflare Tunnel of your WagWatch server:")
             .setView(input)
             .setPositiveButton("Set URL") { _, _ ->
                 val domain = input.text.toString().trim()

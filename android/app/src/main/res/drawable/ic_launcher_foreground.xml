@@ -8,27 +8,44 @@
     <group
         android:pivotX="512"
         android:pivotY="512"
-        android:scaleX="0.74"
-        android:scaleY="0.74">
+        android:scaleX="0.7"
+        android:scaleY="0.7">
+        <!-- Palm Pad -->
         <path
-            android:pathData="M110,512 L230,512 L340,700 L512,380 L684,700 L794,512 L914,512"
-            android:strokeColor="#3FB8C1"
-            android:strokeAlpha="0.22"
-            android:strokeWidth="112"
-            android:strokeLineCap="round"
-            android:strokeLineJoin="round" />
-        <path
-            android:pathData="M110,512 L230,512 L340,700 L512,380 L684,700 L794,512 L914,512"
-            android:strokeColor="#3FB8C1"
-            android:strokeWidth="56"
-            android:strokeLineCap="round"
-            android:strokeLineJoin="round" />
-        <path
-            android:fillColor="#F5C451"
-            android:pathData="M452,380 a60,60 0 1,0 120,0 a60,60 0 1,0 -120,0" />
-        <path
-            android:fillColor="#FFFFFF"
-            android:fillAlpha="0.85"
-            android:pathData="M479,360 a13,13 0 1,0 26,0 a13,13 0 1,0 -26,0" />
+            android:fillColor="#3FB8C1"
+            android:pathData="M 300,620 C 330,510 450,480 512,490 C 574,480 694,510 724,620 C 734,690 684,755 630,755 C 575,755 545,715 512,715 C 479,715 449,755 394,755 C 340,755 290,690 300,620 Z" />
+        <!-- Toe Beans -->
+        <group
+            android:pivotX="245"
+            android:pivotY="410"
+            android:rotation="-30">
+            <path
+                android:fillColor="#3FB8C1"
+                android:pathData="M 183,410 a 62,95 0 1,0 124,0 a 62,95 0 1,0 -124,0" />
+        </group>
+        <group
+            android:pivotX="410"
+            android:pivotY="280"
+            android:rotation="-10">
+            <path
+                android:fillColor="#3FB8C1"
+                android:pathData="M 340,280 a 70,115 0 1,0 140,0 a 70,115 0 1,0 -140,0" />
+        </group>
+        <group
+            android:pivotX="614"
+            android:pivotY="280"
+            android:rotation="10">
+            <path
+                android:fillColor="#3FB8C1"
+                android:pathData="M 544,280 a 70,115 0 1,0 140,0 a 70,115 0 1,0 -140,0" />
+        </group>
+        <group
+            android:pivotX="779"
+            android:pivotY="410"
+            android:rotation="30">
+            <path
+                android:fillColor="#3FB8C1"
+                android:pathData="M 717,410 a 62,95 0 1,0 124,0 a 62,95 0 1,0 -124,0" />
+        </group>
     </group>
 </vector>
