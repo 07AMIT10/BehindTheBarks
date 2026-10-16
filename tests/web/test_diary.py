@@ -2,7 +2,15 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from backend.analytics.diary import build_daily_diary
+from backend.demo.mock_pipeline import MockPipeline
 from backend.main import create_app
+from backend.notify.dashboard import DashboardOnlyNotifier
+from backend.web.settings import load_config
+
+
+class NoLLM:
+    enabled = False
+    last_call = None
 
 
 def test_build_daily_diary_aggregation():
@@ -29,7 +37,9 @@ def test_build_daily_diary_aggregation():
 
 
 def test_daily_diary_api_endpoint(tmp_path: Path):
-    app = create_app()
+    cfg = load_config(tmp_path / "none.yaml", env={})
+    cfg["web"]["log_dir"] = str(tmp_path / "out")
+    app = create_app(cfg, pipeline=MockPipeline(cfg), interpreter=NoLLM(), notifier=DashboardOnlyNotifier())
     with TestClient(app) as client:
         r = client.get("/diary/daily")
         assert r.status_code == 200

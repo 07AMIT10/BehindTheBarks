@@ -1,11 +1,21 @@
 from fastapi.testclient import TestClient
 
+from backend.demo.mock_pipeline import MockPipeline
 from backend.main import create_app
+from backend.notify.dashboard import DashboardOnlyNotifier
 from backend.store import repo as store_repo
+from backend.web.settings import load_config
+
+
+class NoLLM:
+    enabled = False
+    last_call = None
 
 
 def test_telegram_link_and_subscriber_lifecycle(tmp_path):
-    app = create_app()
+    cfg = load_config(tmp_path / "none.yaml", env={})
+    cfg["web"]["log_dir"] = str(tmp_path / "out")
+    app = create_app(cfg, pipeline=MockPipeline(cfg), interpreter=NoLLM(), notifier=DashboardOnlyNotifier())
     with TestClient(app) as client:
         # 1. Create a link code
         r = client.post("/telegram/link-code")

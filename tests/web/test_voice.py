@@ -1,11 +1,22 @@
 import base64
+from pathlib import Path
 from starlette.testclient import TestClient
 
+from backend.demo.mock_pipeline import MockPipeline
 from backend.main import create_app
+from backend.notify.dashboard import DashboardOnlyNotifier
+from backend.web.settings import load_config
 
 
-def test_voice_chunk_endpoint():
-    app = create_app()
+class NoLLM:
+    enabled = False
+    last_call = None
+
+
+def test_voice_chunk_endpoint(tmp_path: Path):
+    cfg = load_config(tmp_path / "none.yaml", env={})
+    cfg["web"]["log_dir"] = str(tmp_path / "out")
+    app = create_app(cfg, pipeline=MockPipeline(cfg), interpreter=NoLLM(), notifier=DashboardOnlyNotifier())
     with TestClient(app) as client:
         # 1. Missing body
         r = client.post("/voice/chunk", json={})

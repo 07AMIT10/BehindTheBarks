@@ -2,7 +2,15 @@ import struct
 from pathlib import Path
 from starlette.testclient import TestClient
 
+from backend.demo.mock_pipeline import MockPipeline
 from backend.main import create_app
+from backend.notify.dashboard import DashboardOnlyNotifier
+from backend.web.settings import load_config
+
+
+class NoLLM:
+    enabled = False
+    last_call = None
 
 
 def make_dummy_wav(duration_s: float = 1.0, sample_rate: int = 16000) -> bytes:
@@ -30,7 +38,9 @@ def make_dummy_wav(duration_s: float = 1.0, sample_rate: int = 16000) -> bytes:
 
 
 def test_audio_snippet_upload_and_download(tmp_path: Path):
-    app = create_app()
+    cfg = load_config(tmp_path / "none.yaml", env={})
+    cfg["web"]["log_dir"] = str(tmp_path / "out")
+    app = create_app(cfg, pipeline=MockPipeline(cfg), interpreter=NoLLM(), notifier=DashboardOnlyNotifier())
     with TestClient(app) as client:
         wav = make_dummy_wav(0.5)
 
