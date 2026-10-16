@@ -74,9 +74,13 @@ export default function StationTile({
 
         <div className="flex shrink-0 items-center gap-1.5">
           {(() => {
-            const batteryPct = station.phone?.battery_pct ?? station.battery ?? null;
-            const isCharging = Boolean(station.phone?.charging);
-            const isStale = isTelemetryStale(station.phone?.last_frame_age_s);
+            const phoneObj = station.phone;
+            const batteryPct = phoneObj?.battery_pct ?? station.battery ?? null;
+            const isCharging = Boolean(phoneObj?.charging);
+            const telemetryTs = phoneObj?.latest_telemetry?.server_ts ?? phoneObj?.latest_telemetry?.ts;
+            const lastAge = phoneObj?.last_frame_age_s ?? phoneObj?.last_event_age_s;
+            const isConnected = Boolean(phoneObj?.connected);
+            const isStale = !isConnected || (telemetryTs != null ? isTelemetryStale(telemetryTs) : (lastAge != null ? isTelemetryStale(lastAge) : false));
             const bClass = batteryLevelClass(batteryPct, isStale);
             const bText = batteryDisplay(batteryPct, isStale);
 

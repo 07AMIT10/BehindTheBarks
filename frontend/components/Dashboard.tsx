@@ -305,10 +305,13 @@ export default function Dashboard() {
           )}
           {(() => {
             const focusedStationSummary = stations.find((st) => st.id === state.focusedStation);
+            const phoneObj = focusedStationSummary?.phone ?? state.status?.phone;
             const activeBatteryPct = focusedStationSummary?.phone?.battery_pct ?? focusedStationSummary?.battery ?? state.status?.phone?.battery_pct ?? null;
-            const activeIsCharging = Boolean(focusedStationSummary?.phone?.charging ?? state.status?.phone?.charging);
-            const activeLastAge = focusedStationSummary?.phone?.last_frame_age_s ?? state.status?.phone?.last_frame_age_s ?? null;
-            const activeIsStale = isTelemetryStale(activeLastAge);
+            const activeIsCharging = Boolean(phoneObj?.charging);
+            const telemetryTs = phoneObj?.latest_telemetry?.server_ts ?? phoneObj?.latest_telemetry?.ts;
+            const activeLastAge = phoneObj?.last_frame_age_s ?? phoneObj?.last_event_age_s;
+            const isConnected = Boolean(phoneObj?.connected);
+            const activeIsStale = !isConnected || (telemetryTs != null ? isTelemetryStale(telemetryTs) : (activeLastAge != null ? isTelemetryStale(activeLastAge) : false));
             const activeBClass = batteryLevelClass(activeBatteryPct, activeIsStale);
             const activeBText = batteryDisplay(activeBatteryPct, activeIsStale);
 

@@ -45,9 +45,11 @@ export type PhoneStatus = {
   height?: number;
   sample_rate?: number;
   last_frame_age_s?: number | null;
+  last_event_age_s?: number | null;
   battery_pct?: number | null; // T6.1
   charging?: boolean; // T6.1
   temp_c?: number | null; // T6.1
+  latest_telemetry?: Record<string, any> | null;
 };
 
 export type StationSummary = {
