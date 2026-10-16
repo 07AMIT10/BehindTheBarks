@@ -275,17 +275,22 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         hdr = req.headers.get("Authorization", "")
         return hdr[len("Bearer "):].strip() if hdr.startswith("Bearer ") else None
 
+    _last_viewer_touch: dict[str, float] = {}
+
     async def households_ctx(req: Request) -> Ctx:
         token = _viewer_token(req)
         if not token:
             raise HTTPException(status_code=401, detail="no session: create a household or use a recovery key")
+        now = time.monotonic()
         with app.state.db_session() as s:
             viewer = store_repo.viewer_by_token(s, token)
             if viewer is None:
                 raise HTTPException(status_code=401, detail="session revoked or expired")
             lr = await app.state.registry.get(viewer.household_id)
-            store_repo.touch_viewer(s, viewer)
-            s.commit()
+            if now - _last_viewer_touch.get(viewer.id, 0.0) > 30.0:
+                _last_viewer_touch[viewer.id] = now
+                store_repo.touch_viewer(s, viewer)
+                s.commit()
             return Ctx(household_id=viewer.household_id, role=viewer.role, viewer_id=viewer.id,
                        runtime=lr.runtime, hub=lr.hub, pipeline=lr.pipeline, request=req,
                        policy=lr.policy, tracker=lr.tracker, limited=lr.limited, mode_ceiling=viewer.mode_ceiling or "full")
@@ -383,6 +388,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             s.commit()
         return {"code": code, "expires_in": int(store_repo.PAIRING_TTL_S), "qr": _pair_qr(ctx.request, code)}
 
+    _cached_offline_stations: dict[str, tuple[float, list[dict]]] = {}
+
     def _build_stations_list(lr, household_id: str, mode_ceiling: str = "full") -> list[dict]:
         stations_list = []
         seen_sids = set()
@@ -404,20 +411,35 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                     "battery": c_phone.get("battery_pct") if c_phone else None,
                 })
         if hasattr(app.state, "db_session") and app.state.db_session and household_id != LEGACY:
-            with app.state.db_session() as s:
-                for db_st in store_repo.stations_of_household(s, household_id):
-                    if db_st.revoked_at is None and db_st.id not in seen_sids:
-                        seen_sids.add(db_st.id)
-                        default_dog = lr.runtime.cfg["web"].get("profile", {}).get("dog_name", "Your dog") if lr else "Your dog"
-                        stations_list.append({
-                            "id": db_st.id,
-                            "name": db_st.name,
-                            "dog_name": db_st.dog_name or default_dog,
-                            "phone": None,
-                            "pipeline_status": None,
-                            "effective_mode": "full",
-                            "battery": None,
-                        })
+            now = time.monotonic()
+            cached = _cached_offline_stations.get(household_id)
+            if cached and (now - cached[0] < 10.0):
+                db_stations = cached[1]
+            else:
+                db_stations = []
+                with app.state.db_session() as s:
+                    for db_st in store_repo.stations_of_household(s, household_id):
+                        if db_st.revoked_at is None:
+                            db_stations.append({
+                                "id": db_st.id,
+                                "name": db_st.name,
+                                "dog_name": db_st.dog_name,
+                            })
+                _cached_offline_stations[household_id] = (now, db_stations)
+
+            for db_st in db_stations:
+                if db_st["id"] not in seen_sids:
+                    seen_sids.add(db_st["id"])
+                    default_dog = lr.runtime.cfg["web"].get("profile", {}).get("dog_name", "Your dog") if lr else "Your dog"
+                    stations_list.append({
+                        "id": db_st["id"],
+                        "name": db_st["name"],
+                        "dog_name": db_st["dog_name"] or default_dog,
+                        "phone": None,
+                        "pipeline_status": None,
+                        "effective_mode": "full",
+                        "battery": None,
+                    })
         return stations_list
 
     @app.post("/pair")

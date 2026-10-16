@@ -97,6 +97,15 @@ def make_engine(url: str, **kwargs: Any) -> Engine:
     # PostgreSQL (Supabase, Neon, Render): connection liveness checking and recycling
     kwargs.setdefault("pool_pre_ping", True)
     kwargs.setdefault("pool_recycle", 300)
+    connect_args = kwargs.setdefault("connect_args", {})
+    connect_args.setdefault("connect_timeout", 5)
+    connect_args.setdefault("keepalives", 1)
+    connect_args.setdefault("keepalives_idle", 10)
+    connect_args.setdefault("keepalives_interval", 5)
+    connect_args.setdefault("keepalives_count", 3)
+    existing_options = connect_args.get("options", "")
+    if "statement_timeout" not in existing_options:
+        connect_args["options"] = (existing_options + " -c statement_timeout=5000").strip()
     return create_engine(url, **kwargs)
 
 
