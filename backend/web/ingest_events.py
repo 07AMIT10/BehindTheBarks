@@ -33,12 +33,15 @@ the socket with 4401 (or 4410 when the owner revokes a live session).
 from __future__ import annotations
 
 import json
+import logging
 import math
 import statistics
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
+
+log = logging.getLogger("ingest-events")
 
 from backend.contracts import AudioEvent, FrameEvent, RulesLabel
 from backend.web import audio_codec
