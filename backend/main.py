@@ -276,24 +276,36 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         return hdr[len("Bearer "):].strip() if hdr.startswith("Bearer ") else None
 
     _last_viewer_touch: dict[str, float] = {}
+    _viewer_cache: dict[str, tuple[float, tuple[str, str, str, str]]] = {}
 
     async def households_ctx(req: Request) -> Ctx:
         token = _viewer_token(req)
         if not token:
             raise HTTPException(status_code=401, detail="no session: create a household or use a recovery key")
         now = time.monotonic()
-        with app.state.db_session() as s:
-            viewer = store_repo.viewer_by_token(s, token)
-            if viewer is None:
-                raise HTTPException(status_code=401, detail="session revoked or expired")
-            lr = await app.state.registry.get(viewer.household_id)
-            if now - _last_viewer_touch.get(viewer.id, 0.0) > 30.0:
-                _last_viewer_touch[viewer.id] = now
-                store_repo.touch_viewer(s, viewer)
-                s.commit()
-            return Ctx(household_id=viewer.household_id, role=viewer.role, viewer_id=viewer.id,
-                       runtime=lr.runtime, hub=lr.hub, pipeline=lr.pipeline, request=req,
-                       policy=lr.policy, tracker=lr.tracker, limited=lr.limited, mode_ceiling=viewer.mode_ceiling or "full")
+        cached = _viewer_cache.get(token)
+        if cached and (now - cached[0] < 20.0):
+            viewer_id, household_id, role, mode_ceiling = cached[1]
+        else:
+            with app.state.db_session() as s:
+                viewer = store_repo.viewer_by_token(s, token)
+                if viewer is None:
+                    _viewer_cache.pop(token, None)
+                    raise HTTPException(status_code=401, detail="session revoked or expired")
+                viewer_id = viewer.id
+                household_id = viewer.household_id
+                role = viewer.role
+                mode_ceiling = viewer.mode_ceiling or "full"
+                if now - _last_viewer_touch.get(viewer.id, 0.0) > 30.0:
+                    _last_viewer_touch[viewer.id] = now
+                    store_repo.touch_viewer(s, viewer)
+                    s.commit()
+            _viewer_cache[token] = (now, (viewer_id, household_id, role, mode_ceiling))
+
+        lr = await app.state.registry.get(household_id)
+        return Ctx(household_id=household_id, role=role, viewer_id=viewer_id,
+                   runtime=lr.runtime, hub=lr.hub, pipeline=lr.pipeline, request=req,
+                   policy=lr.policy, tracker=lr.tracker, limited=lr.limited, mode_ceiling=mode_ceiling)
 
 
 
@@ -470,6 +482,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 station = store_repo.create_station(s, household_id=consumed.household_id, name=device_name,
                                                    pubkey_spki=key.public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo))
                 s.commit()
+                _cached_offline_stations.pop(consumed.household_id, None)
                 lr = app.state.registry.peek(consumed.household_id)
                 if lr is not None:
                     st_list = _build_stations_list(lr, consumed.household_id)
@@ -497,6 +510,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 raise HTTPException(status_code=404, detail="unknown station")
             store_repo.revoke_station(s, station_id)
             s.commit()
+            _cached_offline_stations.pop(ctx.household_id, None)
         lr = app.state.registry.peek(ctx.household_id)
         if lr is not None:
             ch = lr.channels.get(station_id)
@@ -580,6 +594,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 raise HTTPException(status_code=400, detail="the owner cannot be removed")
             store_repo.revoke_viewer(s, viewer_id)
             s.commit()
+        _viewer_cache.clear()
         lr = app.state.registry.peek(ctx.household_id)
         if lr is not None:
             lr.hub.kick(viewer_id)  # their /ws loop ends; the browser shows the welcome screen again
@@ -736,6 +751,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         if not households_mode:
             _pin_only_404()
         token = _viewer_token(req)
+        if token:
+            _viewer_cache.pop(token, None)
         with app.state.db_session() as s:
             if token:
                 viewer = store_repo.viewer_by_token(s, token)

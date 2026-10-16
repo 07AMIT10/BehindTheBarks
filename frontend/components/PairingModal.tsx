@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { useDialog } from "@/lib/useDialog";
 import QRCode from "qrcode";
 
@@ -51,9 +51,14 @@ export default function PairingModal({
 
   // Built from the server's own base URL (pair_url), not window.location: a viewer opening the link
   // may be on a different host/port than the owner's browser tab (e.g. a ?backend= dev override).
-  const joinLink = pairing
-    ? `${new URL(pairing.qr.pair_url).origin}/?join=${encodeURIComponent(pairing.code)}`
-    : "";
+  const joinLink = useMemo(() => {
+    if (!pairing?.qr?.pair_url) return "";
+    try {
+      return `${new URL(pairing.qr.pair_url).origin}/?join=${encodeURIComponent(pairing.code)}`;
+    } catch {
+      return `/?join=${encodeURIComponent(pairing.code)}`;
+    }
+  }, [pairing]);
 
   // The modal is mounted before a code exists, so the countdown must start from each new pairing.
   useEffect(() => {
@@ -178,6 +183,13 @@ export default function PairingModal({
             </div>
           )}
         </div>
+
+        {pairing && (
+          <div className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-white/5 border border-white/10 mb-2.5">
+            <span className="text-xs text-muted">Pairing Code:</span>
+            <span className="font-mono text-sm font-bold tracking-wider text-emerald-400 select-all">{pairing.code}</span>
+          </div>
+        )}
 
         {pairing && (
           <div className="w-full flex items-center gap-2 p-2 rounded-xl bg-white/5 border border-white/10 text-xs text-muted font-mono mb-3">
