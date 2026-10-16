@@ -306,7 +306,7 @@ export default function VideoPanel({
   // freeze on its last frame. Keying the stream on `paused` opens a fresh stream once we're live again.
   const tokenParam = token ? `&token=${encodeURIComponent(token)}` : "";
   const stationParam = station ? `&station=${encodeURIComponent(station)}` : "";
-  const streamId = `${retryKey}${paused ? "p" : ""}${idle ? "i" : ""}${watchdogPaused ? "w" : ""}${resumeKey}`;
+  const streamId = `${retryKey}${dropped ? "d" : ""}${idle ? "i" : ""}${watchdogPaused ? "w" : ""}${resumeKey}`;
   const videoSrc = `${http}/video?k=${streamId}${stationParam}${tokenParam}`;
 
   // Monitoring is stopped on purpose (or has never started): no /video request at all, and a plain

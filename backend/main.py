@@ -1810,7 +1810,16 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 if tracker:
                     tracker.leave_video(stream_id)
 
-        return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
+        return StreamingResponse(
+            gen(),
+            media_type="multipart/x-mixed-replace; boundary=frame",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "close",
+            },
+        )
 
     @app.websocket("/ws")
     async def ws(sock: WebSocket) -> None:

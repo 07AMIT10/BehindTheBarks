@@ -64,7 +64,7 @@ class RemotePipeline:
         self.cfg = config
         self.clock = clock
         # Same meaning as the browser source's stall_s in Pipeline: no camera data for this long.
-        self.stale_s = float(remote.get("stale_s", source.get("stall_s", 2.0)))
+        self.stale_s = float(remote.get("stale_s", source.get("stall_s", 8.0)))
         # A downlink on a half-open socket never resolves, so every send gets a deadline: without one
         # the flush task wedges and every later treat and config push piles up undelivered.
         self.send_timeout_s = float(remote.get("downlink_timeout_s", 5.0))
