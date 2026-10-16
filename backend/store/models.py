@@ -33,6 +33,9 @@ class Household(Base):
 
     viewers: Mapped[list["Viewer"]] = relationship(back_populates="household", cascade="all, delete-orphan")
     stations: Mapped[list["Station"]] = relationship(back_populates="household", cascade="all, delete-orphan")
+    telegram_subscribers: Mapped[list["HouseholdTelegramSubscriber"]] = relationship(
+        back_populates="household", cascade="all, delete-orphan"
+    )
 
 
 class Viewer(Base):
@@ -91,3 +94,20 @@ class AppSetting(Base):
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[float] = mapped_column(Float)
+
+
+class HouseholdTelegramSubscriber(Base):
+    __tablename__ = "household_telegram_subscribers"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    household_id: Mapped[str] = mapped_column(String(32), ForeignKey("households.id"), index=True)
+    chat_id: Mapped[str] = mapped_column(String(64), index=True)
+    chat_type: Mapped[str] = mapped_column(String(16), default="private")
+    title: Mapped[str] = mapped_column(String(128), default="")
+    label: Mapped[str] = mapped_column(String(64), default="")
+    notify_barks: Mapped[bool] = mapped_column(Boolean, default=True)
+    notify_distress: Mapped[bool] = mapped_column(Boolean, default=True)
+    notify_battery: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[float] = mapped_column(Float)
+
+    household: Mapped[Household] = relationship(back_populates="telegram_subscribers")

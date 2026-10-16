@@ -189,5 +189,9 @@ class MockPipeline:
         self._last_cue = {"sound": sound, "light": light}
         return True
 
+    def send_voice(self, pcm_base64: str) -> bool:
+        self._last_voice = pcm_base64
+        return True
+
     def stop(self) -> None:
         self._halt = True

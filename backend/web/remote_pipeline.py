@@ -184,6 +184,11 @@ class RemotePipeline:
         log.info("remote: sent cue sound=%s light=%s to phone (%s)", sound, light, "sent" if sent else "no phone")
         return sent
 
+    def send_voice(self, pcm_base64: str) -> bool:
+        """Send a 16kHz PCM audio chunk to the station phone for two-way push-to-talk."""
+        sent = self._post({"type": "voice", "data": {"pcm": str(pcm_base64)}})
+        return sent
+
     def set_policy(self, mode: str, *, preview: dict | None = None, audio: bool | None = None,
                    viewers: dict | None = None) -> bool:
         """T3.1: send one `policy` downlink (mode + preview params + audio + viewer counts), then

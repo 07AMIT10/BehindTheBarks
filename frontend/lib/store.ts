@@ -101,7 +101,7 @@ function applyStationEnvelope(sv: StationView, env: Envelope, at: number, touchS
     case "audio": {
       const a = env.data as AudioEvent;
       if (!DOG_SOUNDS.has(a.label)) return base;
-      return { ...base, audio: [...base.audio, { ts: a.ts, label: a.label, score: a.score }].slice(-AUDIO_MAX) };
+      return { ...base, audio: [...base.audio, { ts: a.ts, label: a.label, score: a.score, snippet_id: a.snippet_id, duration_s: a.duration_s }].slice(-AUDIO_MAX) };
     }
     case "treat":
       return { ...base, treats: [...base.treats, (env.data as { ts: number }).ts] };

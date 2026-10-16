@@ -23,6 +23,7 @@ import StatusBar from "./StatusBar";
 import SystemNotice from "./SystemNotice";
 import ThemeToggle from "./ThemeToggle";
 import Timeline from "./Timeline";
+import DoggyDiary from "./DoggyDiary";
 import ToastStack from "./ToastStack";
 import TreatButton from "./TreatButton";
 import VideoPanel from "./VideoPanel";
@@ -180,6 +181,7 @@ export default function Dashboard() {
   const cueTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const triggerQuickCue = useCallback(
     async (sound: string, light?: string, _label?: string) => {
+      void _label;
       const cueKey = sound + (light ? `_${light}` : "");
       setActiveCueId(cueKey);
       clearTimeout(cueTimer.current);
@@ -604,6 +606,19 @@ export default function Dashboard() {
                 }
               />
             </div>
+            <DoggyDiary
+              stationId={state.focusedStation}
+              onViewSnapshot={(snap, title) =>
+                setActiveMoment({
+                  emotion: "happy",
+                  ts: Date.now() / 1000,
+                  reason: title,
+                  confidence: 1.0,
+                  source: "fused",
+                  snapshot: snap,
+                })
+              }
+            />
           </div>
           </>
         )}

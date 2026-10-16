@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef, useState } from "react";
 import { EMOTION_META, EMOTION_ORDER, emotionVars, sourceLabel } from "@/lib/emotions";
 import { durationLabel, hhmm, pct } from "@/lib/format";
 import { groupAudio, layoutSpans, leftPct, ticks, timelineWindow } from "@/lib/timeline";
@@ -31,6 +32,25 @@ export default function Timeline({ spans, audio, treats, notifications, nowSec, 
   ];
   const selIndex = selected ?? spans.length - 1;
   const sel = spans[selIndex];
+  const [playingSnippet, setPlayingSnippet] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const toggleSnippet = (snippetId: string) => {
+    if (playingSnippet === snippetId) {
+      audioRef.current?.pause();
+      setPlayingSnippet(null);
+      return;
+    }
+    if (audioRef.current) {
+      audioRef.current.pause();
+    }
+    const audio = new Audio(`/snippets/${snippetId}`);
+    audioRef.current = audio;
+    setPlayingSnippet(snippetId);
+    audio.play().catch(() => setPlayingSnippet(null));
+    audio.onended = () => setPlayingSnippet(null);
+    audio.onerror = () => setPlayingSnippet(null);
+  };
 
   return (
     <section aria-label="Session timeline" className="flex flex-col gap-3.5 rounded-xl border border-border bg-surface px-4 py-5 lg:px-6">
@@ -100,14 +120,43 @@ export default function Timeline({ spans, audio, treats, notifications, nowSec, 
               <div className="h-2" />
               <div className="relative h-10 rounded-lg bg-surface-2">
                 <div className="absolute inset-x-0 top-1/2 h-px bg-border" />
-                {sounds.map((a, i) => (
-                  <div key={`a${i}`}
-                    className="absolute top-1/2 flex h-6 -translate-x-1/2 -translate-y-1/2 items-center gap-1 whitespace-nowrap rounded-full border border-border bg-surface px-2 text-[12px] font-semibold"
-                    style={{ left: `${a.left}%` }}>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 10v4" /></svg>
-                    {a.label}{a.count > 1 ? ` ×${a.count}` : ""}
-                  </div>
-                ))}
+                {sounds.map((a, i) => {
+                  const isPlaying = Boolean(a.snippet_id && playingSnippet === a.snippet_id);
+                  if (a.snippet_id) {
+                    return (
+                      <button
+                        key={`a${i}`}
+                        type="button"
+                        onClick={() => toggleSnippet(a.snippet_id!)}
+                        title={`Play audio snippet (${hhmm(a.ts)})`}
+                        className={`absolute top-1/2 flex h-6 -translate-x-1/2 -translate-y-1/2 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 text-[12px] font-semibold transition-all active:scale-95 cursor-pointer shadow-xs ${
+                          isPlaying
+                            ? "border-accent bg-accent text-white"
+                            : "border-accent/50 bg-surface text-accent hover:border-accent hover:bg-accent/10"
+                        }`}
+                        style={{ left: `${a.left}%` }}
+                      >
+                        {isPlaying ? (
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                        ) : (
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                        )}
+                        <span>{a.label}{a.count > 1 ? ` ×${a.count}` : ""}</span>
+                        <span className="text-[10px] opacity-75 font-mono">0:05</span>
+                      </button>
+                    );
+                  }
+                  return (
+                    <div
+                      key={`a${i}`}
+                      className="absolute top-1/2 flex h-6 -translate-x-1/2 -translate-y-1/2 items-center gap-1 whitespace-nowrap rounded-full border border-border bg-surface px-2 text-[12px] font-semibold"
+                      style={{ left: `${a.left}%` }}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 10v4" /></svg>
+                      {a.label}{a.count > 1 ? ` ×${a.count}` : ""}
+                    </div>
+                  );
+                })}
               </div>
               <div className="relative mt-1.5 h-5">
                 {tickList.map((k, i) => (

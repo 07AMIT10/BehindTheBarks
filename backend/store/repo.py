@@ -13,7 +13,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from backend.store.db import equal_digest, new_id, new_pairing_code, new_token, sha256_hex
-from backend.store.models import KIND_STATION, ROLE_OWNER, Household, PairingCode, Station, Viewer
+from backend.store.models import KIND_STATION, ROLE_OWNER, Household, HouseholdTelegramSubscriber, PairingCode, Station, Viewer
 
 PAIRING_TTL_S = 300.0
 
@@ -207,3 +207,67 @@ def revoke_expired_viewers(session: Session, now: float | None = None) -> int:
 
 def any_of(session: Session, model: Any) -> int:
     return int(session.query(model).count())
+
+
+# -- telegram subscribers -----------------------------------------------------
+def add_telegram_subscriber(session: Session, household_id: str, chat_id: str | int, *,
+                            chat_type: str = "private", title: str = "", label: str = "",
+                            now: float | None = None) -> HouseholdTelegramSubscriber:
+    chat_str = str(chat_id).strip()
+    now = now if now is not None else _now()
+    existing = session.execute(
+        select(HouseholdTelegramSubscriber).where(
+            HouseholdTelegramSubscriber.household_id == household_id,
+            HouseholdTelegramSubscriber.chat_id == chat_str,
+        )
+    ).scalar_one_or_none()
+    if existing:
+        existing.chat_type = chat_type
+        if title:
+            existing.title = title
+        if label:
+            existing.label = label
+        session.flush()
+        return existing
+
+    sub = HouseholdTelegramSubscriber(
+        household_id=household_id,
+        chat_id=chat_str,
+        chat_type=chat_type,
+        title=title,
+        label=label,
+        created_at=now,
+    )
+    session.add(sub)
+    session.flush()
+    return sub
+
+
+def list_telegram_subscribers(session: Session, household_id: str) -> list[HouseholdTelegramSubscriber]:
+    return list(session.execute(
+        select(HouseholdTelegramSubscriber)
+        .where(HouseholdTelegramSubscriber.household_id == household_id)
+        .order_by(HouseholdTelegramSubscriber.created_at.asc())
+    ).scalars().all())
+
+
+def remove_telegram_subscriber(session: Session, household_id: str, subscriber_id: str) -> bool:
+    sub = session.execute(
+        select(HouseholdTelegramSubscriber).where(
+            HouseholdTelegramSubscriber.id == subscriber_id,
+            HouseholdTelegramSubscriber.household_id == household_id,
+        )
+    ).scalar_one_or_none()
+    if sub:
+        session.delete(sub)
+        session.flush()
+        return True
+    return False
+
+
+def get_telegram_subscribers_for_chat(session: Session, chat_id: str | int) -> list[HouseholdTelegramSubscriber]:
+    chat_str = str(chat_id).strip()
+    return list(session.execute(
+        select(HouseholdTelegramSubscriber)
+        .where(HouseholdTelegramSubscriber.chat_id == chat_str)
+    ).scalars().all())

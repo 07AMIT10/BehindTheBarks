@@ -31,11 +31,55 @@ export default function MembersModal({ isOpen, onClose, isOwner, fetchMembers, r
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [telegramSubs, setTelegramSubs] = useState<{ id: string; chat_id: string; chat_type: string; title: string; label: string }[]>([]);
+  const [tgLoading, setTgLoading] = useState(false);
+
+  const loadTelegram = async () => {
+    try {
+      const res = await fetch("/telegram/subscribers");
+      if (res.ok) {
+        const data = await res.json();
+        setTelegramSubs(data.subscribers || []);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const connectTelegram = async () => {
+    setTgLoading(true);
+    try {
+      const res = await fetch("/telegram/link-code", { method: "POST" });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.link) {
+          window.open(data.link, "_blank", "noopener,noreferrer");
+        }
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not generate Telegram link");
+    } finally {
+      setTgLoading(false);
+      setTimeout(loadTelegram, 3000);
+    }
+  };
+
+  const disconnectTelegram = async (subId: string) => {
+    try {
+      const res = await fetch(`/telegram/subscribers/${subId}`, { method: "DELETE" });
+      if (res.ok) {
+        setTelegramSubs((prev) => prev.filter((s) => s.id !== subId));
+      }
+    } catch {
+      // ignore
+    }
+  };
 
   useEffect(() => {
     if (!isOpen) return;
     void fetchMembers().then(setMembers).catch((err) => setError(String(err)));
     void fetchSettings?.().then(setSettings).catch(() => setSettings(null));
+    void loadTelegram();
   }, [isOpen, fetchMembers, fetchSettings]);
 
   const toggle = async (key: keyof Settings) => {
@@ -116,6 +160,46 @@ export default function MembersModal({ isOpen, onClose, isOwner, fetchMembers, r
                   )}
                 </div>
               ))}
+            </section>
+            <section className="border-t border-white/10 pt-3">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-[13px] font-semibold uppercase tracking-wide text-muted">Telegram Family Alerts</h3>
+                {isOwner && (
+                  <button
+                    type="button"
+                    disabled={tgLoading}
+                    onClick={connectTelegram}
+                    className="flex items-center gap-1.5 rounded-lg bg-accent/20 px-2.5 py-1 text-[12px] font-semibold text-accent hover:bg-accent/30 transition-colors cursor-pointer"
+                  >
+                    <span>{tgLoading ? "Opening…" : "+ Link Bot / Group"}</span>
+                  </button>
+                )}
+              </div>
+              <p className="mb-2 text-[12px] text-muted">
+                Receive photo snapshots on barking, comfort action buttons, and anti-spam burst notifications directly in your private chat or family group.
+              </p>
+              {telegramSubs.length === 0 ? (
+                <p className="text-[12px] text-muted italic">No Telegram chats linked yet. Click above to connect.</p>
+              ) : (
+                telegramSubs.map((sub) => (
+                  <div key={sub.id} className="flex items-center justify-between gap-2 py-1.5 text-[14px] text-text">
+                    <span className="truncate flex items-center gap-1.5">
+                      <span>{sub.chat_type === "group" ? "👥" : "👤"}</span>
+                      <span className="font-medium text-white">{sub.title || sub.label || `Chat ${sub.chat_id}`}</span>
+                      <span className="text-[12px] text-muted">({sub.chat_type})</span>
+                    </span>
+                    {isOwner && (
+                      <button
+                        type="button"
+                        onClick={() => disconnectTelegram(sub.id)}
+                        className="shrink-0 h-8 rounded-lg bg-red-600/20 px-3 text-[12px] font-semibold text-red-200 hover:bg-red-600/30 transition-colors cursor-pointer"
+                      >
+                        Unlink
+                      </button>
+                    )}
+                  </div>
+                ))
+              )}
             </section>
             {isOwner && settings && (
               <section>

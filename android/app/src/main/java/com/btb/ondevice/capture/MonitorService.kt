@@ -22,6 +22,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import com.btb.ondevice.audio.AdpcmCodec
 import com.btb.ondevice.audio.AudioPipeline
+import com.btb.ondevice.audio.AudioSnippetBuffer
 import com.btb.ondevice.audio.YamnetClassifier
 import com.btb.ondevice.config.DataConfig
 import com.btb.ondevice.contracts.AudioEvent
@@ -131,6 +132,10 @@ class MonitorService : Service(), LifecycleOwner {
     private val audioSeq = AtomicLong(0L)
     /** Reused PCM16 view of one chunk for the ADPCM encoder (only the microphone thread touches it). */
     private val audioShorts = ShortArray(AdpcmCodec.CHUNK_SAMPLES)
+    /** 5s rolling PCM16 ring buffer for bioacoustic snippets on bark / whimper events. */
+    private val audioSnippetBuffer = AudioSnippetBuffer(sampleRate = 16_000, durationSeconds = 5.0)
+    private var voiceAudioTrack: android.media.AudioTrack? = null
+    private var lastVoiceChunkMs: Long = 0L
     private var currentStatusText: String = "Monitoring room with camera & audio..."
     private val approvalHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val approvalTimeout = Runnable { resolveRaise(RaiseResult.TIMEOUT) }
@@ -504,6 +509,9 @@ class MonitorService : Service(), LifecycleOwner {
                 override fun onCueDownlink(sound: String, light: String?) {
                     playCue(sound, light)
                 }
+                override fun onVoiceDownlink(pcmBytes: ByteArray) {
+                    playVoiceChunk(pcmBytes)
+                }
                 override fun onFlipDownlink() {
                     cameraSource?.flipCamera()
                 }
@@ -655,8 +663,23 @@ class MonitorService : Service(), LifecycleOwner {
                 }
                 val shortArray = ShortArray(pcm16.size / 2)
                 ByteBuffer.wrap(pcm16).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shortArray)
+                audioSnippetBuffer.push(shortArray)
                 val events = pipe.pushAudioPcm16(ts, shortArray)
-                events.forEach { up.sendAudio(it) }
+                events.forEach { event ->
+                    val isBarkOrDistress = (event.label == com.btb.ondevice.contracts.AudioLabel.bark ||
+                                            event.label == com.btb.ondevice.contracts.AudioLabel.whimper ||
+                                            event.label == com.btb.ondevice.contracts.AudioLabel.howl ||
+                                            event.label == com.btb.ondevice.contracts.AudioLabel.growl) &&
+                                           event.score >= 0.65
+                    if (isBarkOrDistress) {
+                        val snipId = "snip_${up.stationId ?: "station"}_${(ts * 1000).toLong()}"
+                        val wavBytes = audioSnippetBuffer.captureWavSnippet(5.0)
+                        up.uploadAudioSnippet(snipId, wavBytes)
+                        up.sendAudio(event.copy(snippetId = snipId, durationS = 5.0))
+                    } else {
+                        up.sendAudio(event)
+                    }
+                }
                 // T3.9: live audio, only in Full mode with a listener (AudioStreamGate), same AudioRecord.
                 streamAudioChunk(up, pcm16)
             }
@@ -814,6 +837,68 @@ class MonitorService : Service(), LifecycleOwner {
 
         if (!lightPattern.isNullOrBlank()) {
             cameraSource?.pulseTorch(lightPattern)
+        }
+    }
+
+    /** Two-way push-to-talk voice downlink playback with canine hearing protection & pre-chime. */
+    fun playVoiceChunk(pcmBytes: ByteArray) {
+        if (pcmBytes.isEmpty()) return
+        val now = System.currentTimeMillis()
+        if (now - lastVoiceChunkMs > 2000L) {
+            // Gentle 150ms canine safety pre-chime so dog isn't startled
+            try {
+                val toneGen = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 80)
+                toneGen.startTone(android.media.ToneGenerator.TONE_PROP_BEEP2, 150)
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    try { toneGen.release() } catch (_: Exception) {}
+                }, 300)
+            } catch (e: Exception) {
+                Log.w("MonitorService", "Failed to play voice pre-chime: ${e.message}")
+            }
+        }
+        lastVoiceChunkMs = now
+
+        try {
+            if (voiceAudioTrack == null) {
+                val sampleRate = 16000
+                val minBufSize = android.media.AudioTrack.getMinBufferSize(
+                    sampleRate,
+                    android.media.AudioFormat.CHANNEL_OUT_MONO,
+                    android.media.AudioFormat.ENCODING_PCM_16BIT
+                )
+                voiceAudioTrack = android.media.AudioTrack.Builder()
+                    .setAudioAttributes(
+                        android.media.AudioAttributes.Builder()
+                            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build()
+                    )
+                    .setAudioFormat(
+                        android.media.AudioFormat.Builder()
+                            .setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT)
+                            .setSampleRate(sampleRate)
+                            .setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO)
+                            .build()
+                    )
+                    .setBufferSizeInBytes(maxOf(minBufSize, 4096))
+                    .setTransferMode(android.media.AudioTrack.MODE_STREAM)
+                    .build()
+                voiceAudioTrack?.play()
+            }
+
+            // Apply dynamic gain limiter on 16-bit PCM samples to protect pet hearing
+            val limited = pcmBytes.clone()
+            for (i in 0 until limited.size - 1 step 2) {
+                var sample = (limited[i].toInt() and 0xFF) or (limited[i + 1].toInt() shl 8)
+                if (sample > 32767) sample -= 65536
+                val clamped = sample.coerceIn(-22000, 22000)
+                limited[i] = (clamped and 0xFF).toByte()
+                limited[i + 1] = ((clamped shr 8) and 0xFF).toByte()
+            }
+
+            voiceAudioTrack?.write(limited, 0, limited.size)
+        } catch (e: Exception) {
+            Log.w("MonitorService", "Failed to play voice chunk: ${e.message}")
         }
     }
 
@@ -994,6 +1079,12 @@ class MonitorService : Service(), LifecycleOwner {
             if (it.isHeld) it.release()
         }
         wakeLock = null
+
+        try {
+            voiceAudioTrack?.stop()
+            voiceAudioTrack?.release()
+            voiceAudioTrack = null
+        } catch (_: Exception) {}
 
         unregisterNetworkCallback()
 

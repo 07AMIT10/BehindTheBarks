@@ -111,7 +111,7 @@ export type NotificationItem = {
   read: boolean;
 };
 
-export type AudioMark = { ts: number; label: AudioLabel; score: number };
+export type AudioMark = { ts: number; label: AudioLabel; score: number; snippet_id?: string | null; duration_s?: number | null };
 
 export type StationView = {
   id: string;

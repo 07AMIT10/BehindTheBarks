@@ -13,9 +13,11 @@ import contextlib
 import hashlib
 import json
 import logging
+import os
 import secrets
 import time
 import uuid
+import httpx
 from urllib.parse import urlparse
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -32,7 +34,7 @@ from backend.demo.clips import load_demo_clips
 from backend.notify import build_notifier
 from backend.store import db as store_db
 from backend.store import repo as store_repo
-from backend.store.models import KIND_STATION, KIND_VIEWER, ROLE_OWNER, ROLE_VIEWER
+from backend.store.models import KIND_STATION, KIND_VIEWER, ROLE_OWNER, ROLE_VIEWER, Household
 from backend.store.models import Viewer as _ViewerRow
 from backend.web.ingest import CLOSE_REVOKED
 from backend.web.auth import Ctx
@@ -1045,6 +1047,29 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             return {"events": ch.hub.history(since), "timeline": ch.runtime.timeline()}
         return {"events": ctx.hub.history(since), "timeline": ctx.runtime.timeline()}
 
+    @app.get("/diary/daily")
+    async def get_daily_diary(ctx: Ctx = Depends(auth_ctx), date: str | None = None, station: str | None = None) -> dict:
+        lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
+        if station:
+            ch = _resolve_channel(lr, station, ctx.household_id)
+            timeline = ch.runtime.timeline() if ch else []
+            treats = list(getattr(ch.pipeline, "_treats", [])) if ch else []
+        else:
+            timeline = ctx.runtime.timeline()
+            treats = list(getattr(ctx.pipeline, "_treats", []))
+
+        dog_name = "Your dog"
+        if households_mode:
+            with app.state.db_session() as session:
+                hh = store_repo.get_household(session, ctx.household_id)
+                if hh and hh.dog_name:
+                    dog_name = hh.dog_name
+        else:
+            dog_name = cfg["web"].get("profile", {}).get("dog_name", "Your dog")
+
+        from backend.analytics.diary import build_daily_diary
+        return build_daily_diary(timeline, treats=treats, dog_name=dog_name, target_date=date)
+
     @app.post("/treat")
     async def treat(ctx: Ctx = Depends(auth_ctx), station: str | None = None, body: dict | None = None) -> dict:
         check_rate_limit("treat", 3.5, ctx.household_id)
@@ -1055,6 +1080,48 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             raise HTTPException(404, f"station {target_station!r} is not active")
         rt = ch.runtime if ch else ctx.runtime
         return {"ts": rt.treat()}
+
+    @app.post("/events/audio-snippet")
+    async def upload_audio_snippet(request: Request) -> dict:
+        snippet_id = request.headers.get("x-snippet-id")
+        if not snippet_id:
+            raise HTTPException(400, "Missing X-Snippet-ID header")
+        safe_snippet_id = "".join(c for c in snippet_id if c.isalnum() or c in ("-", "_"))
+        if not safe_snippet_id:
+            raise HTTPException(400, "Invalid snippet ID")
+
+        household_id = LEGACY
+        station_id = request.headers.get("x-station-id")
+        if households_mode and station_id:
+            with app.state.db_session() as session:
+                st = store_repo.get_station(session, station_id)
+                if st:
+                    household_id = st.household_id
+
+        body = await request.body()
+        if len(body) > 1_000_000:
+            raise HTTPException(413, "Snippet audio payload exceeds maximum size")
+        if len(body) < 44 or body[:4] != b"RIFF":
+            raise HTTPException(400, "Invalid WAV payload")
+
+        snippets_dir = Path("out/snippets") / household_id
+        snippets_dir.mkdir(parents=True, exist_ok=True)
+        out_file = snippets_dir / f"{safe_snippet_id}.wav"
+        out_file.write_bytes(body)
+        return {"ok": True, "snippet_id": safe_snippet_id, "size": len(body)}
+
+    @app.get("/snippets/{snippet_id}")
+    async def get_audio_snippet(snippet_id: str, request: Request, ctx: Ctx = Depends(auth_ctx)) -> FileResponse:
+        safe_snippet_id = "".join(c for c in snippet_id if c.isalnum() or c in ("-", "_"))
+        snippets_dir = Path("out/snippets") / ctx.household_id
+        file_path = snippets_dir / f"{safe_snippet_id}.wav"
+        if not file_path.exists():
+            legacy_file = Path("out/snippets") / LEGACY / f"{safe_snippet_id}.wav"
+            if legacy_file.exists():
+                file_path = legacy_file
+            else:
+                raise HTTPException(404, "Audio snippet not found")
+        return FileResponse(file_path, media_type="audio/wav", headers={"Cache-Control": "public, max-age=86400"})
 
     @app.post("/torch")
     async def set_torch(ctx: Ctx = Depends(auth_ctx), station: str | None = None, body: dict | None = None) -> dict:
@@ -1103,6 +1170,200 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         light = body.get("light") if isinstance(body, dict) else None
         sent = bool(fn(sound=sound, light=light))
         return {"ok": True, "sound": sound, "light": light, "sent": sent}
+
+    @app.post("/voice/chunk")
+    async def send_voice_chunk(ctx: Ctx = Depends(auth_ctx), body: dict | None = None) -> dict:
+        if not isinstance(body, dict) or "pcm" not in body:
+            raise HTTPException(400, "Missing 'pcm' base64 audio data")
+        pcm_base64 = str(body["pcm"])
+        if len(pcm_base64) > 350_000:
+            raise HTTPException(413, "Voice chunk exceeds maximum size")
+        target_station = body.get("station")
+        lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
+        ch = _resolve_channel(lr, target_station, ctx.household_id)
+        if target_station and ch is None:
+            raise HTTPException(404, f"station {target_station!r} is not active")
+        pipeline = ch.pipeline if ch else ctx.pipeline
+        fn = getattr(pipeline, "send_voice", None)
+        if fn is None:
+            raise HTTPException(400, "station pipeline does not support 'send_voice'")
+        sent = bool(fn(pcm_base64))
+        return {"ok": True, "sent": sent}
+
+    @app.post("/telegram/link-code")
+    async def create_telegram_link_code(ctx: Ctx = Depends(auth_ctx)) -> dict:
+        check_rate_limit("tg_link", 1.0, ctx.household_id)
+        bot_token = os.environ.get("TELEGRAM_BOT_TOKEN") or cfg["web"].get("notify", {}).get("telegram", {}).get("token", "")
+        bot_username = os.environ.get("TELEGRAM_BOT_USERNAME") or cfg["web"].get("notify", {}).get("telegram", {}).get("username", "WagWatchBot")
+        with app.state.db_session() as session:
+            if ctx.household_id == LEGACY:
+                hh = store_repo.get_household(session, LEGACY)
+                if not hh:
+                    hh = Household(
+                        id=LEGACY,
+                        name="Default Household",
+                        dog_name=cfg["web"].get("profile", {}).get("dog_name", "Your dog"),
+                        location="",
+                        recovery_hash="legacy",
+                        llm_enabled=False,
+                        log_enabled=False,
+                        created_at=time.time(),
+                        deleted_at=None,
+                    )
+                    session.add(hh)
+                    session.flush()
+
+            code = store_repo.create_pairing_code(session, household_id=ctx.household_id, kind="telegram", ttl_s=600.0)
+            session.commit()
+        deep_link = f"https://t.me/{bot_username}?start=link_{code}"
+        return {
+            "ok": True,
+            "code": code,
+            "link": deep_link,
+            "bot_username": bot_username,
+            "has_token": bool(bot_token),
+            "expires_in_s": 600,
+        }
+
+    @app.get("/telegram/subscribers")
+    async def get_telegram_subscribers(ctx: Ctx = Depends(auth_ctx)) -> dict:
+        with app.state.db_session() as session:
+            subs = store_repo.list_telegram_subscribers(session, ctx.household_id)
+            return {
+                "ok": True,
+                "subscribers": [
+                    {
+                        "id": s.id,
+                        "chat_id": s.chat_id,
+                        "chat_type": s.chat_type,
+                        "title": s.title,
+                        "label": s.label,
+                        "created_at": s.created_at,
+                    }
+                    for s in subs
+                ],
+            }
+
+    @app.delete("/telegram/subscribers/{subscriber_id}")
+    async def delete_telegram_subscriber(subscriber_id: str, ctx: Ctx = Depends(auth_ctx)) -> dict:
+        with app.state.db_session() as session:
+            ok = store_repo.remove_telegram_subscriber(session, ctx.household_id, subscriber_id)
+            session.commit()
+            if not ok:
+                raise HTTPException(404, "Subscriber not found")
+        return {"ok": True}
+
+    @app.post("/telegram/webhook")
+    async def telegram_webhook(request: Request) -> dict:
+        body = await request.json()
+        bot_token = os.environ.get("TELEGRAM_BOT_TOKEN") or cfg["web"].get("notify", {}).get("telegram", {}).get("token", "")
+
+        async def _tg_api(method: str, data: dict) -> dict:
+            if not bot_token:
+                return {}
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                try:
+                    r = await client.post(f"https://api.telegram.org/bot{bot_token}/{method}", json=data)
+                    return r.json() if r.status_code == 200 else {}
+                except Exception:
+                    return {}
+
+        # 1. Handle incoming text commands (/start link_..., /connect link_...)
+        msg = body.get("message")
+        if isinstance(msg, dict):
+            text = (msg.get("text") or "").strip()
+            chat = msg.get("chat", {})
+            chat_id = str(chat.get("id"))
+            chat_type = chat.get("type", "private")
+            chat_title = chat.get("title") or ""
+            from_user = msg.get("from", {})
+            user_label = from_user.get("first_name") or from_user.get("username") or ""
+
+            token_candidate = None
+            if text.startswith("/start"):
+                parts = text.split(maxsplit=1)
+                if len(parts) > 1:
+                    token_candidate = parts[1].removeprefix("link_").strip()
+            elif text.startswith("/connect"):
+                parts = text.split(maxsplit=1)
+                if len(parts) > 1:
+                    token_candidate = parts[1].removeprefix("link_").strip()
+
+            if token_candidate:
+                with app.state.db_session() as session:
+                    pair = store_repo.consume_pairing_code(session, token_candidate, kind="telegram")
+                    if pair:
+                        store_repo.add_telegram_subscriber(
+                            session,
+                            pair.household_id,
+                            chat_id,
+                            chat_type=chat_type,
+                            title=chat_title,
+                            label=user_label,
+                        )
+                        hh = store_repo.get_household(session, pair.household_id)
+                        dog_name = hh.dog_name if hh else "Your dog"
+                        session.commit()
+                        await _tg_api("sendMessage", {
+                            "chat_id": chat_id,
+                            "text": f"🎉 Connected to 🐾 *{dog_name}'s WagWatch*!\n\nYou will receive real-time snapshots, bark alerts, and instant remote comfort buttons in this chat.",
+                            "parse_mode": "Markdown",
+                        })
+                        return {"ok": True, "connected": True}
+                    else:
+                        await _tg_api("sendMessage", {
+                            "chat_id": chat_id,
+                            "text": "⚠️ This WagWatch connection link has expired or was already used. Please generate a new link in WagWatch Settings.",
+                        })
+                        return {"ok": True, "error": "expired"}
+
+        # 2. Handle interactive button callbacks (treat, cue)
+        cb = body.get("callback_query")
+        if isinstance(cb, dict):
+            cb_id = cb.get("id")
+            cb_data = (cb.get("data") or "").strip()
+            cb_msg = cb.get("message", {})
+            cb_chat_id = cb_msg.get("chat", {}).get("id")
+            cb_msg_id = cb_msg.get("message_id")
+            from_user = cb.get("from", {})
+            user_name = from_user.get("first_name") or from_user.get("username") or "Pet Parent"
+
+            if cb_data.startswith("treat:"):
+                hid = cb_data.removeprefix("treat:")
+                lr = app.state.registry.peek(hid) or await app.state.registry.get(hid)
+                rt = lr.runtime if lr else None
+                if rt:
+                    rt.treat()
+                await _tg_api("answerCallbackQuery", {"callback_query_id": cb_id, "text": "🍖 Treat dropped for dog!"})
+                cur_caption = cb_msg.get("caption") or cb_msg.get("text") or "🐾 Dog update"
+                updated_cap = cur_caption + f"\n\n🍖 Treat dropped by {user_name} just now!"
+                if "caption" in cb_msg:
+                    await _tg_api("editMessageCaption", {
+                        "chat_id": cb_chat_id,
+                        "message_id": cb_msg_id,
+                        "caption": updated_cap,
+                    })
+                else:
+                    await _tg_api("editMessageText", {
+                        "chat_id": cb_chat_id,
+                        "message_id": cb_msg_id,
+                        "text": updated_cap,
+                    })
+                return {"ok": True, "action": "treat"}
+
+            elif cb_data.startswith("cue:"):
+                parts = cb_data.split(":")
+                sound = parts[1] if len(parts) > 1 else "squeak"
+                hid = parts[2] if len(parts) > 2 else "default"
+                lr = app.state.registry.peek(hid) or await app.state.registry.get(hid)
+                ch = _resolve_channel(lr, None, hid) if lr else None
+                pipeline = ch.pipeline if ch else getattr(lr, "pipeline", None)
+                if pipeline and hasattr(pipeline, "send_cue"):
+                    pipeline.send_cue(sound=sound)
+                await _tg_api("answerCallbackQuery", {"callback_query_id": cb_id, "text": f"🔔 {sound.capitalize()} sound played on station!"})
+                return {"ok": True, "action": f"cue:{sound}"}
+
+        return {"ok": True}
 
     @app.get("/profile")
     async def get_profile(ctx: Ctx = Depends(auth_ctx)) -> dict:

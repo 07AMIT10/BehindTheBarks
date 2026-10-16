@@ -16,8 +16,10 @@ import kotlinx.serialization.json.double
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
@@ -43,6 +45,7 @@ interface EventUploaderListener {
     fun onConfigDownlink(configJson: String) {}
     fun onTorchDownlink(enabled: Boolean) {}
     fun onCueDownlink(sound: String, light: String?) {}
+    fun onVoiceDownlink(pcmBytes: ByteArray) {}
     fun onFlipDownlink() {}
     fun onPrivacyDownlink(enabled: Boolean) {}
     /** T2.5: the server refused the station's identity (4401) or revoked it (4410): pair again. */
@@ -341,6 +344,20 @@ class EventUploader(
                     val light = data?.get("light")?.jsonPrimitive?.content
                     listener?.onCueDownlink(sound, light)
                 }
+                "voice" -> {
+                    val data = root["data"]?.jsonObject
+                    val base64Pcm = data?.get("pcm")?.jsonPrimitive?.content
+                    if (!base64Pcm.isNullOrBlank()) {
+                        try {
+                            val pcmBytes = android.util.Base64.decode(base64Pcm, android.util.Base64.DEFAULT)
+                            listener?.onVoiceDownlink(pcmBytes)
+                        } catch (e: Exception) {
+                            try {
+                                android.util.Log.w("EventUploader", "Failed to decode voice PCM: ${e.message}")
+                            } catch (_: Throwable) {}
+                        }
+                    }
+                }
                 "flip" -> {
                     listener?.onFlipDownlink()
                 }
@@ -503,6 +520,45 @@ class EventUploader(
         }
         // Spool when disconnected or send failed
         return spool?.enqueue("audio", audio.ts, jsonPayload) ?: false
+    }
+
+    /**
+     * Upload a 5-second canine bioacoustic WAV snippet for instant timeline replay.
+     */
+    fun uploadAudioSnippet(snippetId: String, wavBytes: ByteArray) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val cleanUrl = serverUrl.trim()
+                val base = when {
+                    cleanUrl.startsWith("ws://") -> "http://" + cleanUrl.removePrefix("ws://")
+                    cleanUrl.startsWith("wss://") -> "https://" + cleanUrl.removePrefix("wss://")
+                    else -> cleanUrl
+                }.substringBefore("/ingest-events").trimEnd('/')
+
+                val httpUrl = "$base/events/audio-snippet"
+                val mediaType = "audio/wav".toMediaTypeOrNull()
+                val reqBody = wavBytes.toRequestBody(mediaType)
+                val reqBuilder = Request.Builder()
+                    .url(httpUrl)
+                    .header("X-Snippet-ID", snippetId)
+                    .post(reqBody)
+
+                if (!stationId.isNullOrEmpty()) {
+                    reqBuilder.header("X-Station-ID", stationId)
+                }
+                if (!token.isNullOrEmpty()) {
+                    reqBuilder.header("Authorization", "Bearer $token")
+                }
+
+                okHttpClient.newCall(reqBuilder.build()).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        android.util.Log.w("EventUploader", "Snippet upload failed: HTTP ${response.code}")
+                    }
+                }
+            } catch (t: Throwable) {
+                android.util.Log.w("EventUploader", "Snippet upload error: ${t.message}")
+            }
+        }
     }
 
     fun sendRules(rules: RulesLabel): Boolean {

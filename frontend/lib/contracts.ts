@@ -32,6 +32,8 @@ export interface AudioEvent {
   ts: number;
   label: AudioLabel;
   score: number;
+  snippet_id: string | null;
+  duration_s: number | null;
 }
 
 export interface RulesLabel {

@@ -10,6 +10,8 @@ import { useListen } from "@/lib/useListen";
 import type { ModeRequestResult, ViewMode } from "@/lib/types";
 import { ModeSheet } from "./ModeSheet";
 import { ListenButton, ListenStatus } from "./ListenButton";
+import { useTalk } from "@/lib/useTalk";
+import { TalkButton } from "./TalkButton";
 
 type Props = {
   http: string;
@@ -98,6 +100,13 @@ export default function VideoPanel({
     token,
     station,
     maxIdleSec,
+  });
+
+  const talk = useTalk({
+    http,
+    token,
+    stationId: station,
+    disabled: !signedIn || blackoutPaused || dropped || idle || effectiveMode === "blackout",
   });
 
   const bbox = frame?.dog_detected && frame.bbox ? frame.bbox : null;
@@ -578,6 +587,11 @@ export default function VideoPanel({
               </button>
             ) : null}
             <ListenButton control={listen} variant="bar" />
+            <TalkButton
+              control={talk}
+              variant="bar"
+              disabled={!signedIn || blackoutPaused || dropped || idle || effectiveMode === "blackout"}
+            />
           </div>
 
           <div role="group" aria-label="Overlay layers" className="hidden gap-0.5 rounded-md p-1 sm:flex" style={scrim}>
@@ -683,8 +697,13 @@ export default function VideoPanel({
                 </button>
               ) : null}
             </div>
-            <div className="mt-3">
+            <div className="mt-3 flex flex-col gap-2">
               <ListenButton control={listen} variant="sheet" />
+              <TalkButton
+                control={talk}
+                variant="sheet"
+                disabled={!signedIn || blackoutPaused || dropped || idle || effectiveMode === "blackout"}
+              />
             </div>
             <div className="mt-3 flex gap-2">
               {(["box", "skeleton", "face"] as const).map((k) => (
