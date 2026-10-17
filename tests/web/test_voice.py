@@ -16,7 +16,8 @@ class NoLLM:
 def test_voice_chunk_endpoint(tmp_path: Path):
     cfg = load_config(tmp_path / "none.yaml", env={})
     cfg["web"]["log_dir"] = str(tmp_path / "out")
-    app = create_app(cfg, pipeline=MockPipeline(cfg), interpreter=NoLLM(), notifier=DashboardOnlyNotifier())
+    pipe = MockPipeline(cfg)  # same instance must be handed to the app below
+    app = create_app(cfg, pipeline=pipe, interpreter=NoLLM(), notifier=DashboardOnlyNotifier())
     with TestClient(app) as client:
         # 1. Missing body
         r = client.post("/voice/chunk", json={})
@@ -34,4 +35,7 @@ def test_voice_chunk_endpoint(tmp_path: Path):
         assert r.status_code == 200
         data = r.json()
         assert data["ok"] is True
+        # `sent` alone is a constant (MockPipeline.send_voice returns True even if the server dropped
+        # the chunk); the real observable is the mock recording the exact base64 it was handed.
         assert data["sent"] is True
+        assert pipe._last_voice == b64
