@@ -12,7 +12,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA="$ROOT/out/flowtest"
 PIDFILE="$DATA/backend.pid"
-SERIAL="${ADB_SERIAL:-R9ZY80PKWTW}"
+SERIAL="${ADB_SERIAL:-}"
 PORT=8000
 
 # Sets LISTENING (1 if something accepts TCP on 127.0.0.1:$1), LISTEN_PIDS (space-separated pids of the listeners,
@@ -106,10 +106,12 @@ elif [[ "$STOPPED" == 1 ]]; then
   echo "port $PORT is now free"
 fi
 
-if [[ "$(adb -s "$SERIAL" get-state 2>/dev/null || true)" == "device" ]]; then
+if [[ -z "$SERIAL" ]]; then
+  echo "ADB_SERIAL is unset; phone-side adb steps skipped (app not force-stopped, adb reverse left as-is)"
+elif [[ "$(adb -s "$SERIAL" get-state 2>/dev/null || true)" == "device" ]]; then
   adb -s "$SERIAL" reverse --remove "tcp:$PORT" >/dev/null 2>&1 && echo "adb reverse tcp:$PORT removed" \
     || echo "no adb reverse rule for tcp:$PORT"
   adb -s "$SERIAL" shell am force-stop com.btb.ondevice && echo "app force-stopped"
 else
-  echo "phone $SERIAL not connected; adb steps skipped"
+  echo "phone with serial \$ADB_SERIAL not connected; adb steps skipped"
 fi

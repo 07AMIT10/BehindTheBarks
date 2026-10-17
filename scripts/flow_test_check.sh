@@ -9,7 +9,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA="$ROOT/out/flowtest"
 PIDFILE="$DATA/backend.pid"
-SERIAL="${ADB_SERIAL:-R9ZY80PKWTW}"
+SERIAL="${ADB_SERIAL:-}"
 PORT=8000
 PKG=com.btb.ondevice
 FAILS=0
@@ -79,12 +79,18 @@ else
   fail "dashboard build missing (scripts/flow_test_up.sh builds it)"
 fi
 
-# 4. adb device present and authorised
-STATE="$(adb -s "$SERIAL" get-state 2>/dev/null || true)"
-if [[ "$STATE" == "device" ]]; then
-  pass "adb device $SERIAL is connected and authorised"
+# 4. adb device present and authorised (ADB_SERIAL must be exported: the previous hard-coded
+#    default serial was removed for the flow-test too, see scripts/flow_test_up.sh)
+if [[ -z "$SERIAL" ]]; then
+  STATE=""
+  fail "ADB_SERIAL is not set — export it to the phone serial printed by 'adb devices'"
 else
-  fail "adb device $SERIAL not in 'device' state (got '${STATE:-nothing}'); check the USB cable and the USB debugging prompt"
+  STATE="$(adb -s "$SERIAL" get-state 2>/dev/null || true)"
+  if [[ "$STATE" == "device" ]]; then
+    pass "adb device $SERIAL is connected and authorised"
+  else
+    fail "adb device $SERIAL not in 'device' state (got '${STATE:-nothing}'); check the USB cable and the USB debugging prompt"
+  fi
 fi
 
 if [[ "$STATE" == "device" ]]; then

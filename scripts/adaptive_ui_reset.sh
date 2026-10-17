@@ -5,13 +5,17 @@
 #
 # Originals come from, in order: the environment (FONT_SCALE, ACCEL_ROTATION, USER_ROTATION), the file
 # the matrix writes before it changes anything (/tmp/btb-display-orig.env), then the defaults
-# 1.0 / 1 / 0. Serial: ANDROID_SERIAL, default R9ZY80PKWTW.
+# 1.0 / 1 / 0. Serial: ANDROID_SERIAL (required; previously a hard-coded default, removed).
 #
 #   scripts/adaptive_ui_reset.sh
 
 set -euo pipefail
 
-SERIAL="${ANDROID_SERIAL:-R9ZY80PKWTW}"
+SERIAL="${ANDROID_SERIAL:-}"
+if [[ -z "$SERIAL" ]]; then
+  echo "error: ANDROID_SERIAL is not set — export it to the device serial (adb devices) to restore" >&2
+  exit 2
+fi
 ORIG_FILE="${BTB_DISPLAY_ORIG_FILE:-/tmp/btb-display-orig.env}"
 
 if [[ -f "$ORIG_FILE" ]]; then

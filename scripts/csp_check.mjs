@@ -15,11 +15,17 @@
 //
 // Start the backends yourself (see docs/SECURITY_HARDENING.md) and stop them afterwards.
 
+import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
 const PW = process.env.BTB_PLAYWRIGHT || "/tmp/pptr/node_modules/playwright-core/index.mjs";
 const { chromium } = await import(pathToFileURL(PW).href);
-const CHROME = process.env.BTB_CHROME || "/home/amit/.local/bin/google-chrome";
+const CHROME = process.env.BTB_CHROME
+  || (spawnSync("google-chrome", ["--version"], { stdio: "ignore" }).status === 0 ? "google-chrome" : null);
+if (!CHROME) {
+  console.error("csp_check.mjs: BTB_CHROME is not set and no google-chrome on PATH — set BTB_CHROME=/path/to/chrome");
+  process.exit(2);
+}
 const HARD_LIMIT_MS = 120000;
 const RENDER_TIMEOUT_MS = 15000;
 const CSP_WORDS = /content[- ]security[- ]policy/i;

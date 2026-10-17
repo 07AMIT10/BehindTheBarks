@@ -47,9 +47,9 @@ REPO = Path(__file__).resolve().parent.parent
 PORT = 8000
 BASE = f"http://127.0.0.1:{PORT}"
 INGEST_URL = f"ws://127.0.0.1:{PORT}/ingest-events"
-SERIAL = os.environ.get("ADB_SERIAL", "R9ZY80PKWTW")
+SERIAL = os.environ.get("ADB_SERIAL", "")  # empty -> preflight below refuses, no hard-coded default
 PKG = "com.btb.ondevice"
-CHROME = os.environ.get("BTB_CHROME", "/home/amit/.local/bin/google-chrome")
+CHROME = os.environ.get("BTB_CHROME", "google-chrome")  # plain PATH name replaces the old hard-coded path
 PY = str(REPO / ".venv" / "bin" / "python")
 DEFAULT_REPORT = REPO / "docs" / "ACCEPTANCE_2026-10-10.md"
 MODE_SEQUENCE = ["privacy", "limited", "blackout", "full"]
@@ -61,7 +61,8 @@ from backend.web import audio_codec as ac  # noqa: E402  (reference ADPCM codec,
 # ----------------------------------------------------------------------------- adb / phone helpers
 
 def adb(*args: str, timeout: float = 30.0) -> str:
-    res = subprocess.run(["adb", "-s", SERIAL, *args], capture_output=True, text=True, timeout=timeout)
+    cmd = ["adb"] + (["-s", SERIAL] if SERIAL else []) + list(args)
+    res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     return (res.stdout or "") + (res.stderr or "")
 
 
@@ -1427,6 +1428,10 @@ CHECKS = PIN_CHECKS + HOUSEHOLDS_CHECKS
 # ----------------------------------------------------------------------------- preflight, report, main
 
 def preflight() -> None:
+    if not SERIAL:
+        raise RuntimeError(
+            "ADB_SERIAL is not set; export it to the phone serial printed by 'adb devices' and rerun."
+        )
     devices = subprocess.run(["adb", "devices"], capture_output=True, text=True, timeout=20).stdout
     if not re.search(rf"^{re.escape(SERIAL)}\s+device$", devices, re.M):
         raise RuntimeError(f"adb device {SERIAL} not in 'device' state:\n{devices}")

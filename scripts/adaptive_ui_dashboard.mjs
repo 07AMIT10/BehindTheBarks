@@ -13,13 +13,19 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PW = process.env.BTB_PLAYWRIGHT || "/tmp/pptr/node_modules/playwright-core/index.mjs";
 const { chromium } = await import(pathToFileURL(PW).href);
-const CHROME = process.env.BTB_CHROME || "/home/amit/.local/bin/google-chrome";
+const CHROME = process.env.BTB_CHROME
+  || (spawnSync("google-chrome", ["--version"], { stdio: "ignore" }).status === 0 ? "google-chrome" : null);
+if (!CHROME) {
+  console.error("adaptive_ui_dashboard.mjs: BTB_CHROME is not set and no google-chrome on PATH — set BTB_CHROME=/path/to/chrome");
+  process.exit(2);
+}
 const PY = process.env.BTB_PY || path.join(REPO, ".venv/bin/python");
 const SIM = path.join(REPO, "scripts/sim_phone.py");
 
@@ -566,7 +572,7 @@ function renderReport(data, before) {
     "Build the frontend (`npm --prefix frontend run build`); the backends serve `frontend/out`.",
     "Pin mode: `WEB_PIPELINE=remote .venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8010` (a fresh start is idle, which the idle state needs).",
     "Households mode: `WEB_PIPELINE=remote BTB_AUTH_MODE=households BTB_DATABASE_URL=sqlite:////tmp/btb-hh/btb.db .venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8011`. Its event log still goes to `out/` (log_dir is not an env setting), so use a dev checkout you can throw away.",
-    "Run `node scripts/adaptive_ui_dashboard.mjs` (flags: `--states`, `--viewports`, `--json`, `--compare`, `--render <json>` to re-render this report without a browser). It needs playwright-core in `/tmp/pptr` (`cd /tmp && npm i playwright-core`) and the system Chrome at `/home/amit/.local/bin/google-chrome` (override with `BTB_PLAYWRIGHT`, `BTB_CHROME`).",
+    "Run `node scripts/adaptive_ui_dashboard.mjs` (flags: `--states`, `--viewports`, `--json`, `--compare`, `--render <json>` to re-render this report without a browser). It needs playwright-core in `/tmp/pptr` (`cd /tmp && npm i playwright-core`) and the system Chrome (set `BTB_CHROME`, or a plain `google-chrome` on PATH).",
   ]) L.push(`- ${line}`);
   L.push("");
   L.push("## Method and limits", "");

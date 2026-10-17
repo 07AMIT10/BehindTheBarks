@@ -1,5 +1,5 @@
 // Screenshot the dashboard at an exact viewport with the system Chrome (no repo dependency:
-// playwright-core ships no browsers, so /home/amit/.local/bin/google-chrome is used headless).
+// playwright-core ships no browsers; use BTB_CHROME or a plain google-chrome from PATH, headless).
 //
 //   node scripts/shot.mjs <url> <width> <height> <out.png> [--settle-ms 3000] [--wait-for "text"]
 //
@@ -7,9 +7,15 @@
 // Unlike `chrome --headless --virtual-time-budget`, an open WebSocket (the live dashboard) does not
 // hang this: the page settles for --settle-ms or until --wait-for text appears.
 
+import { spawnSync } from "node:child_process";
 import { chromium } from "/tmp/pptr/node_modules/playwright-core/index.mjs";
 
-const CHROME = process.env.BTB_CHROME || "/home/amit/.local/bin/google-chrome";
+const CHROME = process.env.BTB_CHROME
+  || (spawnSync("google-chrome", ["--version"], { stdio: "ignore" }).status === 0 ? "google-chrome" : null);
+if (!CHROME) {
+  console.error("shot.mjs: BTB_CHROME is not set and no google-chrome on PATH — set BTB_CHROME=/path/to/chrome");
+  process.exit(2);
+}
 
 async function main() {
   const [url, w, h, out] = process.argv.slice(2).filter((a) => !a.startsWith("--"));

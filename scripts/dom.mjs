@@ -1,18 +1,26 @@
 // Print the rendered text of a dashboard page: a replacement for `chrome --dump-dom`, which hangs while
+// Print the rendered text of a dashboard page: a replacement for `chrome --dump-dom`, which hangs while
 // the dashboard keeps an MJPEG <img> (/video) open for a dropped phone.
 //
 //   node scripts/dom.mjs <url> [--wait-for "text"] [--cookie "name=value"]
 //
 // --cookie sets one cookie for the page's origin (households mode: the owner's btb_session).
 //
-// Navigates with the system Chrome (playwright-core ships no browser), waits for the `load` event
+// Navigates with the system Chrome (playwright-core ships no browser; BTB_CHROME, or plain
+// google-chrome found on PATH), waits for the `load` event
 // (never for network idle, which an MJPEG stream prevents), waits up to 6 s for the dashboard to render
 // (past its "Loading WagWatch…" placeholder), then waits up to 6 s for --wait-for text if given, and prints document.body.innerText to stdout. The whole run is capped at 12 s: on timeout
 // it exits 124 with a message on stderr and whatever Chrome it started is closed.
 
+import { spawnSync } from "node:child_process";
 import { chromium } from "/tmp/pptr/node_modules/playwright-core/index.mjs";
 
-const CHROME = process.env.BTB_CHROME || "/home/amit/.local/bin/google-chrome";
+const CHROME = process.env.BTB_CHROME
+  || (spawnSync("google-chrome", ["--version"], { stdio: "ignore" }).status === 0 ? "google-chrome" : null);
+if (!CHROME) {
+  console.error("dom.mjs: BTB_CHROME is not set and no google-chrome on PATH — set BTB_CHROME=/path/to/chrome");
+  process.exit(2);
+}
 const HARD_LIMIT_MS = 12000;
 const WAIT_FOR_MS = 6000;
 

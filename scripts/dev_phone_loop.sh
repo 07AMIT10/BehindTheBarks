@@ -19,7 +19,9 @@ cd "$REPO_ROOT"
 BACKEND_PORT="${BTB_PORT:-8000}"
 BACKEND_LOG="${BTB_BACKEND_LOG:-/tmp/btb-backend.log}"
 BACKEND_PID_FILE="/tmp/btb-backend.pid"
-CHROME="${BTB_CHROME:-/home/amit/.local/bin/google-chrome}"
+# Chrome for the shot command: BTB_CHROME, else a plain `google-chrome` PATH lookup at use time
+# (the previous hard-coded /home/amit/.local/bin/google-chrome default was removed).
+CHROME="${BTB_CHROME:-}"
 DASH_URL="http://localhost:${BACKEND_PORT}/"
 INGEST_URL="ws://127.0.0.1:${BACKEND_PORT}/ingest-events"
 
@@ -88,6 +90,13 @@ shot() {
   local width="${1:?usage: shot <width> <out.png> [url]}"
   local out="${2:?usage: shot <width> <out.png> [url]}"
   local url="${3:-$DASH_URL}"
+  if [[ -z "$CHROME" ]]; then
+    CHROME="$(command -v google-chrome 2>/dev/null || true)"
+  fi
+  if [[ -z "$CHROME" ]]; then
+    echo "error: BTB_CHROME is not set and no google-chrome on PATH — export BTB_CHROME=/path/to/chrome" >&2
+    return 1
+  fi
   "$CHROME" --headless=new --no-sandbox --hide-scrollbars \
     --window-size="${width},844" --virtual-time-budget=8000 \
     --screenshot="$out" "$url" >/dev/null 2>&1

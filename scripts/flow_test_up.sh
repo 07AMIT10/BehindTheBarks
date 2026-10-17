@@ -14,7 +14,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA="$ROOT/out/flowtest"
 PY="$ROOT/.venv/bin/python"
 PORT=8000
-SERIAL="${ADB_SERIAL:-R9ZY80PKWTW}"
+SERIAL="${ADB_SERIAL:-}"
 PIDFILE="$DATA/backend.pid"
 LOG="$DATA/backend.log"
 
@@ -122,7 +122,9 @@ if [[ "$healthy" != 1 ]]; then
 fi
 
 PHONE="no phone connected over USB (the phone-side steps need one)"
-if [[ "$(adb -s "$SERIAL" get-state 2>/dev/null || true)" == "device" ]]; then
+if [[ -z "$SERIAL" ]]; then
+  echo "note: ADB_SERIAL is unset — export it to your phone's serial (adb devices) for the phone-side steps; adb skipped." >&2
+elif [[ "$(adb -s "$SERIAL" get-state 2>/dev/null || true)" == "device" ]]; then
   adb -s "$SERIAL" reverse tcp:$PORT tcp:$PORT >/dev/null
   PHONE="phone $SERIAL connected; adb reverse tcp:$PORT -> tcp:$PORT set"
 fi
