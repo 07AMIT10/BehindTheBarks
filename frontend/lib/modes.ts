@@ -85,6 +85,18 @@ export function modeResultLabel(result: ModeRequestResult["result"]): string {
   }
 }
 
+/** Compact version for the mode sheet's pending notice: "Station: <answer>". */
+export function stationAnswerLabel(result: ModeRequestResult["result"]): string {
+  switch (result) {
+    case "allowed":
+      return "accepted";
+    case "denied":
+      return "rejected";
+    case "timeout":
+      return "no answer";
+  }
+}
+
 export function modeRank(mode: ViewMode): number {
   const idx = MODE_ORDER.indexOf(mode);
   return idx === -1 ? 0 : idx;

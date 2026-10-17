@@ -1,7 +1,7 @@
 import React, { useState, useRef } from "react";
 import { useDialog } from "@/lib/useDialog";
 import type { ModeRequestResult, ViewMode } from "../lib/types";
-import { CONFIGURABLE_MODES, isModeAllowed } from "../lib/modes";
+import { CONFIGURABLE_MODES, isModeAllowed, stationAnswerLabel } from "../lib/modes";
 
 interface ModeSheetProps {
   isOpen: boolean;
@@ -27,6 +27,7 @@ export const ModeSheet: React.FC<ModeSheetProps> = ({
   isOwner = true,
   onSetMode,
   onPeek,
+  requestResult = null,
 }) => {
   const [selectedMode, setSelectedMode] = useState<ViewMode | null>(null);
   const [noticeMsg, setNoticeMsg] = useState<string | null>(null);
@@ -99,7 +100,12 @@ export const ModeSheet: React.FC<ModeSheetProps> = ({
         {/* Optional status notice (non-blocking) */}
         {noticeMsg && (
           <div className="mt-4 flex items-center justify-between rounded-xl border border-sky-500/30 bg-sky-500/10 p-3 text-xs text-sky-200">
-            <span>{noticeMsg}</span>
+            <span>
+              {noticeMsg}
+              {requestResult && (
+                <span className="ml-2 text-[11px] text-sky-300/80">Station: {stationAnswerLabel(requestResult.result)}</span>
+              )}
+            </span>
             <button
               onClick={() => setNoticeMsg(null)}
               className="rounded px-2 py-0.5 font-medium bg-sky-600/40 hover:bg-sky-600/60"

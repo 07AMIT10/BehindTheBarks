@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { MODE_METADATA, MODE_ORDER, isModeAllowed, minMode, modeRank, modeResultLabel } from "./modes";
+import { MODE_METADATA, MODE_ORDER, isModeAllowed, minMode, modeRank, modeResultLabel, stationAnswerLabel } from "./modes";
+
+describe("stationAnswerLabel", () => {
+  it("labels the phone's answer compactly for the mode sheet", () => {
+    expect(stationAnswerLabel("allowed")).toBe("accepted");
+    expect(stationAnswerLabel("denied")).toBe("rejected");
+    expect(stationAnswerLabel("timeout")).toBe("no answer");
+  });
+});
 
 describe("modes library (T3.6)", () => {
   it("enforces strict mode ordering", () => {
