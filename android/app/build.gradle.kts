@@ -24,6 +24,27 @@ val releaseKeystoreFile: PlainFile = PlainFile(releaseKeystorePath).let {
 val allowCleartextRelease = (project.findProperty("btbAllowCleartextRelease") as? String)
     ?.equals("true", ignoreCase = true) == true
 
+// M7: release signing credentials come from the environment or -P properties, one lookup each,
+// never from a baked-in default (the old "behindthebarks"/"btb_release" fallback signed real
+// uploads with a password anyone could read in git).
+fun releaseCredential(property: String, envVar: String): String? =
+    System.getenv(envVar)?.takeIf { it.isNotBlank() }
+        ?: (project.findProperty(property) as? String)?.takeIf { it.isNotBlank() }
+
+val releaseKeystorePassword = releaseCredential("btbKeystorePassword", "BTB_KEYSTORE_PASSWORD")
+val releaseKeyAlias = releaseCredential("btbKeyAlias", "BTB_KEY_ALIAS")
+// The key password may conventionally equal the keystore password (scripts/generate_release_keystore.sh
+// generates both with the same passphrase), so it falls back to the store password - a convention,
+// not a hardcoded secret, and it keeps CI/documented flows working when only three of four vars are set.
+val releaseKeyPassword = releaseCredential("btbKeyPassword", "BTB_KEY_PASSWORD") ?: releaseKeystorePassword
+
+// M7: which credentials are still missing for a release build of the existing keystore.
+val missingReleaseCredentials: List<String> = buildList {
+    if (releaseKeystorePassword.isNullOrBlank()) add("BTB_KEYSTORE_PASSWORD (or -PbtbKeystorePassword)")
+    if (releaseKeyAlias.isNullOrBlank()) add("BTB_KEY_ALIAS (or -PbtbKeyAlias)")
+    if (releaseKeyPassword.isNullOrBlank()) add("BTB_KEY_PASSWORD (or -PbtbKeyPassword)")
+}
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -59,15 +80,13 @@ android {
         create("release") {
             if (releaseKeystoreFile.exists()) {
                 storeFile = releaseKeystoreFile
-                storePassword = System.getenv("BTB_KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() }
-                    ?: (project.findProperty("btbKeystorePassword") as? String)?.takeIf { it.isNotBlank() }
-                    ?: "behindthebarks"
-                keyAlias = System.getenv("BTB_KEY_ALIAS")?.takeIf { it.isNotBlank() }
-                    ?: (project.findProperty("btbKeyAlias") as? String)?.takeIf { it.isNotBlank() }
-                    ?: "btb_release"
-                keyPassword = System.getenv("BTB_KEY_PASSWORD")?.takeIf { it.isNotBlank() }
-                    ?: (project.findProperty("btbKeyPassword") as? String)?.takeIf { it.isNotBlank() }
-                    ?: "behindthebarks"
+                // M7: no hardcoded password default here. A keystore found without credentials
+                // does NOT get "behindthebarks"/"btb_release" silently: the release guard in the
+                // task graph below fails assembleRelease/bundleRelease with a clear error, and
+                // debug builds / unit tests (which never sign with this config) stay green.
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
             }
         }
     }
@@ -91,12 +110,23 @@ android {
     // artifact is requested, so unit tests and debug builds (and CI, which has no keystore) are unaffected.
     project.gradle.taskGraph.whenReady {
         val releaseRequested = allTasks.any { it.name == "assembleRelease" || it.name == "bundleRelease" }
-        if (releaseRequested && !releaseKeystoreFile.exists()) {
+        when {
+            releaseRequested && !releaseKeystoreFile.exists() -> {
             throw GradleException(
                 "release signing key not found (BTB_KEYSTORE_PATH=$releaseKeystorePath). " +
                     "Run scripts/generate_release_keystore.sh, or pass -PbtbKeystorePath, " +
                     "or build the debug APK instead.",
             )
+            }
+            // M7: the keystore exists but no credentials were provided: hard fail instead of
+            // silently signing with a source-controlled default. Debug/test tasks never run this.
+            releaseRequested && missingReleaseCredentials.isNotEmpty() -> throw GradleException(
+                "release keystore found at BTB_KEYSTORE_PATH=$releaseKeystorePath, but signing " +
+                    "credentials are missing: ${missingReleaseCredentials.joinToString("; ")}. " +
+                    "Export the variables (see scripts/generate_release_keystore.sh) or pass the " +
+                    "-P properties shown. Debug APK builds and unit tests do not need them.",
+            )
+            else -> {}
         }
     }
 
