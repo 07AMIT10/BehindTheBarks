@@ -4,7 +4,6 @@
 - Cross-household isolation: kicking in H1 does not affect H2.
 """
 
-import asyncio
 import copy
 import time
 from pathlib import Path
@@ -75,9 +74,7 @@ def test_video_viewers_counting_in_downlink(tmp_path):
         v2_cookie = c.cookies[VIEWER_COOKIE]
 
         # Retrieve household runtime & intercept pipeline downlinks
-        loop = asyncio.new_event_loop()
-        lr = loop.run_until_complete(application.state.registry.get(household_id))
-        loop.close()
+        lr = c.portal.call(application.state.registry.get, household_id)
 
         downlinks = DownlinkRecorder()
         lr.pipeline._post = downlinks.post
@@ -143,9 +140,7 @@ def test_kick_closes_ws_with_4411_and_60s_cooldown(tmp_path):
         c.post("/join", json={"code": code})
         viewer_cookie = c.cookies[VIEWER_COOKIE]
 
-        loop = asyncio.new_event_loop()
-        lr = loop.run_until_complete(application.state.registry.get(household_id))
-        loop.close()
+        lr = c.portal.call(application.state.registry.get, household_id)
 
         lr.tracker.clock = mock_clock
 
@@ -216,9 +211,7 @@ def test_kick_isolation_between_households(tmp_path):
 
         # Ingest frames in H2 so /video can answer
         h2_id = c.get("/me").json()["household_id"]
-        loop = asyncio.new_event_loop()
-        lr2 = loop.run_until_complete(application.state.registry.get(h2_id))
-        loop.close()
+        lr2 = c.portal.call(application.state.registry.get, h2_id)
         jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00`\x00`\x00\x00\xff\xdb\x00C\x00\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00\xff\xda\x00\x08\x01\x01\x00\x00?\x00\xbf\x00\xff\xd9"
         lr2.pipeline.ingest_frame(jpeg, time.time())
 

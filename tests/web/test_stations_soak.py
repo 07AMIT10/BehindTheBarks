@@ -169,10 +169,7 @@ def test_4_stations_10s_soak(tmp_path):
                 assert len(received_tags) == 4, f"Expected events from 4 stations, got: {received_tags}"
 
                 # All 4 stations contributed to the household hub
-                import asyncio
-                loop = asyncio.new_event_loop()
-                lr = loop.run_until_complete(app.state.registry.get(household_id))
-                loop.close()
+                lr = c.portal.call(app.state.registry.get, household_id)
 
                 # Verify each station channel
                 assert len(lr.channels) == 4
