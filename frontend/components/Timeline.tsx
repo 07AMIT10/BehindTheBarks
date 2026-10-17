@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { EMOTION_META, EMOTION_ORDER, emotionVars, sourceLabel } from "@/lib/emotions";
 import { durationLabel, hhmm, pct } from "@/lib/format";
 import { groupAudio, layoutSpans, leftPct, ticks, timelineWindow } from "@/lib/timeline";
@@ -38,6 +38,8 @@ export default function Timeline({ spans, audio, treats, notifications, nowSec, 
   const sel = spans[selIndex];
   const [playingSnippet, setPlayingSnippet] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Unmount (mode switch / demo toggle) must not leave a snippet playing in the void.
+  useEffect(() => () => audioRef.current?.pause(), []);
 
   const toggleSnippet = (snippetId: string) => {
     if (playingSnippet === snippetId) {
@@ -146,7 +148,9 @@ export default function Timeline({ spans, audio, treats, notifications, nowSec, 
                           <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                         )}
                         <span>{a.label}{a.count > 1 ? ` ×${a.count}` : ""}</span>
-                        <span className="text-[10px] opacity-75 font-mono">0:05</span>
+                        {typeof a.duration_s === "number" && a.duration_s > 0 ? (
+                          <span className="text-[10px] opacity-75 font-mono">{durationLabel(a.duration_s)}</span>
+                        ) : null}
                       </button>
                     );
                   }
