@@ -101,6 +101,12 @@ jobs:
             echo "real_keystore=true" >> "$GITHUB_OUTPUT"
           else
             ../scripts/generate_release_keystore.sh release.jks
+            # Throwaway-signing path: the generator scripts/generate_release_keystore.sh keys the
+            # keystore with its own defaults; export the SAME values (no secrets.* exist here).
+            # The build then verifies them; artifacts below are uploaded as throwaway-signed.
+            echo "BTB_KEYSTORE_PASSWORD=behindthebarks" >> "$GITHUB_ENV"
+            echo "BTB_KEY_ALIAS=btb_release" >> "$GITHUB_ENV"
+            echo "BTB_KEY_PASSWORD=behindthebarks" >> "$GITHUB_ENV"
             echo "real_keystore=false" >> "$GITHUB_OUTPUT"
           fi
 
