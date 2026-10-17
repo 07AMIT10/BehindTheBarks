@@ -1172,8 +1172,56 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         rt = ch.runtime if ch else ctx.runtime
         return {"ts": rt.treat()}
 
+    # -- audio snippet uploads (0x5B: the phone's 5s bioacoustic WAVs for timeline replay) -----------
+    snippet_cfg = web.get("snippets") or {}
+    SNIPPET_MAX_BYTES = 1_000_000  # keep in step with the original hard cap (401: 1 MB)
+    SNIPPET_MIN_BYTES = 44  # a bare RIFF/WAVE header
+
+    def _load_snippet_viewer(token: str):
+        with app.state.db_session() as s:
+            return store_repo.viewer_by_token(s, token)
+
+    def _load_snippet_station(station_id: str):
+        """A paired, unrevoked station row, or None for anything else (no oracle beyond 401)."""
+        with app.state.db_session() as s:
+            st = store_repo.get_station(s, station_id)
+        return st if (st is not None and st.revoked_at is None) else None
+
+    async def _snippet_household(request: Request) -> str:
+        """Which household's directory a snippet upload may write into, or an HTTP refusal.
+
+        Households mode honours the two credentials that already exist: a dashboard session
+        (cookie or Bearer, T2.3) or the uploading phone's paired `X-Station-ID` (T2.5: the phone
+        carries the station id and signs `/ingest-events` with its Keystore key — it has no viewer
+        session, so a live, unrevoked station row is the station-identity credential here).
+        Legacy/pin mode keeps `verify_request_auth` exactly as it was."""
+        if not households_mode:
+            verify_request_auth(request)
+            check_rate_limit("snippet", 1.0, LEGACY)
+            return LEGACY
+        token = _viewer_token(request)
+        if token:
+            viewer = await asyncio.to_thread(_load_snippet_viewer, token)
+            if viewer is not None:
+                station_id = request.headers.get("x-station-id") or ""
+                if station_id.strip():
+                    st = await asyncio.to_thread(_load_snippet_station, station_id.strip())
+                    if st is None or st.household_id != viewer.household_id:
+                        raise HTTPException(status_code=403, detail="station not found in this household")
+                check_rate_limit("snippet", 1.0, viewer.household_id)
+                return viewer.household_id
+        station_id = (request.headers.get("x-station-id") or "").strip()
+        if station_id:
+            st = await asyncio.to_thread(_load_snippet_station, station_id)
+            if st is not None:
+                check_rate_limit("snippet", 1.0, st.household_id)
+                return st.household_id
+        raise HTTPException(status_code=401, detail="unauthorized: household session or paired station required")
+
     @app.post("/events/audio-snippet")
     async def upload_audio_snippet(request: Request) -> dict:
+        # Decide auth (and the destination directory) BEFORE reading any body bytes.
+        household_id = await _snippet_household(request)
         snippet_id = request.headers.get("x-snippet-id")
         if not snippet_id:
             raise HTTPException(400, "Missing X-Snippet-ID header")
@@ -1181,18 +1229,22 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         if not safe_snippet_id:
             raise HTTPException(400, "Invalid snippet ID")
 
-        household_id = LEGACY
-        station_id = request.headers.get("x-station-id")
-        if households_mode and station_id:
-            with app.state.db_session() as session:
-                st = store_repo.get_station(session, station_id)
-                if st:
-                    household_id = st.household_id
-
-        body = await request.body()
-        if len(body) > 1_000_000:
+        # Refuse oversize uploads without buffering the body: the declared size is checked first,
+        # then the stream is consumed chunk by chunk and abandoned past the cap.
+        declared = (request.headers.get("content-length") or "").strip()
+        if declared.isdigit() and int(declared) > SNIPPET_MAX_BYTES:
             raise HTTPException(413, "Snippet audio payload exceeds maximum size")
-        if len(body) < 44 or body[:4] != b"RIFF":
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in request.stream():
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > SNIPPET_MAX_BYTES:
+                raise HTTPException(413, "Snippet audio payload exceeds maximum size")
+            chunks.append(chunk)
+        body = b"".join(chunks)
+        if len(body) < SNIPPET_MIN_BYTES or body[:4] != b"RIFF":
             raise HTTPException(400, "Invalid WAV payload")
 
         snippets_dir = Path("out/snippets") / household_id
