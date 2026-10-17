@@ -183,7 +183,7 @@ def test_delete_removes_one_household_only(two_households):
     assert app_.state.registry.peek(third_id) is None
 
     as_owner(c, h1_cookie)  # household 1 is untouched
-    assert c.get("/status").json()["phone"] is None or True
+    assert c.get("/status").json()["phone"] is None  # its station was never connected
     as_owner(c, h2_cookie)
     assert c.get("/me").status_code == 200  # and household 2 still authenticates
 

@@ -87,7 +87,6 @@ async def test_per_household_cfg_is_a_deep_copy(tmp_path):
     a.runtime.cfg["web"]["profile"]["dog_name"] = "Rex"
     b = await reg.get("b")
     assert b.runtime.cfg["web"]["profile"]["dog_name"] != "Rex"
-    assert "a" not in str(b.runtime.cfg["web"].get("log_dir", "")) or True  # distinct log dirs
     assert a.runtime.cfg["web"]["log_dir"] != b.runtime.cfg["web"]["log_dir"]
     await reg.close()
 
