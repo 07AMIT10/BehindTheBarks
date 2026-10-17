@@ -493,7 +493,7 @@ class MonitorService : Service(), LifecycleOwner {
         val spool = EventSpool(spoolDir)
 
         // I5: dedicated single-threaded voice playback. Started before the uploader: the socket's
-        // reader thread only ever enqueues here, AudioTrack.write happens on [VOICE] alone.
+        // reader thread only ever enqueues here, AudioTrack.write happens on VoicePlaybackThread alone.
         voiceChunkQueue.clear()
         val voiceThread = android.os.HandlerThread("VoicePlaybackThread").apply { start() }
         voicePlaybackThread = voiceThread
@@ -716,9 +716,8 @@ class MonitorService : Service(), LifecycleOwner {
                 streamAudioChunk(up, pcm16)
             },
             onMicUnavailable = {
-                // M4: fire exactly once (MicSource guarantees it). The user hears barks analysis
-                // stopped: the session goes on without audio, the notification says so and does not
-                // spam on every failed read afterwards.
+                // M4: fired exactly once (MicSource guarantees it). Perception continues without
+                // audio: the notification says so and never spams on every failed read after it.
                 updateNotification("Microphone unavailable — monitoring without audio")
             }
         )
