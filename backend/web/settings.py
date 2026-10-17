@@ -40,7 +40,7 @@ WEB_DEFAULTS: dict[str, Any] = {
     },
     "notify": {
         "mode": "dashboard_only",
-        "telegram": {"token": "", "chat_id": ""},
+        "telegram": {"token": "", "chat_id": "", "webhook_secret": ""},
         "whatsapp": {"token": "", "phone_number_id": "", "recipient": "", "api_version": "v18.0"},
     },
     # video_source: "local" serves the MP4s from this host; "r2" redirects to presigned Cloudflare R2 URLs

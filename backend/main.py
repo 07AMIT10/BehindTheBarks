@@ -252,6 +252,16 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     api_token = str(auth_cfg.get("api_token", "")).strip()
     ingest_token = str(auth_cfg.get("ingest_token", "")).strip()
 
+    # -- Telegram webhook: the expected `X-Telegram-Bot-Api-Secret-Token` (H: constant-time check)--
+    tg_notify_cfg = (web.get("notify") or {}).get("telegram") or {}
+    tg_webhook_secret = str(os.environ.get("TELEGRAM_WEBHOOK_SECRET")
+                            or tg_notify_cfg.get("webhook_secret") or "").strip()
+    if (os.environ.get("TELEGRAM_BOT_TOKEN") or tg_notify_cfg.get("token")) and not tg_webhook_secret:
+        logging.getLogger("notify").warning(
+            "TELEGRAM_WEBHOOK_SECRET / web.notify.telegram.webhook_secret is not set while a bot "
+            "token is: POST /telegram/webhook cannot authenticate its callers. Set the secret and "
+            "pass it as `secret_token` to setWebhook.")
+
     def is_valid_token(tok: str | None) -> bool:
         if not auth_enabled:
             return True
@@ -1428,8 +1438,18 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 raise HTTPException(404, "Subscriber not found")
         return {"ok": True}
 
-    @app.post("/telegram/webhook")
-    async def telegram_webhook(request: Request) -> dict:
+    @app.post("/telegram/webhook", response_model=None)
+    async def telegram_webhook(request: Request):
+        """Telegram's update sink. Public URL, so it is self-defending: hard rate limit, then a
+        constant-time check of `X-Telegram-Bot-Api-Secret-Token` (web.notify.telegram.webhook_secret,
+        the token `setWebhook` accepts), never a parse of an unauthenticated body."""
+        ok = limiter.hit(f"tg_webhook:{_client_ip(request)}", 60, 60)
+        if not ok:
+            raise HTTPException(status_code=429, detail="too many webhook calls; slow down")
+        if tg_webhook_secret:
+            presented = (request.headers.get("x-telegram-bot-api-secret-token") or "").strip()
+            if not secrets.compare_digest(presented.encode(), tg_webhook_secret.encode()):
+                return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=403)
         body = await request.json()
         bot_token = os.environ.get("TELEGRAM_BOT_TOKEN") or cfg["web"].get("notify", {}).get("telegram", {}).get("token", "")
 
@@ -1442,6 +1462,12 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                     return r.json() if r.status_code == 200 else {}
                 except Exception:
                     return {}
+
+        def _household_exists(hid: str) -> bool:
+            """A callback carries a household id that must be a real DB row: never a crafted id that
+            would lazily materialise a HouseholdRuntime (and keep it) inside the registry."""
+            with app.state.db_session() as s:
+                return store_repo.get_household(s, hid) is not None
 
         # 1. Handle incoming text commands (/start link_..., /connect link_...)
         msg = body.get("message")
@@ -1504,7 +1530,9 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             user_name = from_user.get("first_name") or from_user.get("username") or "Pet Parent"
 
             if cb_data.startswith("treat:"):
-                hid = cb_data.removeprefix("treat:")
+                hid = cb_data.removeprefix("treat:").strip()[:64]
+                if not hid or not await asyncio.to_thread(_household_exists, hid):
+                    return JSONResponse({"ok": False, "error": "unknown_household"}, status_code=404)
                 lr = app.state.registry.peek(hid) or await app.state.registry.get(hid)
                 rt = lr.runtime if lr else None
                 if rt:
@@ -1529,7 +1557,9 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             elif cb_data.startswith("cue:"):
                 parts = cb_data.split(":")
                 sound = parts[1] if len(parts) > 1 else "squeak"
-                hid = parts[2] if len(parts) > 2 else "default"
+                hid = (parts[2] if len(parts) > 2 else "default").strip()[:64]
+                if not hid or not await asyncio.to_thread(_household_exists, hid):
+                    return JSONResponse({"ok": False, "error": "unknown_household"}, status_code=404)
                 lr = app.state.registry.peek(hid) or await app.state.registry.get(hid)
                 ch = _resolve_channel(lr, None, hid) if lr else None
                 pipeline = ch.pipeline if ch else getattr(lr, "pipeline", None)

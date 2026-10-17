@@ -63,12 +63,12 @@ def test_telegram_link_and_subscriber_lifecycle(tmp_path):
         assert r_hook_again.status_code == 200
         assert r_hook_again.json().get("error") == "expired"
 
-        # 5. Simulate interactive callback query for treat
+        # 5. Simulate interactive callback query for treat (the household id must be a real DB row)
         fake_cb_treat = {
             "update_id": 10002,
             "callback_query": {
                 "id": "cb_999",
-                "data": "treat:default",
+                "data": "treat:legacy",
                 "message": {
                     "message_id": 56,
                     "chat": {"id": -100987654321},
@@ -86,7 +86,7 @@ def test_telegram_link_and_subscriber_lifecycle(tmp_path):
             "update_id": 10003,
             "callback_query": {
                 "id": "cb_1000",
-                "data": "cue:squeak:default",
+                "data": "cue:squeak:legacy",
                 "message": {
                     "message_id": 56,
                     "chat": {"id": -100987654321},
