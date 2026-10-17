@@ -293,8 +293,10 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         if not tok:
             return False
         tok = tok.strip()
-        allowed = {t for t in (dashboard_pin, api_token, ingest_token) if t}
-        return tok in allowed
+        # Constant-time over every candidate (same pattern as _require_admin): a wrong token costs
+        # the same per candidate no matter where it matches, and no length/count timing oracle.
+        return any(secrets.compare_digest(tok.encode(), candidate.encode())
+                   for candidate in (dashboard_pin, api_token, ingest_token) if candidate)
 
     def verify_request_auth(req: Request) -> None:
         if not auth_enabled:
