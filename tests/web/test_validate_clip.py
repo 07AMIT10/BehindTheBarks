@@ -42,4 +42,4 @@ def test_demo_defaults(tmp_path):
     from backend.web.settings import load_config
     cfg = load_config(tmp_path / "none.yaml", env={})
     assert cfg["web"]["demo"] == {"manifest": "data/fallback/manifest.json", "clips_dir": "backend/demo/clips",
-                                  "telegram_first": False}
+                                  "telegram_first": False, "video_source": "local"}

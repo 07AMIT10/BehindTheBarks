@@ -1,6 +1,10 @@
 import type { Toast } from "./toasts";
 import type { AudioLabel, Emotion, EmotionState, Features, FrameEvent } from "./contracts";
 
+/** T3.1: ascending exposure. A viewer sees min(station cap, household mode, their ceiling). */
+export type ViewMode = "blackout" | "privacy" | "limited" | "full";
+
+
 export type EnvelopeType = "frame" | "audio" | "rules" | "emotion" | "llm" | "notification" | "treat" | "status";
 
 export type Envelope = {
@@ -9,21 +13,31 @@ export type Envelope = {
   ts: number; // server clock, seconds
   data: any; // eslint-disable-line @typescript-eslint/no-explicit-any -- narrowed per type in store.ts
   meta?: Record<string, unknown>;
+  station?: string; // T4.1 / T4.2
 };
 
 export type PipelineStatus = {
   source: string;
-  state: "running" | "stalled" | "stopped" | string;
+  state: "running" | "idle" | "paused" | "stalled" | "stopped" | string; // paused = deliberate Blackout, not an error
   fps: number;
   last_frame_age_s: number | null;
   audio_ok: boolean;
+  preview_fps?: number;
   torch?: boolean;
   privacy_mode?: boolean;
+  station_cap?: ViewMode;   // T3.1: what the phone allows
+  effective_mode?: ViewMode; // T3.1: min(cap, household policy, viewer ceiling)
+  policy_mode?: ViewMode;   // T3.1: what the household owner selected
 };
+
+/** How a raise prompt ended on the phone (`mode_result`). `ts` is the server clock when it arrived. */
+export type ModeRequestResult = { mode: ViewMode; result: "allowed" | "denied" | "timeout"; ts: number };
 
 export type PhoneStatus = {
   connected: boolean;
   device: string | null;
+  /** T3.2: the answer the person on the phone gave to the last raise prompt (null before any). */
+  last_mode_request_result?: ModeRequestResult | null;
   facing: string | null; // "back" | "front" | null
   camera?: boolean; // false: camera permission denied, streaming microphone only
   fps: number; // frames/s received by the backend
@@ -31,6 +45,30 @@ export type PhoneStatus = {
   height?: number;
   sample_rate?: number;
   last_frame_age_s?: number | null;
+  last_event_age_s?: number | null;
+  battery_pct?: number | null; // T6.1
+  charging?: boolean; // T6.1
+  temp_c?: number | null; // T6.1
+  latest_telemetry?: StationTelemetry | null;
+};
+
+export type StationTelemetry = {
+  server_ts?: number;
+  ts?: number;
+  battery_pct?: number | null;
+  charging?: boolean;
+  temp_c?: number | null;
+  [key: string]: unknown;
+};
+
+export type StationSummary = {
+  id: string;
+  name: string;
+  dog_name: string;
+  phone: PhoneStatus | null;
+  pipeline_status: PipelineStatus | null;
+  effective_mode: ViewMode;
+  battery: number | null;
 };
 
 export type Status = {
@@ -53,6 +91,17 @@ export type Status = {
   modes?: string[]; // Plan 4: ["live", "demo"] when demo clips exist
   mode?: "live" | "demo"; // Plan 4
   privacy_mode?: boolean;
+  station_cap?: ViewMode;
+  effective_mode?: ViewMode;
+  mode_info?: { household_mode: ViewMode; station_cap: ViewMode; effective: ViewMode };
+  max_idle_s?: number; // T3.4: video inactivity timeout in seconds
+  viewers?: { video: number; audio: number }; // T3.4: viewer count breakdown
+  stations?: StationSummary[]; // T4.1 / T4.2
+  paired_station?: { id: string; name: string; mode_ceiling?: string };
+  revoked_station?: { id: string };
+  fallback?: boolean;
+  server_origin?: string;
+  build_id?: string;
 };
 
 export type Span = {
@@ -62,6 +111,7 @@ export type Span = {
   confidence: number;
   reason: string;
   source: "rules" | "llm" | "fused";
+  snapshot?: string | null;
 };
 
 export type NotificationItem = {
@@ -73,7 +123,26 @@ export type NotificationItem = {
   read: boolean;
 };
 
-export type AudioMark = { ts: number; label: AudioLabel; score: number };
+export type AudioMark = { ts: number; label: AudioLabel; score: number; snippet_id?: string | null; duration_s?: number | null };
+
+export type StationView = {
+  id: string;
+  name: string;
+  dog_name: string;
+  status: Status | null;
+  current: EmotionState | null;
+  currentSince: number | null;
+  lastEmotionAt: number | null;
+  frame: FrameEvent | null;
+  lastDogTs: number | null;
+  history: Features[];
+  lastHistoryTs: number | null;
+  audio: AudioMark[];
+  spans: Span[];
+  treats: number[];
+  notifications: NotificationItem[];
+  lastSeq: number;
+};
 
 export type DashboardState = {
   connected: boolean;
@@ -94,12 +163,15 @@ export type DashboardState = {
   toasts: Toast[];
   lastSeq: number;
   clockOffset: number | null; // server seconds - client seconds
+  stations: Record<string, StationView>; // T4.2
+  focusedStation: string; // T4.2
 };
 
 export type Action =
   | { kind: "connected"; value: boolean }
   | { kind: "envelope"; env: Envelope; at: number }
-  | { kind: "bootstrap"; events: Envelope[]; timeline: Span[]; at: number }
+  | { kind: "bootstrap"; events: Envelope[]; timeline: Span[]; at: number; stationId?: string }
+  | { kind: "focusStation"; stationId: string }
   | { kind: "status"; status: Status }
   | { kind: "readAll" }
   | { kind: "tick"; at: number }

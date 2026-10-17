@@ -136,6 +136,10 @@ data class AudioEvent(
     val label: AudioLabel,
     /** min 0.0, max 1.0 */
     val score: Double,
+    @SerialName("snippet_id")
+    val snippetId: String? = null,
+    @SerialName("duration_s")
+    val durationS: Double? = null,
 )
 
 /** Rules engine output, delivered through Pipeline's on_rules_label callback. */

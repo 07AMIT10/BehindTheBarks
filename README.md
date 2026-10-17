@@ -163,7 +163,7 @@ flowchart TD
 **Optional & Experimental**
 
 - 💡 **LLM Interpreter**: Optional Groq / OpenRouter vision interpreter ([`backend/fusion/prompts.py`](./backend/fusion/prompts.py)) for rich secondary behavioral descriptions
-- 💡 **Access Control**: Optional PIN-protected dashboard and ingest token authentication ([`config.yaml`](./config.yaml))
+- 💡 **Access Control**: Optional PIN-protected dashboard and ingest token authentication ([`config.yaml`](./config.yaml)). For Render deploys, set `BTB_DASHBOARD_PIN` as a secret env var in the Render dashboard — never in the repo (see [`docs/USER_ONBOARDING_GUIDE.md`](./docs/USER_ONBOARDING_GUIDE.md))
 
 ### 📱 Quick Start: Native Android Station (Recommended)
 

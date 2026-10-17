@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { stationState } from "./phone";
 import { initialState, reduce, serverNow } from "./store";
 import type { Envelope, Span } from "./types";
 
@@ -73,11 +74,28 @@ describe("reduce", () => {
   });
 
   it("status envelope replaces or merges status", () => {
-    const full = { pipeline: "mock", fps: 8, profile: { dog_name: "Bruno", location: "Kitchen", zone_label: "feeding area" } };
+    const full = { pipeline: "mock", fps: 8, profile: { dog_name: "Buddy", location: "Living room", zone_label: "feeding area" } };
     let s = apply([{ kind: "envelope", env: env("status", full, 1), at: 0 }]);
     s = reduce(s, { kind: "envelope", env: env("status", { phone: { connected: true, device: "Pixel 7", facing: "back", fps: 12 } }, 2), at: 0 });
     expect(s.status?.pipeline).toBe("mock");
     expect(s.status?.phone?.device).toBe("Pixel 7");
+  });
+
+  it("a stop's partial status merges over the live one and reads idle", async () => {
+    const full = { pipeline: "remote", fps: 8, phone: { connected: true, device: "DebugPhone", facing: "back", fps: 10 }, pipeline_status: { source: "remote", state: "running", fps: 8, last_frame_age_s: 0.1, audio_ok: false } };
+    let s = apply([{ kind: "envelope", env: env("status", full, 1), at: 0 }]);
+    // publish_phone() sends {phone, pipeline_status} only: the rest of the full status must survive.
+    s = reduce(s, { kind: "envelope", env: env("status", { phone: null, pipeline_status: { source: "remote", state: "idle", fps: 0, last_frame_age_s: null, audio_ok: false } }, 2), at: 0 });
+    expect(s.status?.pipeline).toBe("remote");
+    expect(s.status?.phone).toBeNull();
+    expect(stationState(s.status)).toBe("idle");
+  });
+
+  it("a saved profile broadcast merges over the live status (T1.8)", () => {
+    let s = apply([{ kind: "envelope", env: env("status", { pipeline: "remote", fps: 8, profile: { dog_name: "Your dog", location: "", zone_label: "feeding area" } }, 1), at: 0 }]);
+    s = reduce(s, { kind: "envelope", env: env("status", { profile: { dog_name: "Rex", location: "Living room", zone_label: "bowl" } }, 2), at: 0 });
+    expect(s.status?.pipeline).toBe("remote");  // the partial envelope kept the rest
+    expect(s.status?.profile?.dog_name).toBe("Rex");
   });
 
   it("bootstrap uses server timeline for spans and replays the rest", () => {
@@ -97,16 +115,84 @@ describe("reduce", () => {
     const s = apply([{ kind: "envelope", env: emotion("happy", 1000, true), at: 990_000 }]);
     expect(serverNow(s, 995_000)).toBeCloseTo(1005);
   });
+
+  it("multi-station: envelopes route to their station view and untagged route to default", () => {
+    const eDefault = emotion("relaxed", 10, true);
+    const eSt1 = { ...emotion("excited", 12, true), station: "st1" };
+    const eSt2 = { ...emotion("anxious", 14, true), station: "st2" };
+
+    const s = apply([
+      { kind: "envelope", env: eDefault, at: 1_000 },
+      { kind: "envelope", env: eSt1, at: 2_000 },
+      { kind: "envelope", env: eSt2, at: 3_000 },
+    ]);
+
+    expect(s.stations["default"].current?.emotion).toBe("relaxed");
+    expect(s.stations["st1"].current?.emotion).toBe("excited");
+    expect(s.stations["st2"].current?.emotion).toBe("anxious");
+
+    // Default station is focused by default
+    expect(s.current?.emotion).toBe("relaxed");
+
+    // Switching focus to st1 updates top-level selectors
+    const focused1 = reduce(s, { kind: "focusStation", stationId: "st1" });
+    expect(focused1.focusedStation).toBe("st1");
+    expect(focused1.current?.emotion).toBe("excited");
+
+    // Switching focus to st2 updates top-level selectors
+    const focused2 = reduce(focused1, { kind: "focusStation", stationId: "st2" });
+    expect(focused2.focusedStation).toBe("st2");
+    expect(focused2.current?.emotion).toBe("anxious");
+  });
+
+  it("multi-station: bootstrap per station populates that station view", () => {
+    const timeline1: Span[] = [{ emotion: "happy", start: 1, end: 5, confidence: 0.9, reason: "r", source: "rules" }];
+    const timeline2: Span[] = [{ emotion: "relaxed", start: 2, end: 8, confidence: 0.8, reason: "r", source: "rules" }];
+
+    let s = reduce(initialState, {
+      kind: "bootstrap",
+      stationId: "roomA",
+      events: [{ ...emotion("happy", 5, false), station: "roomA" }],
+      timeline: timeline1,
+      at: 10_000,
+    });
+    s = reduce(s, {
+      kind: "bootstrap",
+      stationId: "roomB",
+      events: [{ ...emotion("relaxed", 8, false), station: "roomB" }],
+      timeline: timeline2,
+      at: 10_000,
+    });
+
+    expect(s.stations["roomA"].spans).toEqual(timeline1);
+    expect(s.stations["roomB"].spans).toEqual(timeline2);
+    expect(s.stations["roomA"].current?.emotion).toBe("happy");
+    expect(s.stations["roomB"].current?.emotion).toBe("relaxed");
+  });
+
+  it("multi-station: status with stations list initializes station views", () => {
+    const statusWithStations = {
+      pipeline: "remote",
+      stations: [
+        { id: "stA", name: "Kitchen", dog_name: "Rex", phone: null, pipeline_status: null, effective_mode: "full" as const, battery: 92 },
+        { id: "stB", name: "Garden", dog_name: "Rex", phone: null, pipeline_status: null, effective_mode: "full" as const, battery: 45 },
+      ],
+    };
+    const s = reduce(initialState, { kind: "status", status: statusWithStations });
+    expect(s.stations["stA"].name).toBe("Kitchen");
+    expect(s.stations["stB"].name).toBe("Garden");
+    expect(s.focusedStation).toBe("stA");
+  });
 });
 
 describe("toasts in the reducer", () => {
   const notif = (e: string, ts: number) =>
     env("notification", { state: { ts, emotion: e, confidence: 0.8, source: "fused", reason: `${e}!`, snapshot: null }, status: "dashboard_only", channel: "dashboard", detail: "would send to owner" }, ts);
-  const withProfile = reduce(initialState, { kind: "status", status: { pipeline: "mock", profile: { dog_name: "Bruno", location: "Kitchen", zone_label: "feeding area" } } });
+  const withProfile = reduce(initialState, { kind: "status", status: { pipeline: "mock", profile: { dog_name: "Buddy", location: "Living room", zone_label: "feeding area" } } });
 
   it("notification creates a toast using the dog name", () => {
     const s = reduce(withProfile, { kind: "envelope", env: notif("anxious", 10), at: 1_000 });
-    expect(s.toasts[0]).toMatchObject({ title: "Bruno seems anxious", sticky: true });
+    expect(s.toasts[0]).toMatchObject({ title: "Buddy seems anxious", sticky: true });
   });
   it("tick expires positive toasts after 6 s; dismiss removes", () => {
     let s = reduce(withProfile, { kind: "envelope", env: notif("excited", 10), at: 1_000 });
@@ -129,5 +215,14 @@ describe("toasts in the reducer", () => {
     const s = reduce(withProfile, { kind: "bootstrap", events: [notif("anxious", 5)], timeline: [], at: 1 });
     expect(s.notifications).toHaveLength(1);
     expect(s.toasts).toHaveLength(0);
+  });
+  it("resource_alert notification creates a system toast", () => {
+    const resourceEnv = env(
+      "notification",
+      { kind: "resource_alert", text: "Station-1: High temperature: 43.5°C" },
+      10
+    );
+    const s = reduce(withProfile, { kind: "envelope", env: resourceEnv, at: 1_000 });
+    expect(s.toasts[0]).toMatchObject({ kind: "system", title: "Station-1: High temperature: 43.5°C" });
   });
 });

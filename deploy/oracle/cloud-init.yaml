@@ -1,0 +1,58 @@
+# cloud-init for an Oracle Ubuntu 24.04 instance (Ampere A1 or AMD Micro). Paste into "Show advanced
+# options -> Initialization script" when creating the instance.
+#
+# Before use, replace REPLACE_REPO_URL and REPLACE_BRANCH below. No secrets go here: copy .env by hand
+# afterwards (see docs/ORACLE_RUNBOOK.md).
+#
+# Oracle's Ubuntu images ship with an iptables REJECT rule that blocks everything except SSH. The
+# runcmd below opens 80/443 on the host. The Security List (VCN firewall) is separate and must also
+# allow 80/443; that cannot be set from here, so the runbook covers it.
+#cloud-config
+package_update: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - git
+  - curl
+
+write_files:
+  - path: /etc/systemd/system/btb-backup.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Back up BTB state (SQLite, logs, tuning) to Cloudflare R2
+      Requires=docker.service
+      After=docker.service
+
+      [Service]
+      Type=oneshot
+      WorkingDirectory=/opt/btb/deploy
+      # Guard first: a too-old pg client (Dockerfile pins postgresql-client-17) must fail the
+      # unit with a readable line, not break the nightly dump midway.
+      ExecStart=/bin/sh -c "/usr/bin/docker compose exec -T app sh scripts/pg_client_version_check.sh && /usr/bin/docker compose exec -T app python -m backend.ops.state_backup backup --keep 14"
+  - path: /etc/systemd/system/btb-backup.timer
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Nightly BTB state backup
+
+      [Timer]
+      OnCalendar=*-*-* 03:15:00
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+
+runcmd:
+  # Non-interactive: the stock package prompts about saving rules, which would stall cloud-init.
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent
+  # Host firewall: accept web traffic ahead of Oracle's default REJECT rule (idempotent).
+  - iptables -C INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p tcp --dport 80 -j ACCEPT
+  - iptables -C INPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p tcp --dport 443 -j ACCEPT
+  - netfilter-persistent save
+  - systemctl enable --now docker
+  # The app code. Secrets and the data folder are created by hand, not by cloud-init.
+  - git clone --branch REPLACE_BRANCH REPLACE_REPO_URL /opt/btb
+  - mkdir -p /opt/btb/deploy/data/out
+  - systemctl daemon-reload
+  - systemctl enable --now btb-backup.timer

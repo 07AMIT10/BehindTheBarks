@@ -412,7 +412,8 @@ async def test_run_awaits_until_stop_without_models_or_watchdog():
     p = RemotePipeline(stub_cfg())
     task = asyncio.create_task(p.run(None, None, None))
     await asyncio.sleep(0.01)
-    assert not task.done() and p.status()["state"] == "running"
+    # run() without a phone is 'idle', not 'running': no camera has ever attached (T1.2).
+    assert not task.done() and p.status()["state"] == "idle"
     p.stop()
     await asyncio.wait_for(task, 1.0)
     assert p.status()["state"] == "stopped"
@@ -483,9 +484,118 @@ def test_status_is_stalled_after_camera_silence_and_mirrors_phone_metrics():
     assert p.latest_frame_jpeg() is not None  # the last preview is kept for the dashboard
 
 
+def _phone_at_mode(cap: str, clock: Clock, *, stale_s: float = 2.0):
+    """A pipeline with an attached phone that reported `cap` (and effective == cap) at clock.t."""
+    cfg = stub_cfg()
+    cfg["web"]["remote"] = {"stale_s": stale_s}
+    p = RemotePipeline(cfg, clock=clock)
+    s = RemoteSession(parse_remote_hello(hello_msg()), p, SpyRuntime(), clock=clock)
+    p.attach(s, None)
+    s.handle_text(json.dumps({"type": "mode_state", "data": {"cap": cap, "effective": cap, "reason": "station"}}))
+    s.handle(bytes([KIND_PREVIEW]) + phone_jpeg())
+    return p, s
+
+
+def _ping(s: RemoteSession, clock: Clock, t0: float) -> None:
+    s.handle_text(json.dumps({"type": "ping", "phone_time": PHONE_T + (clock.t - t0)}))
+
+
+def test_blackout_with_a_live_phone_reads_paused_not_stalled():
+    clock = Clock()
+    t0 = clock.t
+    p, s = _phone_at_mode("blackout", clock)
+    assert p.status()["state"] == "paused"  # just attached and alive: no stall grace needed
+    states = set()
+    for _ in range(4):  # 40 s of silence on purpose, with a ping every 10 s (the phone keeps pinging)
+        clock.t += 10.0
+        _ping(s, clock, t0)
+        states.add(p.status()["state"])
+    assert states == {"paused"}
+    st = p.status()
+    assert st["effective_mode"] == "blackout" and st["station_cap"] == "blackout"
+
+
+def test_blackout_phone_that_stopped_pinging_reads_stalled():
+    clock = Clock()
+    p, s = _phone_at_mode("blackout", clock)
+    clock.t += 61.0  # more than 2 x ping_every_s (30 s) since any message
+    assert p.status()["state"] == "stalled"
+
+
+def test_privacy_mode_with_silence_still_reads_stalled():
+    clock = Clock()
+    t0 = clock.t
+    p, s = _phone_at_mode("privacy", clock)
+    clock.t += 1.0
+    _ping(s, clock, t0)  # alive, pinging, but privacy still sends events: silence is a stall
+    clock.t += 2.5
+    _ping(s, clock, t0)
+    assert p.status()["state"] == "stalled"
+
+
+def test_full_mode_with_silence_still_reads_stalled():
+    clock = Clock()
+    t0 = clock.t
+    p, s = _phone_at_mode("full", clock)
+    clock.t += 2.5
+    _ping(s, clock, t0)
+    assert p.status()["state"] == "stalled"
+
+
 def test_bind_pipeline_is_a_no_op_for_pipelines_without_attach():
     s, _ = session()
     assert bind_pipeline(SpyPipeline(), s, None) is False
+
+
+# -- Step 1.5b: deliberate stop (bye) and the idle state -------------------------------------
+def test_bye_marks_the_session_stopped_without_dropping_it():
+    s, _ = session()
+    assert s.handle_text(json.dumps({"type": "bye"})) == "bye"
+    assert s.stopped is True
+    assert s.dropped == 0
+    assert s.handle_text(json.dumps({"type": "ping", "phone_time": PHONE_T})) == "ping"
+    assert s.handle_text(envelope("frame", frame_data(PHONE_T))) == "frame"
+    assert s.stopped is True and s.dropped == 0
+
+
+async def test_remote_pipeline_is_idle_before_any_phone_and_after_a_stop():
+    clock = Clock()
+    clock.t += 10.0  # a server that has been up for 10 s: past any fresh-boot grace
+    cfg = stub_cfg()
+    cfg["web"]["remote"] = {"stale_s": 2.0}
+    p = RemotePipeline(cfg, clock=clock)
+    assert p.status()["state"] == "idle"  # no phone ever: idle, not the 'fresh server shows Reconnecting' bug
+
+    s = RemoteSession(parse_remote_hello(hello_msg()), p, SpyRuntime(), clock=clock)
+    p.attach(s, None)
+    assert p.status()["state"] == "running"
+    s.handle_text(envelope("frame", frame_data(PHONE_T)))
+    s.handle(bytes([KIND_PREVIEW]) + phone_jpeg())
+    assert p.latest_frame_jpeg() is not None
+
+    p.mark_stopped()
+    assert p.status()["state"] == "idle"
+    assert p.latest_frame_jpeg() is None
+    clock.t += 30.0  # still idle an eternity later, never 'stalled'
+    assert p.status()["state"] == "idle"
+
+    s2 = RemoteSession(parse_remote_hello(hello_msg()), p, SpyRuntime(), clock=clock)  # a new socket
+    p.attach(s2, None)
+    assert p.status()["state"] == "running"
+    clock.t += 30.0  # and going quiet is stalled again, as before
+    assert p.status()["state"] == "stalled"
+
+
+async def test_remote_pipeline_idle_wins_over_the_privacy_slate():
+    cfg = stub_cfg()
+    p = RemotePipeline(cfg)
+    s = RemoteSession(parse_remote_hello(hello_msg()), p, SpyRuntime())
+    p.attach(s, None)
+    p.set_policy("blackout")
+    assert p.latest_frame_jpeg() == p._privacy_jpeg
+    p.mark_stopped()
+    assert p.effective_mode == "blackout"  # the policy is untouched by stopping
+    assert p.latest_frame_jpeg() is None  # no slate while idle: nothing is streaming
 
 
 # -- Step 1.5: drops and close codes ----------------------------------------------------------
@@ -880,3 +990,19 @@ def test_camera_flip_downlink(tmp_path):
 
         down = ws.receive_json()
         assert down["type"] == "flip"
+
+
+def test_cue_downlink(tmp_path):
+    c, _ = remote_client(tmp_path)
+    now = time.time()
+    with c, c.websocket_connect("/ingest-events") as ws:
+        ws.send_text(hello_msg(phone_time=now))
+        assert ws.receive_json()["type"] == "hello_ack"
+
+        res = c.post("/cue", json={"sound": "squeak", "light": "double_blink"}).json()
+        assert res["ok"] is True and res["sound"] == "squeak" and res["light"] == "double_blink" and res["sent"] is True
+
+        down = ws.receive_json()
+        assert down["type"] == "cue"
+        assert down["data"]["sound"] == "squeak"
+        assert down["data"]["light"] == "double_blink"

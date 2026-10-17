@@ -67,7 +67,7 @@ SAMPLES: dict[str, dict] = {
         "face_landmarks": None,
         "features": FEATURES_SAMPLE,
     },
-    "AudioEvent": {"ts": 1727340000.5, "label": "bark", "score": 0.82},
+    "AudioEvent": {"ts": 1727340000.5, "label": "bark", "score": 0.82, "snippet_id": None, "duration_s": None},
     "RulesLabel": {
         "ts": 1727340001.0,
         "emotion": "excited",

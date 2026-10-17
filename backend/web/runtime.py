@@ -20,18 +20,28 @@ from backend.contracts import AudioEvent, EmotionState, Features, FrameEvent, Ru
 from backend.demo.clips import DemoClips
 from backend.fusion.llm_triggers import TriggerPolicy
 from backend.fusion.state import FusionState, StateConfig
+from backend.store.storage import SnapshotStorage, build_storage
 from backend.web.hub import Hub
-from backend.web.ingest import Hello, IngestSession
+from backend.web.ingest import CLOSE_REVOKED, Hello, IngestSession
 from backend.web.ingest_events import RemoteHello, RemoteSession
+from backend.web.modes import min_mode
+from backend.web.policy import Policy
 from backend.web.settings import is_demo
 
 log = logging.getLogger("runtime")
 
+FPS_FRESH_S = 3.0  # status().fps is 0.0 when the newest frame is older than this
+
 
 class Runtime:
-    def __init__(self, cfg: dict, pipeline: Any, interpreter: Any, notifier: Any, hub: Hub, clock=time.time, demo_clips: DemoClips | None = None):
+    def __init__(self, cfg: dict, pipeline: Any, interpreter: Any, notifier: Any, hub: Hub, clock=time.time,
+                 demo_clips: DemoClips | None = None, policy: Policy | None = None,
+                 storage: SnapshotStorage | None = None):
         self.cfg, self.pipeline, self.interpreter, self.notifier, self.hub, self.clock = (
             cfg, pipeline, interpreter, notifier, hub, clock)
+        self.storage: SnapshotStorage = storage or build_storage(cfg)
+        self.household_id: str = "default"
+        self.policy: Policy = policy or Policy(household_mode=cfg.get("web", {}).get("mode", "full"))
         self.state = FusionState(StateConfig.from_config(cfg))
         self.triggers = TriggerPolicy.from_config(cfg)
         llm = cfg["web"]["llm"]
@@ -56,6 +66,7 @@ class Runtime:
         self.demo = demo_clips
         self.mode: str = "demo" if is_demo(cfg) and demo_clips and demo_clips.available else "live"
         self.demo_notified: set[str] = set()
+        self.limited: Any | None = None  # set by the registry/legacy wrapper: shared blur + peek cache
 
     # -- lifecycle ----------------------------------------------------------------------------
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
@@ -168,7 +179,7 @@ class Runtime:
         if self.cfg["web"]["demo"].get("telegram_first") and getattr(
             self.notifier, "is_external", type(self.notifier).__name__ == "TelegramNotifier"
         ):
-            jpeg = self._latest_jpeg()
+            jpeg, _private = self._snapshot_jpeg()
             res = await self.notifier.send(
                 EmotionState(ts=t, emotion="unknown", confidence=0.0, source="rules",
                              reason=f"Demo clip {clip_id} at {t:.1f}s."), jpeg)
@@ -219,14 +230,21 @@ class Runtime:
     def phone_close(self, session: IngestSession | RemoteSession, code: int | None = None) -> None:
         """The phone's socket ended. Ignored if this session was already replaced.
 
-        Close code 1000 means the Stop button: the phone is forgotten (status "phone": null). Anything
-        else (page killed, Wi-Fi drop) keeps a disconnected snapshot so the dashboard can say so."""
+        A stop is close code 1000 (the app's close frame) or a `bye` envelope first (`stopped`),
+        because the app used to cancel() so fast that the close frame never made it to the wire: the
+        phone is forgotten (status "phone": null) and the pipeline goes idle. Anything else (page
+        killed, Wi-Fi drop) keeps a disconnected snapshot so the dashboard can say so."""
         session.connected = False
         if self.phone is not session:
             return
-        stopped = code == 1000
+        # 4410: the owner removed this station, so it is forgotten like a stop (no "Reconnecting" for a station
+        # that is no longer in the household).
+        stopped = code in (1000, CLOSE_REVOKED) or bool(getattr(session, "stopped", False))
         self.phone, self._phone_closer = None, None
         self._phone_prev = None if stopped else session
+        if stopped:
+            # MockPipeline/IngestSession-only pipelines have no mark_stopped(); getattr keeps them working.
+            getattr(self.pipeline, "mark_stopped", lambda: None)()
         log.info("phone %s: %s (code %s)", "stopped" if stopped else "disconnected", session.hello.device, code)
         self.publish_phone()
 
@@ -259,7 +277,7 @@ class Runtime:
 
     async def _run_llm(self, reason: str, now: float) -> None:
         feats, audio = self._context(now)
-        jpeg = self._latest_jpeg()
+        jpeg, _private = self._snapshot_jpeg()
         result = await self.interpreter.interpret(trigger=reason, now=now, features=feats, audio=audio,
                                                   rules=self._rules, jpeg=jpeg)
         if result is not None:
@@ -269,12 +287,58 @@ class Runtime:
             self.hub.publish("llm", dict(self.interpreter.last_call or {"trigger": reason}), meta={"ok": False})
 
     async def _notify(self, state: EmotionState) -> None:
-        jpeg = self._latest_jpeg()
-        snap = f"data:image/jpeg;base64,{base64.b64encode(jpeg).decode('ascii')}" if jpeg else None
+        jpeg, private = self._snapshot_jpeg()
+        hid = getattr(self, "household_id", "default")
+        # privacy/blackout: no snapshot is stored and none goes to the notifier (no pixels leave).
+        snap = None if private else await self.storage.store_snapshot(jpeg, household_id=hid, ts=state.ts,
+                                                                     emotion=state.emotion)
         state = state.model_copy(update={"snapshot": snap})
         res = await self.notifier.send(state, jpeg)
         self.hub.publish("notification", {"state": state.model_dump(mode="json"), "status": res.status,
                                           "channel": res.channel, "detail": res.detail})
+
+    def _effective_mode(self) -> str:
+        """min(station cap, household mode). A snapshot is whatever the household is entitled to keep:
+        peek windows are per-viewer view state and never raise what the house's own recorder sends."""
+        try:
+            cap = getattr(self.pipeline, "station_cap", "full")
+            return min_mode(cap, self.policy.household_mode)
+        except Exception:  # noqa: BLE001 - never let a policy read crash a notification
+            return "full"
+
+    def _snapshot_jpeg(self) -> tuple[bytes | None, bool]:
+        """(jpeg, private) for notification/LLM frames, honouring the household mode:
+
+        - privacy/blackout -> (None, True): skip the snapshot upload and notify with no image at all
+          (`latest_frame_jpeg()` alone cannot do this — it still carries the stale pre-change frame).
+        - limited -> the blurred treated frame, the same one /video serves (never the raw preview).
+        - full -> the newest raw preview, as before.
+        """
+        try:
+            mode = self._effective_mode()
+        except Exception:  # noqa: BLE001
+            mode = "full"
+        if mode in ("privacy", "blackout"):
+            return None, True
+        if mode == "limited":
+            raw = self._pipeline_raw_jpeg()
+            lim = getattr(self, "limited", None)
+            if lim is not None:
+                try:
+                    return lim.process(raw), False
+                except Exception:  # noqa: BLE001 - a blur failure must never degrade to raw pixels
+                    pass
+            from backend.web.limited import limit_jpeg  # lazy: heavy deps only when needed
+            return limit_jpeg(None), False  # the limited slate
+        return self._latest_jpeg(), False
+
+    def _pipeline_raw_jpeg(self) -> bytes | None:
+        """The un-processed newest preview the pipeline holds (None when the pipeline cannot say)."""
+        try:
+            raw = getattr(self.pipeline, "raw_frame_jpeg", None)
+            return raw() if raw is not None else self.pipeline.latest_frame_jpeg()
+        except Exception:  # noqa: BLE001
+            return None
 
     def _latest_jpeg(self) -> bytes | None:
         try:
@@ -289,10 +353,22 @@ class Runtime:
         except Exception:  # noqa: BLE001 - includes NotImplementedError on the stub
             return None
 
+    def mode_info(self) -> dict[str, str]:
+        station_cap = getattr(self.pipeline, "station_cap", "full")
+        policy = getattr(self, "policy", None)
+        h_mode = policy.household_mode if policy else getattr(self.pipeline, "_policy_mode", "full")
+        return {
+            "household_mode": h_mode,
+            "station_cap": station_cap,
+            "effective": min_mode(station_cap, h_mode),
+        }
+
     def status(self) -> dict:
         ps = self._pipeline_status()
         ft = list(self._frame_times)
-        fps = round((len(ft) - 1) / (ft[-1] - ft[0]), 1) if len(ft) > 1 and ft[-1] > ft[0] else 0.0
+        # No frame for FPS_FRESH_S means the number on the dashboard is stale, not "the old rate".
+        fresh = bool(ft) and self.clock() - ft[-1] <= FPS_FRESH_S
+        fps = round((len(ft) - 1) / (ft[-1] - ft[0]), 1) if fresh and len(ft) > 1 and ft[-1] > ft[0] else 0.0
         s = getattr(self.interpreter, "s", None)
         return {
             "pipeline": self.cfg["web"]["pipeline"],

@@ -591,3 +591,9 @@ class Pipeline:
         if now - self._limit_last.get(key, -1e9) >= STATS_EVERY_S:
             self._limit_last[key] = now
             log.error(msg, *args, exc_info=exc_info)
+
+    def send_cue(self, sound: str = "squeak", light: str | None = None) -> bool:
+        return True
+
+    def send_voice(self, pcm_base64: str) -> bool:
+        return True

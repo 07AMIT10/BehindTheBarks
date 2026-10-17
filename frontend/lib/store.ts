@@ -1,12 +1,34 @@
 import type { AudioEvent, EmotionState, FrameEvent } from "./contracts";
 import { dismissToast, expireToasts, systemToast, toastFromNotification } from "./toasts";
-import type { Action, DashboardState, Envelope, NotificationItem, Span, Status } from "./types";
+import { shouldToast } from "./battery";
+import type { Action, DashboardState, Envelope, NotificationItem, Span, StationView, Status } from "./types";
 
 export const HISTORY_MAX = 24;
 export const HISTORY_EVERY_S = 0.5;
 const AUDIO_MAX = 400;
 const NOTIFICATIONS_MAX = 50;
 const DOG_SOUNDS = new Set(["bark", "yip", "growl", "whimper", "howl"]);
+
+export function initialStationView(id: string = "default", name: string = "Default", dogName: string = "Your dog"): StationView {
+  return {
+    id,
+    name,
+    dog_name: dogName,
+    status: null,
+    current: null,
+    currentSince: null,
+    lastEmotionAt: null,
+    frame: null,
+    lastDogTs: null,
+    history: [],
+    lastHistoryTs: null,
+    audio: [],
+    spans: [],
+    treats: [],
+    notifications: [],
+    lastSeq: 0,
+  };
+}
 
 export const initialState: DashboardState = {
   connected: false,
@@ -27,76 +49,110 @@ export const initialState: DashboardState = {
   toasts: [],
   lastSeq: 0,
   clockOffset: null,
+  stations: { default: initialStationView("default") },
+  focusedStation: "default",
 };
 
 export function serverNow(s: DashboardState, clientMs: number): number {
   return clientMs / 1000 + (s.clockOffset ?? 0);
 }
 
-function applyEmotion(s: DashboardState, e: EmotionState, changed: boolean, at: number, touchSpans: boolean): DashboardState {
-  const first = s.current === null;
-  const isNew = first || changed || s.current?.emotion !== e.emotion;
-  let spans = s.spans;
+function applyStationEmotion(sv: StationView, e: EmotionState, changed: boolean, at: number, touchSpans: boolean): StationView {
+  const first = sv.current === null;
+  const isNew = first || changed || sv.current?.emotion !== e.emotion;
+  let spans = sv.spans;
   if (touchSpans) {
     const last = spans[spans.length - 1];
     if (!last || (isNew && last.emotion !== e.emotion) || changed) {
       const closed = last ? [...spans.slice(0, -1), { ...last, end: e.ts }] : spans;
-      spans = [...closed, { emotion: e.emotion, start: e.ts, end: e.ts, confidence: e.confidence, reason: e.reason, source: e.source }];
+      spans = [...closed, { emotion: e.emotion, start: e.ts, end: e.ts, confidence: e.confidence, reason: e.reason, source: e.source, snapshot: e.snapshot ?? null }];
     } else {
-      spans = [...spans.slice(0, -1), { ...last, end: e.ts, confidence: e.confidence, reason: e.reason, source: e.source }];
+      spans = [...spans.slice(0, -1), { ...last, end: e.ts, confidence: e.confidence, reason: e.reason, source: e.source, snapshot: last.snapshot ?? e.snapshot ?? null }];
     }
   }
   return {
-    ...s,
+    ...sv,
     current: e,
-    currentSince: isNew ? e.ts : s.currentSince,
+    currentSince: isNew ? e.ts : sv.currentSince,
     lastEmotionAt: at,
     spans,
   };
 }
 
-function applyFrame(s: DashboardState, f: FrameEvent): DashboardState {
-  let { history, lastHistoryTs } = s;
+function applyStationFrame(sv: StationView, f: FrameEvent): StationView {
+  let { history, lastHistoryTs } = sv;
   if (f.dog_detected && (lastHistoryTs === null || f.ts - lastHistoryTs >= HISTORY_EVERY_S - 1e-9)) {
     history = [...history, f.features].slice(-HISTORY_MAX);
     lastHistoryTs = f.ts;
   }
-  return { ...s, frame: f, lastDogTs: f.dog_detected ? f.ts : s.lastDogTs, history, lastHistoryTs };
+  return { ...sv, frame: f, lastDogTs: f.dog_detected ? f.ts : sv.lastDogTs, history, lastHistoryTs };
 }
 
-function applyEnvelope(s: DashboardState, env: Envelope, at: number, touchSpans: boolean, live: boolean): DashboardState {
-  const base: DashboardState = {
-    ...s,
-    lastSeq: Math.max(s.lastSeq, env.seq ?? 0),
-    clockOffset: typeof env.ts === "number" && at > 0 ? env.ts - at / 1000 : s.clockOffset,
+function applyStationEnvelope(sv: StationView, env: Envelope, at: number, touchSpans: boolean): StationView {
+  const base: StationView = {
+    ...sv,
+    lastSeq: Math.max(sv.lastSeq, env.seq ?? 0),
   };
   switch (env.type) {
     case "emotion":
-      return applyEmotion(base, env.data as EmotionState, Boolean(env.meta?.changed), at, touchSpans);
+      return applyStationEmotion(base, env.data as EmotionState, Boolean(env.meta?.changed), at, touchSpans);
     case "frame":
-      return applyFrame(base, env.data as FrameEvent);
+      return applyStationFrame(base, env.data as FrameEvent);
     case "audio": {
       const a = env.data as AudioEvent;
       if (!DOG_SOUNDS.has(a.label)) return base;
-      return { ...base, audio: [...base.audio, { ts: a.ts, label: a.label, score: a.score }].slice(-AUDIO_MAX) };
+      return { ...base, audio: [...base.audio, { ts: a.ts, label: a.label, score: a.score, snippet_id: a.snippet_id, duration_s: a.duration_s }].slice(-AUDIO_MAX) };
     }
     case "treat":
       return { ...base, treats: [...base.treats, (env.data as { ts: number }).ts] };
     case "notification": {
-      const d = env.data as { state: EmotionState; status: NotificationItem["status"]; detail: string };
-      const item: NotificationItem = { id: env.seq, ts: d.state.ts, state: d.state, status: d.status, detail: d.detail ?? "", read: false };
-      const notifications = [...base.notifications, item].slice(-NOTIFICATIONS_MAX);
-      const dog = base.status?.profile?.dog_name ?? "Your dog";
-      return { ...base, notifications, toasts: live ? toastFromNotification(base.toasts, item, dog, at) : base.toasts };
+      const d = env.data as {
+        kind?: string;
+        text?: string;
+        state?: EmotionState;
+        status?: NotificationItem["status"];
+        detail?: string;
+      };
+      if (!d.state) return base;
+      const item: NotificationItem = {
+        id: env.seq,
+        ts: d.state.ts,
+        state: d.state,
+        status: d.status || "dashboard_only",
+        detail: d.detail ?? "",
+        read: false,
+      };
+      return { ...base, notifications: [...base.notifications, item].slice(-NOTIFICATIONS_MAX) };
     }
     case "status": {
       const d = env.data as Status;
       const isFull = "pipeline" in d && "profile" in d;
-      return withStatus(base, isFull ? d : { ...(base.status ?? {}), ...d }, at);
+      return { ...base, status: isFull ? d : { ...(base.status ?? {}), ...d } };
     }
     default:
-      return base; // rules, llm: not stored (status poll carries LLM latency)
+      return base;
   }
+}
+
+export function syncFocused(s: DashboardState): DashboardState {
+  const f = s.stations[s.focusedStation] ?? s.stations["default"] ?? Object.values(s.stations)[0];
+  if (!f) return s;
+  return {
+    ...s,
+    current: f.current,
+    currentSince: f.currentSince,
+    lastEmotionAt: f.lastEmotionAt,
+    frame: f.frame,
+    lastDogTs: f.lastDogTs,
+    history: f.history,
+    lastHistoryTs: f.lastHistoryTs,
+    audio: f.audio,
+    spans: f.spans,
+    treats: f.treats,
+    notifications: f.notifications,
+    lastSeq: f.lastSeq,
+    status: f.status ?? s.status,
+  };
 }
 
 function withStatus(s: DashboardState, next: Status, at: number): DashboardState {
@@ -106,7 +162,100 @@ function withStatus(s: DashboardState, next: Status, at: number): DashboardState
   if (was?.enabled && now?.enabled && was.online !== now.online) {
     toasts = systemToast(toasts, now.online ? "AI back online · fused readings resumed" : "AI offline · rules only", at);
   }
-  return { ...s, status: next, toasts };
+
+  // Preserve previous status properties (stations, phone) when next is a partial status
+  const mergedStations = next.stations ?? s.status?.stations ?? [];
+  const mergedPhone = next.phone ?? s.status?.phone ?? null;
+  const mergedStatus: Status = {
+    ...(s.status ?? {}),
+    ...next,
+    stations: mergedStations.length > 0 ? mergedStations : undefined,
+    phone: mergedPhone,
+  };
+
+  // T6.2: Low battery alert toasts
+  const oldStations = s.status?.stations ?? [];
+  const newStations = mergedStations;
+  if (newStations.length > 0) {
+    for (const newSt of newStations) {
+      const oldSt = oldStations.find((o) => o.id === newSt.id);
+      const prevPct = oldSt?.phone?.battery_pct ?? oldSt?.battery ?? null;
+      const nextPct = newSt.phone?.battery_pct ?? newSt.battery ?? null;
+      const charging = Boolean(newSt.phone?.charging);
+      const alert = shouldToast(prevPct, nextPct, charging);
+      if (alert) {
+        const label = newSt.name || "Station";
+        const msg = alert === "critical"
+          ? `${label} battery critical (${Math.round(nextPct!)}%)`
+          : `${label} battery low (${Math.round(nextPct!)}%)`;
+        toasts = systemToast(toasts, msg, at);
+      }
+    }
+  } else if (mergedPhone) {
+    const prevPct = s.status?.phone?.battery_pct ?? null;
+    const nextPct = mergedPhone.battery_pct ?? null;
+    const charging = Boolean(mergedPhone.charging);
+    const alert = shouldToast(prevPct, nextPct, charging);
+    if (alert) {
+      const label = mergedPhone.device || "Station";
+      const msg = alert === "critical"
+        ? `${label} battery critical (${Math.round(nextPct!)}%)`
+        : `${label} battery low (${Math.round(nextPct!)}%)`;
+      toasts = systemToast(toasts, msg, at);
+    }
+  }
+
+  return { ...s, status: mergedStatus, toasts };
+}
+
+function applyEnvelope(s: DashboardState, env: Envelope, at: number, touchSpans: boolean, live: boolean): DashboardState {
+  const stationId = env.station ?? "default";
+  const prevSv = s.stations[stationId] ?? initialStationView(stationId);
+  const nextSv = applyStationEnvelope(prevSv, env, at, touchSpans);
+  const nextStations = { ...s.stations, [stationId]: nextSv };
+
+  let toasts = s.toasts;
+  if (env.type === "notification" && live) {
+    const d = env.data as {
+      kind?: string;
+      text?: string;
+      state?: EmotionState;
+      status?: NotificationItem["status"];
+      detail?: string;
+    };
+    if (d.kind === "resource_alert") {
+      toasts = systemToast(s.toasts, d.text || "Station resource budget alert", at);
+    } else if (d.state) {
+      const item: NotificationItem = {
+        id: env.seq,
+        ts: d.state.ts,
+        state: d.state,
+        status: d.status || "dashboard_only",
+        detail: d.detail ?? "",
+        read: false,
+      };
+      const dog = s.status?.profile?.dog_name ?? "Your dog";
+      const title = nextSv.name && nextSv.name !== "Default" ? `${dog} in ${nextSv.name}` : dog;
+      toasts = toastFromNotification(s.toasts, item, title, at);
+    }
+  } else if (env.type === "status") {
+    const d = env.data as Status;
+    const isFull = "pipeline" in d && "profile" in d;
+    return syncFocused(withStatus({
+      ...s,
+      stations: nextStations,
+      lastSeq: Math.max(s.lastSeq, env.seq ?? 0),
+      clockOffset: typeof env.ts === "number" && at > 0 ? env.ts - at / 1000 : s.clockOffset,
+    }, isFull ? d : { ...(s.status ?? {}), ...d }, at));
+  }
+
+  return syncFocused({
+    ...s,
+    stations: nextStations,
+    toasts,
+    lastSeq: Math.max(s.lastSeq, env.seq ?? 0),
+    clockOffset: typeof env.ts === "number" && at > 0 ? env.ts - at / 1000 : s.clockOffset,
+  });
 }
 
 export function reduce(s: DashboardState, a: Action): DashboardState {
@@ -118,17 +267,52 @@ export function reduce(s: DashboardState, a: Action): DashboardState {
     case "envelope":
       return applyEnvelope(s, a.env, a.at, true, true);
     case "bootstrap": {
-      const reset: DashboardState = { ...s, spans: [], treats: [], audio: [], notifications: [], current: null, currentSince: null };
-      let next = a.events.reduce((acc, e) => applyEnvelope(acc, e, a.at, false, false), reset);
-      next = { ...next, spans: a.timeline };
+      const stationId = a.stationId ?? s.focusedStation ?? "default";
+      const prevSv = s.stations[stationId] ?? initialStationView(stationId);
+      const resetSv: StationView = { ...prevSv, spans: [], treats: [], audio: [], notifications: [], current: null, currentSince: null };
+      let nextSv = a.events.reduce((acc, e) => applyStationEnvelope(acc, e, a.at, false), resetSv);
+      nextSv = { ...nextSv, spans: a.timeline };
       const last: Span | undefined = a.timeline[a.timeline.length - 1];
-      if (last && next.current && last.emotion === next.current.emotion) next = { ...next, currentSince: last.start };
-      return next;
+      if (last && nextSv.current && last.emotion === nextSv.current.emotion) nextSv = { ...nextSv, currentSince: last.start };
+      const nextStations = { ...s.stations, [stationId]: nextSv };
+      return syncFocused({
+        ...s,
+        stations: nextStations,
+        lastSeq: Math.max(s.lastSeq, ...a.events.map((e) => e.seq ?? 0)),
+      });
     }
-    case "status":
-      return withStatus(s, a.status, Date.now());
-    case "readAll":
-      return { ...s, notifications: s.notifications.map((n) => ({ ...n, read: true })) };
+    case "focusStation":
+      return syncFocused({ ...s, focusedStation: a.stationId });
+    case "status": {
+      const nextStations = { ...s.stations };
+      if (a.status.stations && a.status.stations.length > 0) {
+        for (const st of a.status.stations) {
+          const existing = nextStations[st.id] ?? initialStationView(st.id, st.name, st.dog_name);
+          nextStations[st.id] = {
+            ...existing,
+            name: st.name || existing.name,
+            dog_name: st.dog_name || existing.dog_name,
+          };
+        }
+        if (s.focusedStation === "default" && !a.status.stations.some((st) => st.id === "default")) {
+          return syncFocused(withStatus({ ...s, stations: nextStations, focusedStation: a.status.stations[0].id }, a.status, Date.now()));
+        }
+      }
+      return syncFocused(withStatus({ ...s, stations: nextStations }, a.status, Date.now()));
+    }
+    case "readAll": {
+      const nextStations = Object.fromEntries(
+        Object.entries(s.stations).map(([id, sv]) => [
+          id,
+          { ...sv, notifications: sv.notifications.map((n) => ({ ...n, read: true })) },
+        ])
+      );
+      return syncFocused({
+        ...s,
+        stations: nextStations,
+        notifications: s.notifications.map((n) => ({ ...n, read: true })),
+      });
+    }
     case "tick":
       return { ...s, toasts: expireToasts(s.toasts, a.at) };
     case "dismissToast":

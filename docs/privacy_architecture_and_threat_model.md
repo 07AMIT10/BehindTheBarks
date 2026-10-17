@@ -100,14 +100,86 @@ flowchart TD
 * Using the on-device YOLO detector, the phone station can black out or heavily blur 100% of the pixel area outside the dog's bounding box.
 * The viewer sees only the dog; the surrounding domestic space is completely redacted.
 
+### Defense 6: Four-Tier Viewing Modes & Station Sovereignty (T3.1–T3.8)
+
+| Mode | Preview Video | Audio Stream | Telemetry Events (Pose, Barks, Emotion) | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `full` | Live optical frames (2 fps) | Live stream (gated on D3) | Yes | Full live monitoring. |
+| `limited` | Blurred low-res still (10s cache, 240px, Gaussian blur) | None | Yes | Privacy-preserving snapshots + 15s peek window. |
+| `privacy` | None (Server serves "Events Only" slate) | None | Yes | Pure kinematic and acoustic telemetry. Zero camera pixels leave phone. |
+| `blackout` | None (Server serves "Blackout" slate) | None | None | Total sensor shutdown at Android hardware level. |
+
+#### Principles:
+1. **Ordering & Ceiling**: `blackout < privacy < limited < full`. Effective viewer mode is `min(station_cap, household_mode, viewer.mode_ceiling)`.
+2. **Station Sovereignty**: The physical Android phone station is sovereign. The station cap can be lowered from anywhere immediately, but can NEVER be raised remotely without explicit physical approval on the phone station screen (or heads-up notification prompt with 60s timeout).
+3. **15-Second Peek Window**: In `limited` mode, viewers can request a 15-second temporary peek (unblur) if station cap is `full`. The phone station chimes and records the peek in the audit trail.
+
 ---
 
 ## 4. Implementation Matrix
 
 | Component | Responsibility | Status |
 | :--- | :--- | :--- |
-| `backend/main.py` | Track active `/video` subscribers; dispatch `viewer` downlinks. | Planned |
-| `backend/web/remote_pipeline.py` | Maintain `_active_viewers` count and fire downlinks on connect/disconnect. | Planned |
-| `android/.../EventUploader.kt` | Parse `viewer` downlink messages from WebSocket. | Ready for hookup |
-| `android/.../MonitorService.kt` | Play `playViewerConnectedChime()` and update overlay with active viewer count. | Ready for hookup |
-| `frontend/components/VideoPanel.tsx` | Implement 3-minute inactivity watchdog and Kinematic Mode toggle. | Planned |
+| `backend/web/modes.py` | Mode hierarchy, order ranking, and ceiling arithmetic. | Implemented (T3.1) |
+| `android/.../capture/ViewMode.kt` | Android view mode enum, ceiling logic, and preference persistence. | Implemented (T3.2) |
+| `android/.../capture/ViewMode.kt` (class `ModeController`) | Station sovereignty, 15-min owner raise expiry, prompt approval flow. | Implemented (T3.2) |
+| `backend/web/policy.py` | Household policy engine, caller ceiling computation, slates generation. | Implemented (T3.3) |
+| `backend/main.py` | Endpoints (`/mode`, `/peek`, `/privacy`), active viewer tracking, kick cooldown. | Implemented (T3.3, T3.4, T3.5) |
+| `backend/web/tracker.py` | Active viewer session tracker with 300 ms debounced downlinks. | Implemented (T3.4) |
+| `android/.../EventUploader.kt` | Parse `policy` and `mode_request` downlinks; send `kick_viewers` uplinks. | Implemented (T3.1, T3.4) |
+| `android/.../MonitorService.kt` | Two-tone chime, viewer counter HUD, notification actions, kick handling. | Implemented (T3.2, T3.4) |
+| `android/.../ui/MainActivity.kt` | 4-segment station mode control HUD, viewer count badge, disconnect action. | Implemented (T3.2, T3.4) |
+| `backend/web/limited.py` | Server-side Gaussian blur (240px, blur=31), 10s caching, 15s peek window. | Implemented (T3.5) |
+| `frontend/components/VideoPanel.tsx` | Mode overlays, watchdog timeout, mobile and desktop mode selectors. | Implemented (T3.4, T3.6) |
+| `frontend/components/ModeSheet.tsx` | Bottom sheet mode selector, ceiling lock tooltips, 60s approval countdown. | Implemented (T3.6) |
+| `frontend/lib/watchdog.ts` | Pure timer watchdog engine with user activity reset. | Implemented (T3.4) |
+| `tests/web/test_mode_wire.py` | End-to-end wire verification across blackout, privacy, limited, and full. | Implemented (T3.8) |
+
+---
+
+## 5. Multi-Household Data Retention (T2.9, T2.10)
+
+Each household is a separate data boundary. Nothing below is shared between households, and the
+per-household isolation gate (`tests/web/test_isolation.py`) enforces it.
+
+### What is stored, where, and for how long
+
+| Data | Where | Default lifetime | Deleted by |
+| :--- | :--- | :--- | :--- |
+| Household, station, viewer rows | `BTB_DATABASE_URL` (`out/btb.db`; Postgres in prod) | Until the owner deletes the household | `DELETE /households/me` |
+| Recovery key, session tokens, pairing codes | **Hashed only** (SHA-256) in the DB | Recovery/session: until delete or expiry; pairing codes: 1 day | `registry.sweep()` |
+| Household ID, role, dog name, location | DB row + that household's runtime memory | Until delete | `DELETE /households/me` |
+| Station public key (ECDSA P-256) | DB row | Until the station is revoked or the household is deleted | Revoke / delete |
+| Session logs (`session-*.jsonl`) | `<log_dir>/<household_id>/` | **Off by default.** When enabled, **7 days** (`web.log_retention_days`) | `registry.sweep()` |
+| Live video frames, features, audio | In memory and over the LAN socket only; never written unless session logs are on | Ephemeral | Never persisted by default |
+
+### The opt-in rules
+
+* **No AI interpretation by default.** A new household runs with a `DisabledInterpreter`: frames are
+  not sent to the operator's LLM provider and cost no quota. The owner turns it on in
+  **Members & access → Privacy → "Use AI interpretation"**.
+* **No external notifications by default.** Non-legacy households get a `DashboardOnlyNotifier`; they
+  can never send a Telegram/WhatsApp message, so the operator's tokens are not exposed to testers.
+* **No session logs by default.** A household writes `session-*.jsonl` under its own directory only
+  after the owner enables **"Save session logs"**, and those files are pruned after 7 days.
+
+### The retention sweep
+
+`HouseholdRegistry.sweep()` runs on a timer (`web.registry.sweep_every_s`, default hourly) and in
+households mode only. It:
+
+1. Deletes `session-*.jsonl` older than `web.log_retention_days` in **household directories only** —
+   it never touches any other file in the log root, and never crosses a household boundary.
+2. Expires spent/expired pairing codes.
+3. Revokes viewers whose `expires_at` has passed (soft-revoked with `revoked_at` for the audit trail).
+4. Evicts idle household runtimes (no station, no viewer) after `web.registry.idle_evict_s`; a
+   household with an active station or viewer is never evicted.
+
+A failed sweep never takes the server down: the background task logs and continues.
+
+### Operational notes
+
+* Render's free disk is ephemeral: on redeploy, `out/` and the SQLite database are lost, so stations
+  must be re-paired. This is expected, not a data-retention failure.
+* A tester who wants a household removed entirely uses **Settings → Delete household**, which drops
+  the runtime, closes its sockets, and removes the DB rows in one action.

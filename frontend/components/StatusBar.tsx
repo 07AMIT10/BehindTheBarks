@@ -1,4 +1,4 @@
-import { deviceLabel } from "@/lib/phone";
+import { deviceLabel, stationState } from "@/lib/phone";
 import type { Status } from "@/lib/types";
 
 type Props = {
@@ -16,19 +16,32 @@ export default function StatusBar({ connected, everConnected, reconnectAttempt, 
   const mode = status?.mode ?? (status?.demo_mode ? "demo" : "live");
   const demoAvailable = Boolean(status?.modes?.includes("demo")) && Boolean(onMode);
   const conn = connected ? "Connected" : everConnected ? `Reconnecting · attempt ${reconnectAttempt}` : "Connecting…";
+  const idle = stationState(status) === "idle";
+  const paused = stationState(status) === "paused"; // a deliberate Blackout: connected, but a muted dot
   return (
     <div role="status" className="flex min-h-10 flex-wrap items-center gap-x-5 gap-y-2 rounded-md border border-border bg-surface px-4 py-2 text-small text-muted">
       <div className="flex items-center gap-2 font-semibold text-text">
         <span className="h-2 w-2 rounded-full"
-          style={{ background: connected ? "var(--accent)" : "var(--unknown)", boxShadow: connected ? "0 0 0 3px var(--accent-soft)" : "none" }} />
+          style={{
+            background: connected && !paused ? "var(--accent)" : "var(--unknown)",
+            boxShadow: connected && !paused ? "0 0 0 3px var(--accent-soft)" : "none",
+          }} />
         {conn}
       </div>
       <div className="flex items-center gap-1.5">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.5" /><path d="M11 18.5h2" /></svg>
-        {deviceLabel(status)}
+        {idle ? (
+          <>
+            <span className="h-2 w-2 rounded-full" style={{ background: "var(--unknown)" }} />
+            Station offline
+          </>
+        ) : (
+          deviceLabel(status)
+        )}
       </div>
-      <div className="font-mono">{Math.round(status?.fps ?? 0)} fps</div>
-      <div className="flex items-center gap-1.5">
+      {/* Phone-width bar is one line: connection + device. fps and AI are desktop/debug-only (T6.3). */}
+      {(status?.fps ?? 0) > 0 && <div className="hidden font-mono sm:block">{Math.round(status?.fps ?? 0)} fps</div>}
+      <div className="hidden items-center gap-1.5 sm:flex">
         {aiOk ? (
           <>AI · {llm?.model || "vision"}{latency !== undefined && <span className="font-mono">{Math.round(latency)} ms</span>}</>
         ) : (
@@ -36,13 +49,14 @@ export default function StatusBar({ connected, everConnected, reconnectAttempt, 
         )}
       </div>
       {Boolean(status?.pipeline_status?.torch) && (
-        <div className="flex items-center gap-1.5 rounded-full bg-yellow-500/10 px-2 py-0.5 text-[11px] font-semibold text-yellow-300 border border-yellow-500/30">
+        <div className="flex items-center gap-1.5 rounded-full bg-yellow-500/10 px-2 py-0.5 text-[12px] font-semibold text-yellow-300 border border-yellow-500/30">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2v1"/><path d="M12 7a5 5 0 0 0-5 5c0 2 1.5 3.5 2.5 4.5.5.5.5 1.5.5 1.5h4s0-1 .5-1.5c1-1 2.5-2.5 2.5-4.5a5 5 0 0 0-5-5z"/></svg>
           Light ON
         </div>
       )}
       <div className="grow" />
-      <div role="group" aria-label="Mode" className="flex gap-0.5 rounded-lg bg-surface-2 p-[3px]">
+      {/* The Live/Demo toggle is a developer feature: on phones it lives in the T6.3 debug drawer. */}
+      <div role="group" aria-label="Mode" className="hidden gap-0.5 rounded-lg bg-surface-2 p-[3px] sm:flex">
         {(["live", "demo"] as const).map((m) => {
           const active = mode === m;
           const disabled = m === "demo" ? !demoAvailable : !onMode && !active;
@@ -50,7 +64,7 @@ export default function StatusBar({ connected, everConnected, reconnectAttempt, 
             <button key={m} type="button" aria-pressed={active} disabled={disabled || active}
               title={m === "demo" && !demoAvailable ? "Demo mode arrives with the demo clips" : undefined}
               onClick={() => onMode?.(m)}
-              className={`flex h-7 items-center gap-1.5 rounded-sm px-3 text-[12px] font-semibold ${active ? "bg-surface text-text shadow-sm" : "text-muted"} disabled:cursor-default ${disabled && !active ? "opacity-50" : ""}`}>
+              className={`flex h-11 md:h-8 items-center gap-1.5 rounded-sm px-3 text-[12px] font-semibold ${active ? "bg-surface text-text shadow-sm" : "text-muted"} disabled:cursor-default ${disabled && !active ? "opacity-50" : ""}`}>
               {m === "live" && <span className="h-1.5 w-1.5 rounded-full" style={{ background: "var(--accent)" }} />}
               {m === "live" ? "Live" : "Demo"}
             </button>

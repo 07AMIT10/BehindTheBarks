@@ -1,12 +1,13 @@
 package com.btb.ondevice.capture
 
 import android.content.Context
-import android.os.Build
 import android.os.SystemClock
 import android.util.Size
 import android.view.OrientationEventListener
 import android.view.Surface
 import android.view.WindowManager
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -23,6 +24,21 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 typealias FrameCallback = (rgbaBytes: ByteArray, width: Int, height: Int, rotationDegrees: Int, timestampS: Double) -> Unit
+
+/**
+ * Current display rotation for the initial target rotation. Works from any context: `Context.getDisplay()`
+ * throws on a Service or Application context (the MonitorService start crashed on it), while the
+ * WindowManager's default display is always available.
+ */
+@Suppress("DEPRECATION")
+internal fun initialDisplayRotation(context: Context): Int {
+    val wm = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+    return try {
+        wm?.defaultDisplay?.rotation ?: Surface.ROTATION_0
+    } catch (e: RuntimeException) {
+        Surface.ROTATION_0
+    }
+}
 
 class CameraSource(
     private val context: Context,
@@ -50,14 +66,7 @@ class CameraSource(
     private val bootToEpochOffsetS = (System.currentTimeMillis() / 1000.0) - (SystemClock.elapsedRealtimeNanos() / 1e9)
 
     fun start(surfaceProvider: Preview.SurfaceProvider? = null) {
-        val wm = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
-        @Suppress("DEPRECATION")
-        val initialRotation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            context.display?.rotation ?: Surface.ROTATION_0
-        } else {
-            wm?.defaultDisplay?.rotation ?: Surface.ROTATION_0
-        }
-        currentTargetRotation = initialRotation
+        currentTargetRotation = initialDisplayRotation(context)
 
         setupOrientationListener()
 
@@ -209,20 +218,75 @@ class CameraSource(
 
     fun setTorch(enabled: Boolean): Boolean {
         torchEnabled = enabled
-        val cam = camera ?: return false
-        return if (cam.cameraInfo.hasFlashUnit()) {
-            ContextCompat.getMainExecutor(context).execute {
-                cam.cameraControl.enableTorch(enabled)
+        val cam = camera
+        if (cam != null && cam.cameraInfo.hasFlashUnit()) {
+            return try {
+                ContextCompat.getMainExecutor(context).execute {
+                    try {
+                        cam.cameraControl.enableTorch(enabled)
+                    } catch (e: Exception) {
+                        android.util.Log.e("CameraSource", "enableTorch failed: ${e.message}")
+                    }
+                }
+                true
+            } catch (e: Exception) {
+                android.util.Log.e("CameraSource", "setTorch failed: ${e.message}")
+                setSystemTorch(enabled)
             }
-            true
-        } else {
+        }
+        return setSystemTorch(enabled)
+    }
+
+    private fun setSystemTorch(enabled: Boolean): Boolean {
+        return try {
+            val cm = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager ?: return false
+            for (id in cm.cameraIdList) {
+                val chars = cm.getCameraCharacteristics(id)
+                val hasFlash = chars.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+                val facing = chars.get(CameraCharacteristics.LENS_FACING)
+                if (hasFlash && facing == CameraCharacteristics.LENS_FACING_BACK) {
+                    cm.setTorchMode(id, enabled)
+                    return true
+                }
+            }
+            false
+        } catch (e: Exception) {
+            android.util.Log.w("CameraSource", "System torch fallback failed: ${e.message}")
             false
         }
     }
 
-    fun toggleTorch(): Boolean = setTorch(!torchEnabled)
+    fun toggleTorch(): Boolean {
+        val target = !torchEnabled
+        val ok = setTorch(target)
+        return if (ok) target else torchEnabled
+    }
 
     fun isTorchOn(): Boolean = torchEnabled
+
+    fun pulseTorch(pattern: String = "double_blink") {
+        val wasOn = torchEnabled
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        when (pattern) {
+            "double_blink" -> {
+                setTorch(true)
+                handler.postDelayed({ setTorch(false) }, 150)
+                handler.postDelayed({ setTorch(true) }, 300)
+                handler.postDelayed({ setTorch(wasOn) }, 450)
+            }
+            "beacon" -> {
+                for (i in 0..2) {
+                    handler.postDelayed({ setTorch(true) }, i * 400L)
+                    handler.postDelayed({ setTorch(false) }, i * 400L + 200L)
+                }
+                handler.postDelayed({ setTorch(wasOn) }, 1300)
+            }
+            else -> {
+                setTorch(true)
+                handler.postDelayed({ setTorch(wasOn) }, 300)
+            }
+        }
+    }
 
     fun hasFlashUnit(): Boolean = camera?.cameraInfo?.hasFlashUnit() ?: false
 

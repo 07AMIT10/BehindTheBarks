@@ -1,0 +1,8 @@
+# Caddy terminates TLS (automatic Let's Encrypt) and proxies everything to the app.
+# No `encode` here: the app already gzips text responses (admin-tunable), and Caddy compressing
+# the MJPEG stream would buffer frames. flush_interval -1 keeps /video and the WebSockets live.
+{$BTB_DOMAIN} {
+	reverse_proxy app:8000 {
+		flush_interval -1
+	}
+}

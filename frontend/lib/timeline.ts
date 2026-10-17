@@ -29,15 +29,19 @@ export function layoutSpans(spans: Span[], w: TimeWindow, now: number) {
 }
 
 export function groupAudio(audio: AudioMark[], w: TimeWindow, gapS = 2) {
-  const out: { ts: number; label: string; count: number; left: number }[] = [];
+  const out: { ts: number; label: string; count: number; left: number; snippet_id?: string | null; duration_s?: number | null }[] = [];
   let lastTs = -Infinity;
   for (const a of audio) {
     if (a.ts < w.start || a.ts > w.end) continue;
     const prev = out[out.length - 1];
     if (prev && prev.label === a.label && a.ts - lastTs <= gapS) {
       prev.count += 1;
+      if (!prev.snippet_id && a.snippet_id) {
+        prev.snippet_id = a.snippet_id;
+        prev.duration_s = a.duration_s;
+      }
     } else {
-      out.push({ ts: a.ts, label: a.label, count: 1, left: leftPct(a.ts, w) });
+      out.push({ ts: a.ts, label: a.label, count: 1, left: leftPct(a.ts, w), snippet_id: a.snippet_id, duration_s: a.duration_s });
     }
     lastTs = a.ts;
   }

@@ -22,10 +22,12 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.camera.view.PreviewView
@@ -34,6 +36,14 @@ import androidx.core.content.ContextCompat
 import com.btb.ondevice.capture.MonitorService
 import com.btb.ondevice.capture.MonitorServiceListener
 import com.btb.ondevice.net.ConnectionState
+import com.btb.ondevice.net.PairResult
+import com.btb.ondevice.net.StationKey
+import com.btb.ondevice.net.UrlCheck
+import com.btb.ondevice.net.UrlPolicy
+import com.btb.ondevice.BuildConfig
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.launch
+import com.btb.ondevice.util.PairingTarget
 import com.btb.ondevice.util.QrDecoder
 
 class MainActivity : Activity() {
@@ -41,6 +51,7 @@ class MainActivity : Activity() {
     private lateinit var previewView: PreviewView
     private lateinit var overlayView: DebugOverlayView
     private lateinit var controlsPanel: LinearLayout
+    private lateinit var controlsScroll: ScrollView
     private lateinit var floatingPill: TextView
     private lateinit var ambientOverlay: FrameLayout
     private lateinit var ambientStatusText: TextView
@@ -55,13 +66,22 @@ class MainActivity : Activity() {
     private lateinit var flipButton: Button
     private lateinit var privacyButton: Button
     private lateinit var collapseButton: Button
+    private lateinit var viewersBadge: TextView
+    private lateinit var disconnectViewersButton: Button
+    private lateinit var ambientViewersText: TextView
+    private lateinit var listeningBadge: TextView
 
     private lateinit var prefs: SharedPreferences
 
     private var monitorService: MonitorService? = null
     private var isBound = false
     private var isMonitoring = false
-    private var isAmbientMode = false
+    private var householdRef: TextView? = null
+    private var unpairButton: Button? = null
+    private val dim = StationDimState()
+    private val isAmbientMode: Boolean get() = dim.isOn
+    private var uiResumed = false
+    private var approvalDialog: AlertDialog? = null
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -78,6 +98,7 @@ class MainActivity : Activity() {
                         overlayView.updateState(overlayState)
                         val isPriv = monitorService?.isPrivacyMode() ?: false
                         updatePrivacyButton(isPriv)
+                        monitorService?.effectiveMode()?.let { setModeButton(it) }
                         if (isPriv) {
                             ambientStatusText.text = "🛡️ Privacy Active · Camera Muted"
                             ambientStatusText.setTextColor(Color.parseColor("#E53935"))
@@ -102,25 +123,45 @@ class MainActivity : Activity() {
                 }
 
                 override fun onQrCodeDetected(rawText: String) {
+                    runOnUiThread { applyPairingPayload(rawText) }
+                }
+
+                override fun onViewersCountChanged(videoViewers: Int, audioViewers: Int) {
                     runOnUiThread {
-                        val config = QrDecoder.parsePairingText(rawText)
-                        if (config != null) {
-                            urlEditText.setText(config.url)
-                            prefs.edit().putString(KEY_URL, config.url).apply()
-                            config.token?.let {
-                                prefs.edit().putString(KEY_TOKEN, it).apply()
-                            }
-                            config.deviceName?.let {
-                                deviceEditText.setText(it)
-                                prefs.edit().putString(KEY_DEVICE, it).apply()
-                            }
-                            Toast.makeText(this@MainActivity, "✓ Paired to Dashboard!", Toast.LENGTH_LONG).show()
-                        }
+                        updateViewersUi(videoViewers, audioViewers)
                     }
                 }
+
+                override fun onTorchStateChanged(enabled: Boolean) {
+                    runOnUiThread { updateTorchButton(enabled) }
+                }
+
+                override fun isUiInFront(): Boolean = uiResumed
+
+                override fun onModeApprovalRequested(requestedWire: String) {
+                    runOnUiThread { showApprovalDialog() }
+                }
+
+                override fun onModeApprovalResolved() {
+                    runOnUiThread { dismissApprovalDialog() }
+                }
+
+                override fun onPairingInvalid(reason: String) {
+                    runOnUiThread { showRemovedFromHousehold() }
+                }
             })
+            val service = monitorService
+            if (service != null && service.isMonitoringNow()) {
+                // Reattached: a rotation or font change recreated this screen while the service kept running.
+                setMonitoringUi(true)
+                service.currentConnectionState()?.let { updateConnectionUi(it) }
+                if (dim.onSessionConfirmed(monitoring = true)) enterAmbientMode()
+            } else {
+                dim.onSessionLost()
+            }
             val isPriv = monitorService?.isPrivacyMode() ?: false
             updatePrivacyButton(isPriv)
+            monitorService?.effectiveMode()?.let { setModeButton(it) }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -133,6 +174,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         actionBar?.hide()
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        dim.onRecreated(savedOn = savedInstanceState?.getBoolean(KEY_DIM_ON, false) == true)
 
         val root = FrameLayout(this).apply {
             layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
@@ -154,10 +196,10 @@ class MainActivity : Activity() {
 
         // 3. Floating Pill for collapsed/kiosk mode (top-center)
         floatingPill = TextView(this).apply {
-            text = "🐾 Behind The Barks · Tap to expand"
+            text = "🐾 WagWatch · Tap to expand"
             setTextColor(Color.WHITE)
             textSize = 12f
-            setPadding(32, 14, 32, 14)
+            setPadding(dp(32), dp(14), dp(32), dp(14))
             val bg = GradientDrawable().apply {
                 setColor(Color.argb(200, 20, 20, 20))
                 cornerRadius = 32f
@@ -168,7 +210,7 @@ class MainActivity : Activity() {
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            ).apply { topMargin = 40 }
+            ).apply { topMargin = dp(40) }
             setOnClickListener {
                 expandControls()
             }
@@ -176,15 +218,33 @@ class MainActivity : Activity() {
         root.addView(floatingPill)
 
         // 4. Controls panel (vertical layout at top)
-        controlsPanel = LinearLayout(this).apply {
+        // Scrollable so small screens and large font scales can reach every control; the column is
+        // capped at 600dp and centred on tablets. The panel background covers only its content.
+        controlsPanel = CappedWidthLinearLayout(this, dp(MAX_CONTENT_WIDTH_DP)).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(32, 48, 32, 24)
+            setPadding(dp(16), dp(24), dp(16), dp(16))
             setBackgroundColor(Color.argb(210, 18, 18, 18))
+        }
+        val centredColumn = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            addView(controlsPanel, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+        }
+        controlsScroll = ScrollView(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP
+                FrameLayout.LayoutParams.MATCH_PARENT
             )
+            // Keep the first and last controls clear of the status bar and navigation bar (edge to edge).
+            fitsSystemWindows = true
+            isVerticalScrollBarEnabled = true
+            addView(centredColumn, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ))
         }
 
         val headerRow = LinearLayout(this).apply {
@@ -193,7 +253,7 @@ class MainActivity : Activity() {
         }
 
         val title = TextView(this).apply {
-            text = "🐾 Behind The Barks"
+            text = "🐾 WagWatch"
             setTextColor(Color.WHITE)
             textSize = 17f
         }
@@ -218,78 +278,65 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             setHintTextColor(Color.GRAY)
             setBackgroundColor(Color.argb(140, 50, 50, 50))
-            setPadding(16, 12, 16, 12)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
         }
         controlsPanel.addView(urlEditText)
 
-        // URL Quick Actions row (Scan QR & Paste)
-        val urlActionsRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 4, 0, 4)
-        }
-
-        val scanQrBtn = Button(this).apply {
-            text = "📷 Scan QR"
-            textSize = 11f
-            setBackgroundColor(Color.parseColor("#00897B"))
-            setTextColor(Color.WHITE)
-            setOnClickListener {
-                startQrScan()
-            }
-        }
-        urlActionsRow.addView(scanQrBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = 8 })
-
-        val pasteBtn = Button(this).apply {
-            text = "📋 Paste"
-            textSize = 11f
-            setBackgroundColor(Color.parseColor("#5E35B1"))
-            setTextColor(Color.WHITE)
-            setOnClickListener {
-                handlePaste()
-            }
-        }
-        urlActionsRow.addView(pasteBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        controlsPanel.addView(urlActionsRow)
-
-        // Preset buttons row
-        val presetsLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 4, 0, 8)
-        }
-
-        val cloudPreset = Button(this).apply {
-            text = "Cloud WSS"
-            textSize = 11f
+        // Primary Pairing Action: "Pair by QR"
+        val pairQrBtn = Button(this).apply {
+            text = "🔗 Pair by QR"
+            textSize = 13f
             setBackgroundColor(Color.parseColor("#1565C0"))
             setTextColor(Color.WHITE)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
             setOnClickListener {
-                showCloudPrompt()
+                if (isMonitoring) {
+                    Toast.makeText(this@MainActivity, "Stop Monitoring first, then pair", Toast.LENGTH_LONG).show()
+                } else {
+                    startActivity(android.content.Intent(this@MainActivity, ScannerActivity::class.java))
+                }
             }
         }
-        presetsLayout.addView(cloudPreset, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f).apply { rightMargin = 8 })
+        controlsPanel.addView(pairQrBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(4)
+            bottomMargin = dp(4)
+        })
 
-        val wifiPreset = Button(this).apply {
-            text = "Local Wi-Fi"
+        // Paired household status and unpair button
+        val householdRow = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(0), dp(4), dp(0), dp(4)) }
+        val householdLabel = TextView(this).apply { textSize = 11f }
+        val unpairBtn = Button(this).apply {
+            text = "Unpair Station"
             textSize = 11f
-            setBackgroundColor(Color.parseColor("#37474F"))
+            setBackgroundColor(Color.parseColor("#B71C1C"))
             setTextColor(Color.WHITE)
-            setOnClickListener {
-                showLocalWifiPrompt()
-            }
+            setOnClickListener { unpairStation() }
         }
-        presetsLayout.addView(wifiPreset, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = 8 })
+        householdRow.addView(householdLabel, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        householdRow.addView(unpairBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        householdRef = householdLabel
+        unpairButton = unpairBtn
+        controlsPanel.addView(householdRow)
 
-        val usbPreset = Button(this).apply {
-            text = "USB (Local)"
-            textSize = 11f
-            setBackgroundColor(Color.parseColor("#37474F"))
-            setTextColor(Color.WHITE)
-            setOnClickListener {
-                urlEditText.setText("ws://127.0.0.1:8000/ingest-events")
+        // Debug testing preset (only visible during developer test runs)
+        if (com.btb.ondevice.BuildConfig.DEBUG) {
+            val debugTestingLayout = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(dp(0), dp(2), dp(0), dp(4))
             }
+            val usbPreset = Button(this).apply {
+                text = "🛠️ USB Test (127.0.0.1:8000)"
+                textSize = 10f
+                setBackgroundColor(Color.parseColor("#37474F"))
+                setTextColor(Color.LTGRAY)
+                setOnClickListener {
+                    urlEditText.setText("ws://127.0.0.1:8000/ingest-events")
+                    Toast.makeText(this@MainActivity, "Set USB Local Test URL", Toast.LENGTH_SHORT).show()
+                }
+            }
+            debugTestingLayout.addView(usbPreset, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            controlsPanel.addView(debugTestingLayout)
         }
-        presetsLayout.addView(usbPreset, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        controlsPanel.addView(presetsLayout)
 
         val defaultDevice = prefs.getString(KEY_DEVICE, Build.MODEL) ?: Build.MODEL
         deviceEditText = EditText(this).apply {
@@ -298,7 +345,7 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             setHintTextColor(Color.GRAY)
             setBackgroundColor(Color.argb(140, 50, 50, 50))
-            setPadding(16, 12, 16, 12)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
         }
         controlsPanel.addView(deviceEditText)
 
@@ -306,13 +353,13 @@ class MainActivity : Activity() {
             text = "● Idle · Ready"
             setTextColor(Color.LTGRAY)
             textSize = 13f
-            setPadding(0, 10, 0, 10)
+            setPadding(dp(0), dp(10), dp(0), dp(10))
         }
         controlsPanel.addView(statusTextView)
 
         val actionsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 4, 0, 0)
+            setPadding(dp(0), dp(4), dp(0), dp(0))
         }
 
         toggleButton = Button(this).apply {
@@ -327,7 +374,7 @@ class MainActivity : Activity() {
                 }
             }
         }
-        actionsRow.addView(toggleButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f).apply { rightMargin = 12 })
+        actionsRow.addView(toggleButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f).apply { rightMargin = dp(12) })
 
         dimButton = Button(this).apply {
             text = "🌙 Station Dim"
@@ -343,7 +390,7 @@ class MainActivity : Activity() {
 
         val toolsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 8, 0, 0)
+            setPadding(dp(0), dp(8), dp(0), dp(0))
         }
 
         torchButton = Button(this).apply {
@@ -351,13 +398,13 @@ class MainActivity : Activity() {
             textSize = 12f
             setBackgroundColor(Color.parseColor("#37474F"))
             setTextColor(Color.WHITE)
-            isEnabled = false
+            isEnabled = true
             setOnClickListener {
-                val on = monitorService?.toggleTorch() ?: false
-                updateTorchButton(on)
+                val newState = monitorService?.toggleTorch() ?: false
+                updateTorchButton(monitorService?.isTorchOn() ?: newState)
             }
         }
-        toolsRow.addView(torchButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = 8 })
+        toolsRow.addView(torchButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
 
         flipButton = Button(this).apply {
             text = "🔄 Flip"
@@ -368,25 +415,65 @@ class MainActivity : Activity() {
             setOnClickListener {
                 val isBack = monitorService?.flipCamera() ?: true
                 text = if (isBack) "🔄 Back" else "🔄 Front"
+                contentDescription = if (isBack) "Flip camera, now back" else "Flip camera, now front"
             }
         }
-        toolsRow.addView(flipButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = 8 })
+        toolsRow.addView(flipButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
 
+        // Viewing mode button: shows the current mode and opens the 4-option chooser.
         privacyButton = Button(this).apply {
-            text = "🛡️ Privacy"
+            text = "👁️ Full"
             textSize = 12f
             setBackgroundColor(Color.parseColor("#37474F"))
             setTextColor(Color.WHITE)
-            isEnabled = false
-            setOnClickListener {
-                val on = monitorService?.togglePrivacyMode() ?: false
-                updatePrivacyButton(on)
-            }
+            isEnabled = true
+            setOnClickListener { showModeChooser() }
         }
         toolsRow.addView(privacyButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         controlsPanel.addView(toolsRow)
 
-        root.addView(controlsPanel)
+        // T3.4: viewer indicator badge and disconnect action
+        val viewersRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(0), dp(6), dp(0), dp(0))
+        }
+        viewersBadge = TextView(this).apply {
+            text = "👁️ 0 viewers watching"
+            setTextColor(Color.parseColor("#4FC3F7"))
+            textSize = 12f
+            visibility = View.GONE
+        }
+        viewersRow.addView(viewersBadge, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        disconnectViewersButton = Button(this).apply {
+            text = "Disconnect"
+            textSize = 11f
+            setBackgroundColor(Color.parseColor("#D32F2F"))
+            setTextColor(Color.WHITE)
+            visibility = View.GONE
+            setOnClickListener {
+                monitorService?.disconnectViewers()
+                Toast.makeText(this@MainActivity, "Viewers disconnected", Toast.LENGTH_SHORT).show()
+            }
+        }
+        viewersRow.addView(disconnectViewersButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        controlsPanel.addView(viewersRow)
+
+        // T3.9: people listening to the microphone (Full mode only). Own row, hidden at zero.
+        val listeningRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        listeningBadge = TextView(this).apply {
+            setTextColor(Color.parseColor("#FFB74D"))
+            textSize = 12f
+            visibility = View.GONE
+        }
+        listeningRow.addView(listeningBadge, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        controlsPanel.addView(listeningRow)
+
+        root.addView(controlsScroll)
 
         // 5. Ambient / Station Mode Fullscreen Overlay (pitch black to save power & prevent OLED burn-in)
         ambientOverlay = FrameLayout(this).apply {
@@ -407,11 +494,11 @@ class MainActivity : Activity() {
         }
 
         val ambientTitle = TextView(this).apply {
-            text = "🐾 Behind The Barks"
+            text = "🐾 WagWatch"
             setTextColor(Color.parseColor("#616161"))
             textSize = 20f
             gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 16)
+            setPadding(dp(0), dp(0), dp(0), dp(16))
         }
         ambientContent.addView(ambientTitle)
 
@@ -420,7 +507,7 @@ class MainActivity : Activity() {
             setTextColor(Color.parseColor("#43A047"))
             textSize = 14f
             gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 8)
+            setPadding(dp(0), dp(0), dp(0), dp(8))
         }
         ambientContent.addView(ambientStatusText)
 
@@ -429,9 +516,19 @@ class MainActivity : Activity() {
             setTextColor(Color.parseColor("#757575"))
             textSize = 13f
             gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 24)
+            setPadding(dp(0), dp(0), dp(0), dp(24))
         }
         ambientContent.addView(ambientEmotionText)
+
+        ambientViewersText = TextView(this).apply {
+            text = ""
+            setTextColor(Color.parseColor("#4FC3F7"))
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setPadding(dp(0), dp(0), dp(0), dp(12))
+            visibility = View.GONE
+        }
+        ambientContent.addView(ambientViewersText)
 
         val ambientHint = TextView(this).apply {
             text = "Display dimmed to reduce power & thermals\nTap anywhere to wake"
@@ -446,8 +543,76 @@ class MainActivity : Activity() {
         root.addView(ambientOverlay)
 
         setContentView(root)
+        enforceTouchTargets(controlsPanel)
+        enforceTouchTargets(floatingPill)
+        applyAccessibility(viewersRow, listeningRow)
+        refreshPairingUi()
         requestPermissionsIfNeeded()
+        // A rotation or font change recreates this screen while the service keeps capturing.
+        // Reattach to the running service instead of treating the screen as idle.
+        if (MonitorService.isServiceRunning) {
+            isBound = bindService(Intent(this, MonitorService::class.java), serviceConnection, 0)
+        }
         handleIntent(intent)
+    }
+
+    private fun dp(value: Int): Int = TouchTarget.dpToPx(value, resources.displayMetrics.density)
+
+    /** The framework's AlertDialog buttons are 36dp tall; the touch target is 48dp. */
+    private fun sizeDialogButtons(dialog: AlertDialog) {
+        for (which in intArrayOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL)) {
+            dialog.getButton(which)?.let { button ->
+                button.minHeight = dp(MIN_TOUCH_DP)
+                button.minWidth = dp(MIN_TOUCH_DP)
+            }
+        }
+    }
+
+    private fun AlertDialog.Builder.showSized(): AlertDialog = show().also { sizeDialogButtons(it) }
+
+    /** Every tappable control is at least 48dp in both directions (the Material touch target). */
+    private fun enforceTouchTargets(view: View) {
+        if (view is Button || view is EditText || view.isClickable) {
+            view.minimumHeight = maxOf(view.minimumHeight, dp(MIN_TOUCH_DP))
+            view.minimumWidth = maxOf(view.minimumWidth, dp(MIN_TOUCH_DP))
+        }
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) enforceTouchTargets(view.getChildAt(i))
+        }
+    }
+
+    /**
+     * Accessibility: decorative layers are hidden from TalkBack, the status line and viewer count
+     * are polite live regions, icon or emoji labels get a speakable description, and the viewer row
+     * is always in the tree when it is shown. Focus follows the order the controls are added, which
+     * is top to bottom as drawn.
+     */
+    private fun applyAccessibility(viewers: LinearLayout, listening: LinearLayout) {
+        previewView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        overlayView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        statusTextView.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        viewersBadge.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        viewers.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        viewersBadge.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        disconnectViewersButton.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        disconnectViewersButton.contentDescription = "Disconnect all viewers and listeners"
+        listening.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        listeningBadge.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        listeningBadge.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        dimButton.contentDescription = "Station Dim: black screen, camera stays on"
+        collapseButton.contentDescription = "Hide the control panel"
+        ambientOverlay.contentDescription = "Station Dim is on. Tap to wake the screen."
+        describeEmojiLabels(controlsPanel)
+    }
+
+    /** Buttons whose text carries emoji get a plain-words description; explicit ones are kept. */
+    private fun describeEmojiLabels(view: View) {
+        if (view is Button && view.contentDescription == null) {
+            view.contentDescription = spokenLabel(view.text.toString())
+        }
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) describeEmojiLabels(view.getChildAt(i))
+        }
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -462,20 +627,34 @@ class MainActivity : Activity() {
             val linkUrl = uri.getQueryParameter("url")
             val linkToken = uri.getQueryParameter("token")
             val linkDevice = uri.getQueryParameter("device")
-            if (!linkUrl.isNullOrBlank()) {
-                urlEditText.setText(linkUrl)
-                prefs.edit().putString(KEY_URL, linkUrl).apply()
+            if (!linkUrl.isNullOrBlank() && allowedServerLink(linkUrl)) {
+                val host = runCatching { android.net.Uri.parse(linkUrl).host }.getOrNull() ?: linkUrl
+                // A deep link is attacker-controllable (any web page can fire one): confirm before it
+                // touches the stored configuration, and never take a token for a different host.
+                // The host check reads the stored URL BEFORE the link overwrites it.
+                AlertDialog.Builder(this)
+                    .setTitle("Connect this station to $host?")
+                    .setMessage("A link asked to point WagWatch at $host${
+                        if (!linkToken.isNullOrBlank() && !DeepLinkPolicy.mayApplyToken(prefs.getString(KEY_URL, ""), linkUrl))
+                            "\n\nIts access token was ignored because it does not match your current server." else ""
+                    }")
+                    .setPositiveButton("Connect") { _, _ ->
+                        val applyToken = !linkToken.isNullOrBlank() &&
+                            DeepLinkPolicy.mayApplyToken(prefs.getString(KEY_URL, ""), linkUrl)
+                        urlEditText.setText(linkUrl)
+                        prefs.edit().putString(KEY_URL, linkUrl).apply()
+                        if (!linkDevice.isNullOrBlank()) {
+                            deviceEditText.setText(linkDevice)
+                            prefs.edit().putString(KEY_DEVICE, linkDevice).apply()
+                        }
+                        if (applyToken) prefs.edit().putString(KEY_TOKEN, linkToken).apply()
+                    }
+                    .setNegativeButton("Ignore", null)
+                    .showSized()
             }
-            if (!linkToken.isNullOrBlank()) {
-                prefs.edit().putString(KEY_TOKEN, linkToken).apply()
-            }
-            if (!linkDevice.isNullOrBlank()) {
-                deviceEditText.setText(linkDevice)
-                prefs.edit().putString(KEY_DEVICE, linkDevice).apply()
-            }
-            Toast.makeText(this, "✓ Paired to Server via Link!", Toast.LENGTH_SHORT).show()
         }
 
+        if (!com.btb.ondevice.BuildConfig.DEBUG) return  // extras are the adb dev loop: release builds ignore them
         val extraUrl = intent?.getStringExtra("extra_server_url") ?: intent?.getStringExtra("url")
         if (!extraUrl.isNullOrBlank()) {
             urlEditText.setText(extraUrl)
@@ -491,9 +670,17 @@ class MainActivity : Activity() {
             prefs.edit().putString(KEY_DEVICE, extraDevice).apply()
         }
 
+        // A pairing payload from the adb dev loop goes through the same path as a scanned QR (see applyPairingPayload).
+        // Removed from the intent so a recreation of this screen does not pair the one-time code twice.
+        val extraPair = intent?.getStringExtra(EXTRA_PAIR_PAYLOAD)
+        if (!extraPair.isNullOrBlank()) {
+            intent?.removeExtra(EXTRA_PAIR_PAYLOAD)
+            applyPairingPayload(extraPair)
+        }
+
         when (intent?.action) {
             ACTION_START -> {
-                if (!isMonitoring) {
+                if (!isMonitoring && !MonitorService.isServiceRunning) {
                     checkPermissionsAndStart()
                 }
             }
@@ -528,10 +715,9 @@ class MainActivity : Activity() {
     }
 
     private fun enterAmbientMode() {
-        if (!isMonitoring) return
-        isAmbientMode = true
+        if (!dim.turnOn(monitoring = isMonitoring)) return
         ambientOverlay.visibility = View.VISIBLE
-        controlsPanel.visibility = View.GONE
+        controlsScroll.visibility = View.GONE
         floatingPill.visibility = View.GONE
         previewView.visibility = View.INVISIBLE // Pause viewfinder rendering to save GPU/display power
 
@@ -542,7 +728,7 @@ class MainActivity : Activity() {
     }
 
     private fun exitAmbientMode() {
-        isAmbientMode = false
+        dim.turnOff()
         ambientOverlay.visibility = View.GONE
         previewView.visibility = View.VISIBLE
 
@@ -551,28 +737,34 @@ class MainActivity : Activity() {
         lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         window.attributes = lp
 
-        controlsPanel.visibility = View.VISIBLE
+        controlsScroll.visibility = View.VISIBLE
     }
 
     private fun collapseControls() {
-        controlsPanel.visibility = View.GONE
+        controlsScroll.visibility = View.GONE
         floatingPill.visibility = View.VISIBLE
     }
 
     private fun expandControls() {
         floatingPill.visibility = View.GONE
-        controlsPanel.visibility = View.VISIBLE
+        controlsScroll.visibility = View.VISIBLE
     }
 
     private fun updateConnectionUi(state: ConnectionState) {
         val spooled = monitorService?.getSpooledBytes() ?: 0L
         val spooledKb = spooled / 1024
 
+        // M6: the pill names THIS phone, not a hardcoded Samsung model: whatever the user typed
+        // (or the persisted device name), falling back to Build.MODEL.
+        val deviceLabel = deviceEditText.text.toString().trim()
+            .ifBlank { prefs.getString(KEY_DEVICE, null)?.trim().takeUnless { it.isNullOrBlank() } }
+            ?: Build.MODEL
+
         when (state) {
             ConnectionState.CONNECTED -> {
                 statusTextView.text = "● Live · Connected to Server"
                 statusTextView.setTextColor(Color.parseColor("#00E676"))
-                floatingPill.text = "● Live [Galaxy-A07] · Tap for Menu"
+                floatingPill.text = "● Live [$deviceLabel] · Tap for Menu"
                 ambientStatusText.text = "● Monitoring Active · Live"
                 ambientStatusText.setTextColor(Color.parseColor("#43A047"))
             }
@@ -643,7 +835,7 @@ class MainActivity : Activity() {
     private fun showPermissionDeniedDialog() {
         AlertDialog.Builder(this)
             .setTitle("Camera & Microphone Required")
-            .setMessage("Behind The Barks requires camera and microphone access to detect your dog's posture, expressions, and barking sounds.\n\nPlease grant permissions in App Settings to proceed.")
+            .setMessage("WagWatch requires camera and microphone access to detect your dog's posture, expressions, and barking sounds.\n\nPlease grant permissions in App Settings to proceed.")
             .setPositiveButton("Open Settings") { _, _ ->
                 try {
                     val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
@@ -653,7 +845,7 @@ class MainActivity : Activity() {
                 } catch (_: Exception) {}
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .showSized()
     }
 
     private fun checkPermissionsAndStart() {
@@ -678,7 +870,7 @@ class MainActivity : Activity() {
                     prefs.edit().putBoolean(KEY_BATTERY_TIP_SHOWN, true).apply()
                     AlertDialog.Builder(this)
                         .setTitle("🔋 Keep Monitoring Active")
-                        .setMessage("Android will stop camera streaming after 15 minutes unless battery optimization is disabled for Behind The Barks.\n\nWould you like to disable battery optimization for this camera station?")
+                        .setMessage("Android will stop camera streaming after 15 minutes unless battery optimization is disabled for WagWatch.\n\nWould you like to disable battery optimization for this camera station?")
                         .setPositiveButton("Disable Optimization") { _, _ ->
                             try {
                                 val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
@@ -692,7 +884,7 @@ class MainActivity : Activity() {
                             }
                         }
                         .setNegativeButton("Later", null)
-                        .show()
+                        .showSized()
                 }
             }
         }
@@ -705,7 +897,7 @@ class MainActivity : Activity() {
                 .setTitle("🐾 Station Setup Tip")
                 .setMessage("Android disables camera hardware when the physical power button is pressed.\n\nInstead, tap '🌙 Station Dim' — it turns the screen pitch-black to save power while keeping the camera live.")
                 .setPositiveButton("Got it!", null)
-                .show()
+                .showSized()
         }
     }
 
@@ -722,7 +914,7 @@ class MainActivity : Activity() {
         }
         AlertDialog.Builder(this)
             .setTitle("Local Wi-Fi Server")
-            .setMessage("Enter the local IP address of your computer running the Behind The Barks server:")
+            .setMessage("Enter the local IP address of your computer running the WagWatch server:")
             .setView(input)
             .setPositiveButton("Set URL") { _, _ ->
                 val ip = input.text.toString().trim()
@@ -731,7 +923,7 @@ class MainActivity : Activity() {
                 }
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .showSized()
     }
 
     private fun showCloudPrompt() {
@@ -747,7 +939,7 @@ class MainActivity : Activity() {
         }
         AlertDialog.Builder(this)
             .setTitle("Cloud WSS Server")
-            .setMessage("Enter the domain or Cloudflare Tunnel of your Behind The Barks server:")
+            .setMessage("Enter the domain or Cloudflare Tunnel of your WagWatch server:")
             .setView(input)
             .setPositiveButton("Set URL") { _, _ ->
                 val domain = input.text.toString().trim()
@@ -762,7 +954,7 @@ class MainActivity : Activity() {
                 }
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .showSized()
     }
 
     private fun handlePaste() {
@@ -770,8 +962,26 @@ class MainActivity : Activity() {
         val clip = clipboard?.primaryClip
         if (clip != null && clip.itemCount > 0) {
             val text = clip.getItemAt(0)?.text?.toString()?.trim() ?: ""
-            val config = QrDecoder.parsePairingText(text)
-            if (config != null) {
+            if (applyPairingPayload(text) == null) {
+                Toast.makeText(this, "Clipboard is not a pairing payload", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Toast.makeText(this, "Clipboard is empty", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * The one path for a pairing payload, whatever delivered it: a dashboard QR scan from the monitor, the
+     * clipboard paste, or the debug intent extra `extra_pair_payload`. A v2 code pairs the station; a v1
+     * payload fills in the server settings. Returns the parsed target, or null when the text is not a payload.
+     */
+    private fun applyPairingPayload(rawText: String): PairingTarget? {
+        val target = QrDecoder.parsePairingText(rawText, BuildConfig.DEBUG)
+        when (target) {
+            is PairingTarget.Code -> pairStation(target)  // v2: signed identity (T2.5)
+            is PairingTarget.Rejected -> Toast.makeText(this, target.reason, Toast.LENGTH_LONG).show()  // H2
+            is PairingTarget.Manual -> {
+                val config = target.config
                 urlEditText.setText(config.url)
                 prefs.edit().putString(KEY_URL, config.url).apply()
                 config.token?.let {
@@ -782,32 +992,122 @@ class MainActivity : Activity() {
                     prefs.edit().putString(KEY_DEVICE, it).apply()
                 }
                 Toast.makeText(this, "✓ Pasted server config!", Toast.LENGTH_SHORT).show()
-            } else if (text.startsWith("ws://") || text.startsWith("wss://")) {
-                urlEditText.setText(text)
-                prefs.edit().putString(KEY_URL, text).apply()
-                Toast.makeText(this, "✓ Pasted WebSocket URL!", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(this, "Clipboard does not contain a valid server URL", Toast.LENGTH_LONG).show()
             }
-        } else {
-            Toast.makeText(this, "Clipboard is empty", Toast.LENGTH_SHORT).show()
+            null -> Unit
         }
+        return target
+    }
+
+    /**
+     * v2 pairing (T2.5): trade the one-time code for a station id. The Keystore key signs the
+     * server's later challenges, so nothing secret leaves the device here.
+     */
+    private fun pairStation(target: PairingTarget.Code) {
+        Toast.makeText(this, "Pairing station…", Toast.LENGTH_SHORT).show()
+        MainScope().launch {
+            val deviceName = prefs.getString(KEY_DEVICE, Build.MODEL) ?: Build.MODEL
+            when (val result = PairingFlow.pairAndSave(prefs, target, deviceName, StationKey.getOrCreate(), BuildConfig.DEBUG)) {
+                is PairResult.Ok -> {
+                    urlEditText.setText(target.wsUrl)
+                    refreshPairingUi()
+                    Toast.makeText(this@MainActivity, "✓ Station paired — start monitoring", Toast.LENGTH_LONG).show()
+                }
+                PairResult.InvalidCode -> Toast.makeText(this@MainActivity, "That pairing code is expired or used", Toast.LENGTH_LONG).show()
+                is PairResult.Failed -> Toast.makeText(this@MainActivity, "Pairing failed: ${result.detail}", Toast.LENGTH_LONG).show()
+                is PairResult.Refused -> Toast.makeText(this@MainActivity, result.reason, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    /**
+     * The owner removed this station (close 4410) or the server refused its identity (4401). The server will
+     * not take it back, so the station forgets its pairing, stops monitoring, and says so. Start stays usable.
+     */
+    private fun showRemovedFromHousehold() {
+        prefs.edit()
+            .remove(StationPrefs.STATION_ID)
+            .remove(StationPrefs.HOUSEHOLD_ID)
+            .remove(StationPrefs.PAIR_URL)
+            .apply()
+        refreshPairingUi()
+        if (isMonitoring) stopMonitoringService()
+        setMonitoringUi(false)
+        statusTextView.text = REMOVED_MESSAGE
+        statusTextView.setTextColor(Color.parseColor("#FF8A80"))
+    }
+
+    private fun refreshHouseholdLabel() {
+        householdRef?.text = prefs.getString(StationPrefs.HOUSEHOLD_ID, null)?.let { "Household: $it" }
+            ?: "No household paired (use Pair by QR)"
+    }
+
+    /** Start and Unpair only apply to a paired station; Pair by QR stays available either way. */
+    private fun refreshPairingUi() {
+        val paired = !prefs.getString(KEY_STATION_ID, null).isNullOrBlank()
+        unpairButton?.visibility = if (paired) View.VISIBLE else View.GONE
+        toggleButton.visibility = if (paired || com.btb.ondevice.BuildConfig.DEBUG) View.VISIBLE else View.GONE
+        refreshHouseholdLabel()
+
+        val currentPrefsUrl = prefs.getString(KEY_URL, DEFAULT_URL) ?: DEFAULT_URL
+        if (urlEditText.text.toString() != currentPrefsUrl) {
+            urlEditText.setText(currentPrefsUrl)
+        }
+        val currentDevice = prefs.getString(KEY_DEVICE, null)
+        if (!currentDevice.isNullOrBlank() && deviceEditText.text.toString().isBlank()) {
+            deviceEditText.setText(currentDevice)
+        }
+    }
+
+    /**
+     * Drop the station identity and stop monitoring, since a running monitor would keep streaming under the
+     * old identity. The next start pairs again from the dashboard (Pair by QR).
+     */
+    private fun unpairStation() {
+        if (isMonitoring) stopMonitoringService()
+        prefs.edit()
+            .remove(StationPrefs.STATION_ID)
+            .remove(StationPrefs.HOUSEHOLD_ID)
+            .remove(StationPrefs.PAIR_URL)
+            .apply()
+        refreshPairingUi()
+        statusTextView.text = "Unpaired. Tap Pair by QR to pair this phone again."
+        statusTextView.setTextColor(Color.parseColor("#FFB74D"))
+        Toast.makeText(this, "Station unpaired", Toast.LENGTH_SHORT).show()
     }
 
     private fun startQrScan() {
         val service = monitorService
-        if (service != null && isMonitoring) {
-            service.setScanningQr(true)
-            Toast.makeText(this, "📷 Point camera at Dashboard QR code", Toast.LENGTH_SHORT).show()
-        } else {
-            Toast.makeText(this, "Tap 'Start Monitoring' or 'Paste' to connect. Point camera at QR code while monitoring.", Toast.LENGTH_LONG).show()
+        when (ScanRoute.choose(monitoring = service != null && isMonitoring)) {
+            ScanRoute.Target.MONITOR_SERVICE -> {
+                service?.setScanningQr(true)
+                Toast.makeText(this, "📷 Point camera at Dashboard QR code", Toast.LENGTH_SHORT).show()
+            }
+            // Pairing does not need monitoring: ScannerActivity pairs and saves the station itself.
+            ScanRoute.Target.STANDALONE_SCANNER ->
+                startActivity(android.content.Intent(this, ScannerActivity::class.java))
         }
+    }
+
+    /**
+     * True when [url] may be used by this build (H2). A refusal says why in a toast and changes nothing:
+     * the typed text stays in the field and no preference is written.
+     */
+    private fun allowedServerLink(url: String): Boolean {
+        val check = UrlPolicy.check(url, BuildConfig.DEBUG)
+        if (check is UrlCheck.Rejected) {
+            Toast.makeText(this, check.reason, Toast.LENGTH_LONG).show()
+            return false
+        }
+        return true
     }
 
     private fun startMonitoringService() {
         val url = urlEditText.text.toString().trim()
+        if (!allowedServerLink(url)) return
         val device = deviceEditText.text.toString().trim()
-        val token = prefs.getString(KEY_TOKEN, null)
+        // A paired station (households, T2.5) identifies itself with its id and Keystore key, not the shared token.
+        val stationId = prefs.getString(KEY_STATION_ID, null)?.takeIf { it.isNotBlank() }
+        val token = if (stationId != null) null else prefs.getString(KEY_TOKEN, null)
 
         // Persist user inputs in preferences
         prefs.edit()
@@ -824,6 +1124,9 @@ class MainActivity : Activity() {
             if (!token.isNullOrBlank()) {
                 putExtra(MonitorService.EXTRA_TOKEN, token)
             }
+            if (stationId != null) {
+                putExtra(MonitorService.EXTRA_STATION_ID, stationId)
+            }
         }
 
         checkBatteryOptimization()
@@ -836,14 +1139,7 @@ class MainActivity : Activity() {
         }
 
         bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
-        isMonitoring = true
-        toggleButton.text = "Stop Monitoring"
-        toggleButton.setBackgroundColor(Color.parseColor("#FF1744"))
-        dimButton.isEnabled = true
-        torchButton.isEnabled = true
-        flipButton.isEnabled = true
-        privacyButton.isEnabled = true
-        updatePrivacyButton(monitorService?.isPrivacyMode() ?: false)
+        setMonitoringUi(true)
         statusTextView.text = "○ Connecting to $url..."
     }
 
@@ -857,28 +1153,71 @@ class MainActivity : Activity() {
 
         if (isBound) {
             monitorService?.detachCameraPreview()
-            monitorService?.setListener(null)
             unbindService(serviceConnection)
             isBound = false
         }
+        // M1: stop always clears the listener when the activity holds a service reference, even
+        // when it was never bound (unbind happens on other paths too): no callback targets a
+        // screen that has already finished monitoring.
+        monitorService?.setListener(null)
 
         val intent = Intent(this, MonitorService::class.java).apply {
             action = MonitorService.ACTION_STOP
         }
         startService(intent)
 
-        isMonitoring = false
-        toggleButton.text = "Start Monitoring"
-        toggleButton.setBackgroundColor(Color.parseColor("#00E676"))
-        dimButton.isEnabled = false
-        torchButton.isEnabled = false
-        flipButton.isEnabled = false
-        privacyButton.isEnabled = false
-        updateTorchButton(false)
-        updatePrivacyButton(false)
-        flipButton.text = "🔄 Flip"
+        setMonitoringUi(false)
         statusTextView.text = "● Idle · Ready"
         overlayView.updateState(OverlayState())
+        updateViewersUi(0, 0)
+    }
+
+    /** The controls that depend on monitoring. Used on start, on stop and when a recreated screen reattaches. */
+    private fun setMonitoringUi(on: Boolean) {
+        isMonitoring = on
+        toggleButton.text = if (on) "Stop Monitoring" else "Start Monitoring"
+        toggleButton.setBackgroundColor(Color.parseColor(if (on) "#FF1744" else "#00E676"))
+        dimButton.isEnabled = on
+        torchButton.isEnabled = true
+        flipButton.isEnabled = on
+        privacyButton.isEnabled = true
+        val currentMode = monitorService?.effectiveMode() ?: com.btb.ondevice.capture.ViewMode.FULL
+        setModeButton(currentMode)
+        if (!on) {
+            updateTorchButton(monitorService?.isTorchOn() ?: false)
+            flipButton.text = "🔄 Flip"
+            describe(flipButton)
+        }
+    }
+
+    /** Speakable text for a control whose label changes (emoji and status symbols are dropped). */
+    private fun describe(view: TextView) {
+        view.contentDescription = spokenLabel(view.text.toString())
+    }
+
+    /** T3.4 video viewers and T3.9 audio listeners. Disconnect kicks everyone, so it shows for either. */
+    private fun updateViewersUi(videoCount: Int, audioCount: Int) {
+        val videoLabel = if (videoCount > 0) {
+            if (videoCount == 1) "👁️ 1 viewer watching" else "👁️ $videoCount viewers watching"
+        } else null
+        if (videoLabel != null) {
+            viewersBadge.text = videoLabel
+            viewersBadge.visibility = View.VISIBLE
+        } else {
+            viewersBadge.visibility = View.GONE
+        }
+        val listeningLabel = ListenerIndicator.rowText(audioCount)
+        if (listeningLabel != null) {
+            listeningBadge.text = listeningLabel
+            listeningBadge.contentDescription = ListenerIndicator.description(audioCount)
+            listeningBadge.visibility = View.VISIBLE
+        } else {
+            listeningBadge.visibility = View.GONE
+        }
+        disconnectViewersButton.visibility = if (videoLabel != null || listeningLabel != null) View.VISIBLE else View.GONE
+        val ambient = listOfNotNull(videoLabel, listeningLabel).joinToString("\n")
+        ambientViewersText.text = ambient
+        ambientViewersText.visibility = if (ambient.isNotEmpty()) View.VISIBLE else View.GONE
     }
 
     private fun updateTorchButton(on: Boolean) {
@@ -891,18 +1230,90 @@ class MainActivity : Activity() {
             torchButton.setBackgroundColor(Color.parseColor("#37474F"))
             torchButton.setTextColor(Color.WHITE)
         }
+        torchButton.contentDescription = if (on) "Light, on" else "Light, off"
+    }
+
+    /** Configurable viewing mode chooser: displays configurable options with Full (recommended) at top. */
+    private fun showModeChooser() {
+        val options = com.btb.ondevice.capture.ViewModeRegistry.activeOptions()
+        val modes = options.map { it.mode }.toTypedArray()
+        val labels = options.map { "${it.icon} ${it.title}\n${it.subtitle}" }.toTypedArray()
+        val current = monitorService?.effectiveMode() ?: com.btb.ondevice.capture.ViewMode.FULL
+        val initialIdx = modes.indexOf(current).let { if (it >= 0) it else 0 }
+        val rows = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_single_choice, labels) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View =
+                super.getView(position, convertView, parent).also { it.minimumHeight = dp(MIN_TOUCH_DP) }
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Viewing Mode")
+            .setSingleChoiceItems(rows, initialIdx) { dialog, which ->
+                val selected = modes[which]
+                monitorService?.setStationCapFromDevice(selected)
+                setModeButton(selected)
+                dialog.dismiss()
+            }
+            .setNegativeButton("Cancel", null)
+            .showSized()
+    }
+
+    private fun modeButtonLabel(mode: com.btb.ondevice.capture.ViewMode): String = when (mode) {
+        com.btb.ondevice.capture.ViewMode.BLACKOUT -> "⛔ Blackout"
+        com.btb.ondevice.capture.ViewMode.PRIVACY -> "🔇 Privacy"
+        com.btb.ondevice.capture.ViewMode.LIMITED -> "🖼️ Limited"
+        com.btb.ondevice.capture.ViewMode.FULL -> "👁️ Full"
     }
 
     private fun updatePrivacyButton(on: Boolean) {
-        if (on) {
-            privacyButton.text = "🛡️ Privacy ON"
-            privacyButton.setBackgroundColor(Color.parseColor("#D32F2F"))
-            privacyButton.setTextColor(Color.WHITE)
-        } else {
-            privacyButton.text = "🛡️ Privacy"
-            privacyButton.setBackgroundColor(Color.parseColor("#37474F"))
-            privacyButton.setTextColor(Color.WHITE)
+        val currentMode = monitorService?.effectiveMode() ?: (if (on) com.btb.ondevice.capture.ViewMode.BLACKOUT else com.btb.ondevice.capture.ViewMode.FULL)
+        setModeButton(currentMode)
+    }
+
+    /** The sharing-mode button. Its label names the mode, and TalkBack hears the same words. */
+    private fun setModeButton(mode: com.btb.ondevice.capture.ViewMode) {
+        privacyButton.text = modeButtonLabel(mode)
+        privacyButton.contentDescription = "Sharing: ${spokenLabel(modeButtonLabel(mode))}. Tap to change."
+        val isOff = mode == com.btb.ondevice.capture.ViewMode.BLACKOUT
+        privacyButton.setBackgroundColor(Color.parseColor(if (isOff) "#D32F2F" else "#37474F"))
+    }
+
+    override fun onResume() {
+        super.onResume()
+        uiResumed = true
+        refreshPairingUi()  // a pairing done in ScannerActivity is shown when we come back
+        // A raise that arrived while we were away is still waiting for an answer: show it now.
+        if (monitorService?.pendingApprovalMode() != null) showApprovalDialog()
+    }
+
+    override fun onPause() {
+        uiResumed = false
+        // Leaving the screen: the prompt moves to the notification so it is still answerable.
+        if (approvalDialog?.isShowing == true) {
+            dismissApprovalDialog()
+            monitorService?.repostApprovalNotification()
         }
+        super.onPause()
+    }
+
+    /** T3.2: the on-device prompt for a remote raise. Allow = 15 minutes; Keep private = no change. */
+    private fun showApprovalDialog() {
+        val mode = monitorService?.pendingApprovalMode() ?: return
+        if (approvalDialog?.isShowing == true) return
+        approvalDialog = AlertDialog.Builder(this)
+            .setTitle("Sharing request")
+            .setMessage(com.btb.ondevice.capture.approvalQuestion(mode))
+            .setPositiveButton("Allow") { _, _ -> monitorService?.allowPendingRaise() }
+            .setNegativeButton("Keep private") { _, _ -> monitorService?.keepPendingPrivate() }
+            .setCancelable(false)
+            .create()
+            .also {
+                it.show()
+                sizeDialogButtons(it)
+            }
+    }
+
+    private fun dismissApprovalDialog() {
+        approvalDialog?.dismiss()
+        approvalDialog = null
     }
 
     override fun onStart() {
@@ -919,8 +1330,16 @@ class MainActivity : Activity() {
         super.onStop()
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(KEY_DIM_ON, dim.isOn)
+    }
+
     override fun onDestroy() {
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // M1: drop the listener unconditionally. A service callback otherwise keeps a destroyed
+        // activity alive (dialog on a dead window, UI work into a tombstone) until the process dies.
+        monitorService?.setListener(null)
         if (isBound) {
             monitorService?.detachCameraPreview()
             unbindService(serviceConnection)
@@ -931,16 +1350,26 @@ class MainActivity : Activity() {
 
     companion object {
         const val ACTION_START = "com.btb.ondevice.action.START"
+        /** Debug-only (BuildConfig.DEBUG): a v2 pairing payload delivered by adb, identical to a scanned QR. */
+        const val EXTRA_PAIR_PAYLOAD = "extra_pair_payload"
+        const val KEY_DIM_ON = "station_dim_on"
+        const val REMOVED_MESSAGE = "Removed from household · pair again with Pair by QR"
         const val ACTION_STOP = "com.btb.ondevice.action.STOP"
         const val ACTION_TOGGLE_PRIVACY = "com.btb.ondevice.action.TOGGLE_PRIVACY"
         const val ACTION_TOGGLE_TORCH = "com.btb.ondevice.action.TOGGLE_TORCH"
         const val ACTION_ENTER_AMBIENT = "com.btb.ondevice.action.ENTER_AMBIENT"
         const val ACTION_EXIT_AMBIENT = "com.btb.ondevice.action.EXIT_AMBIENT"
 
-        private const val PREFS_NAME = "btb_station_prefs"
-        private const val KEY_URL = "server_url"
-        private const val KEY_DEVICE = "device_name"
-        private const val KEY_TOKEN = "access_token"
+        private const val MAX_CONTENT_WIDTH_DP = 600
+        private const val MIN_TOUCH_DP = TouchTarget.MIN_DP
+
+        private const val PREFS_NAME = StationPrefs.NAME
+        private const val KEY_URL = StationPrefs.URL
+        private const val KEY_DEVICE = StationPrefs.DEVICE
+        private const val KEY_TOKEN = StationPrefs.TOKEN
+        private const val KEY_STATION_ID = StationPrefs.STATION_ID   // v2 pairing (T2.5)
+        private const val KEY_HOUSEHOLD_ID = StationPrefs.HOUSEHOLD_ID
+        private const val KEY_PAIR_URL = StationPrefs.PAIR_URL
         private const val KEY_BATTERY_TIP_SHOWN = "battery_tip_shown"
         private const val KEY_STATION_TIP_SHOWN = "station_tip_shown"
         private val DEFAULT_URL = com.btb.ondevice.BuildConfig.DEFAULT_INGEST_URL

@@ -11,11 +11,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.double
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
@@ -35,11 +39,26 @@ enum class ConnectionState {
 
 interface EventUploaderListener {
     fun onStateChanged(state: ConnectionState) {}
+    /** The server accepted the handshake (hello_ack). The station reports its mode here (T3.1). */
+    fun onHelloAck() {}
     fun onTreatDownlink(ts: Double) {}
     fun onConfigDownlink(configJson: String) {}
     fun onTorchDownlink(enabled: Boolean) {}
+    fun onCueDownlink(sound: String, light: String?) {}
+    fun onVoiceDownlink(pcmBytes: ByteArray) {}
     fun onFlipDownlink() {}
     fun onPrivacyDownlink(enabled: Boolean) {}
+    /** T2.5: the server refused the station's identity (4401) or revoked it (4410): pair again. */
+    fun onPairingInvalid(reason: String) {}
+    /** T3.1: the server's viewing policy for this household. The phone still applies its own cap:
+     *  the effective mode is min(local cap, [mode]). */
+    fun onPolicyDownlink(
+        mode: String, previewFps: Int, previewMaxEdge: Int, previewQuality: Int,
+        audio: Boolean, videoViewers: Int, audioViewers: Int,
+    ) {}
+    /** T3.1: the owner asked for a higher mode than the phone currently allows. Raising exposure
+     *  always needs an on-device decision ([onPolicyDownlink] must not be used to bypass it). */
+    fun onModeRequest(mode: String, from: String) {}
 }
 
 /**
@@ -58,25 +77,134 @@ class EventUploader(
     val serverUrl: String,
     val deviceName: String,
     val token: String? = null,
+    /** Households mode (T2.5): set together, the hello becomes proto 2 and the challenge is signed. */
+    val stationId: String? = null,
+    val signer: Signer? = null,
     val spool: EventSpool? = null,
     val okHttpClient: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(0, TimeUnit.MILLISECONDS)
+        .readTimeout(0, TimeUnit.MILLISECONDS)   // a WebSocket must tolerate long server silence
+        .build(),
+    /** I2: the snippet POST is a one-shot HTTP call, not a socket: deadlines are mandatory here,
+     *  because the stall-record shared client parks the upload forever. Read, write and call
+     *  timeouts bound a stalled server so the IO scope survives a barking-dog burst. Injectable
+     *  so tests can shrink the deadlines. */
+    val snippetOkHttpClient: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .writeTimeout(20, TimeUnit.SECONDS)
+        .callTimeout(90, TimeUnit.SECONDS)
         .build(),
     val pingIntervalMs: Long = 15_000L,
-    val previewMinIntervalMs: Long = 500L, // Max 2 fps preview
+    var previewMinIntervalMs: Long = 500L,
     val maxQueueBytes: Long = 256 * 1024L, // 256 KB
     val listener: EventUploaderListener? = null,
     val clock: () -> Double = { System.currentTimeMillis() / 1000.0 },
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO),
+    /** Audio chunks are dropped above this queue depth (T3.9). Injectable so the drop can be tested. */
+    val audioMaxQueueBytes: Long = AUDIO_MAX_QUEUE_BYTES,
 ) {
+    val previewDroppedBackpressure = java.util.concurrent.atomic.AtomicLong(0L)
+    /** Live audio frames handed to the socket (monotonic, T3.9). */
+    val audioFramesSent = java.util.concurrent.atomic.AtomicLong(0L)
+    /** Bytes of those frames, header included (monotonic). */
+    val audioBytesSent = java.util.concurrent.atomic.AtomicLong(0L)
+    /** Audio chunks dropped because the socket queue was above [audioMaxQueueBytes] (monotonic). */
+    val audioDroppedBackpressure = java.util.concurrent.atomic.AtomicLong(0L)
+    /** Previews that reached the backpressure gate (monotonic). The ladder's drop ratio divides by this. */
+    val previewsOffered = java.util.concurrent.atomic.AtomicLong(0L)
+    @Volatile
+    var lastRttMs: Long = 0L
+        private set
+    private var lastPingSentMs: Long = 0L
+
+    fun setPreviewMinInterval(intervalMs: Long) {
+        previewMinIntervalMs = intervalMs.coerceAtLeast(0L)
+    }
+
+    fun queueBytes(): Long = webSocket?.queueSize() ?: 0L
+
+    // -- Audio snippet upload (I2) ---------------------------------------------------------------
+
+    /**
+     * I2: at most one snippet POST in flight plus one newest-wins waiting slot. A bark triggers a
+     * POST on Dispatchers.IO with deadlines from [snippetOkHttpClient]; further barks wait in the
+     * single slot or are counted as dropped, so a stalled server can never stack a queue of
+     * blocking requests that would starve pings, reconnect and spool on the same scope.
+     * The debounce logic upstream is unchanged.
+     */
+    val snippetUploadsDropped: Int get() = snippetGate.dropped
+    private val snippetGate: SnippetGate = SnippetGate { upload -> startSnippetPost(upload) }
+
+    /** Number of snippet POSTs that are out or waiting (diagnostics). */
+    val snippetUploadsBusy: Boolean get() = snippetGate.busy
+
+    /**
+     * Upload a 5-second canine bioacoustic WAV snippet for instant timeline replay.
+     * Best effort: returns immediately; outcomes and drops are counted, never queued deeply.
+     */
+    fun uploadAudioSnippet(snippetId: String, wavBytes: ByteArray) {
+        snippetGate.accept(SnippetUpload(snippetId, wavBytes))
+    }
+
+    private fun startSnippetPost(upload: SnippetUpload) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                postSnippet(upload)
+            } catch (t: Throwable) {
+                android.util.Log.w("EventUploader", "Snippet upload error: ${t.message}")
+            } finally {
+                // Always open the gate again (or start the waiting snippet), also after a failure.
+                snippetGate.completePost()
+            }
+        }
+    }
+
+    private fun postSnippet(upload: SnippetUpload) {
+        val cleanUrl = serverUrl.trim()
+        val base = when {
+            cleanUrl.startsWith("ws://") -> "http://" + cleanUrl.removePrefix("ws://")
+            cleanUrl.startsWith("wss://") -> "https://" + cleanUrl.removePrefix("wss://")
+            else -> cleanUrl
+        }.substringBefore("/ingest-events").trimEnd('/')
+
+        val httpUrl = "$base/events/audio-snippet"
+        val mediaType = "audio/wav".toMediaTypeOrNull()
+        val reqBody = upload.wav.toRequestBody(mediaType)
+        val reqBuilder = Request.Builder()
+            .url(httpUrl)
+            .header("X-Snippet-ID", upload.snippetId)
+            .post(reqBody)
+
+        if (!stationId.isNullOrEmpty()) {
+            reqBuilder.header("X-Station-ID", stationId)
+        }
+        if (!token.isNullOrEmpty()) {
+            reqBuilder.header("Authorization", "Bearer $token")
+        }
+
+        snippetOkHttpClient.newCall(reqBuilder.build()).execute().use { response ->
+            if (!response.isSuccessful) {
+                android.util.Log.w("EventUploader", "Snippet upload failed: HTTP ${response.code}")
+            }
+        }
+    }
+
     companion object {
         const val KIND_PREVIEW: Byte = 0x01
+        /** T3.9: live audio frame, `0x02 | codec | seq u32 LE | t_ms u32 LE | payload` (docs/AUDIO_WIRE.md). */
+        const val KIND_AUDIO: Byte = 0x02
+        const val AUDIO_HEADER_BYTES = 10
+        /** Audio is dropped, not queued, when more than this many bytes are waiting to go out. */
+        const val AUDIO_MAX_QUEUE_BYTES = 64 * 1024L
         const val CLOSE_BAD_HELLO = 4400
         const val CLOSE_UNAUTHORIZED = 4401
         const val CLOSE_REPLACED = 4408
         const val CLOSE_BUSY = 4409
         const val CLOSE_NORMAL = 1000
+        const val PROTO_HELLO = 1
+        const val CLOSE_REVOKED = 4410  // T2.4/T2.5: the owner revoked this station
+        const val PROTO_HELLO_STATION = 2
 
         val TERMINAL_CLOSE_CODES = setOf(
             CLOSE_NORMAL,
@@ -84,13 +212,23 @@ class EventUploader(
             CLOSE_UNAUTHORIZED,
             CLOSE_REPLACED,
             CLOSE_BUSY,
+            CLOSE_REVOKED,
         )
 
         val BACKOFF_STEPS_MS = listOf(500L, 1000L, 2000L, 4000L, 5000L)
+
+        /**
+         * How long stop() waits before force-cancelling the socket. cancel() discards the queued
+         * close frame (observed on the real phone as close code 1005 "Socket closed"), so the
+         * close frame must get a moment on the wire first.
+         */
+        const val STOP_GRACE_MS = 1500L
     }
 
     private var webSocket: WebSocket? = null
     private var state = ConnectionState.DISCONNECTED
+    /** M5: OkHttp raises a server-initiated close as onClosing AND onClosed. One close is handled once. */
+    private var closeHandled = false
     private val isRunning = AtomicBoolean(false)
     private var backoffIndex = AtomicInteger(0)
     private var reconnectJob: Job? = null
@@ -108,21 +246,26 @@ class EventUploader(
     }
 
     fun stop() {
-        if (isRunning.compareAndSet(true, false)) {
-            synchronized(lock) {
-                state = ConnectionState.TERMINATED
-                reconnectJob?.cancel()
-                pingJob?.cancel()
-                try {
-                    webSocket?.close(CLOSE_NORMAL, "Client stopped")
-                } catch (_: Exception) {}
-                try {
-                    webSocket?.cancel()
-                } catch (_: Exception) {}
-                webSocket = null
-            }
-            listener?.onStateChanged(ConnectionState.TERMINATED)
+        if (!isRunning.compareAndSet(true, false)) return
+        val ws: WebSocket?
+        synchronized(lock) {
+            state = ConnectionState.TERMINATED
+            reconnectJob?.cancel()
+            pingJob?.cancel()
+            ws = webSocket
+            webSocket = null
         }
+        if (ws != null) {
+            // bye first: OkHttp rejects send() after close(), so the close frame would drop it.
+            try { ws.send("""{"type":"bye"}""") } catch (_: Exception) {}
+            try { ws.close(CLOSE_NORMAL, "Client stopped") } catch (_: Exception) {}
+            // Never cancel immediately: cancel() discards the queued close frame (observed as code 1005).
+            scope.launch {
+                delay(STOP_GRACE_MS)
+                try { ws.cancel() } catch (_: Exception) {}
+            }
+        }
+        listener?.onStateChanged(ConnectionState.TERMINATED)
     }
 
     private fun setState(newState: ConnectionState) {
@@ -163,10 +306,19 @@ class EventUploader(
                     try {
                         android.util.Log.i("EventUploader", "WebSocket connected to $serverUrl")
                     } catch (_: Throwable) {}
-                    // Send hello handshake immediately
+                    // Send hello handshake immediately (built, not interpolated: the device
+                    // name is user text and must never break the JSON).
                     val phoneTime = clock()
-                    val tokenField = if (!token.isNullOrBlank()) ""","token":"$token"""" else ""
-                    val helloJson = """{"type":"hello","proto":1,"device":"$deviceName","phone_time":$phoneTime,"models":{},"profile":"mobile"$tokenField}"""
+                    val helloJson = buildJsonObject {
+                        put("type", "hello")
+                        put("proto", if (stationId != null) PROTO_HELLO_STATION else PROTO_HELLO)
+                        put("device", deviceName)
+                        put("phone_time", phoneTime)
+                        put("models", buildJsonObject {})
+                        put("profile", "mobile")
+                        if (stationId != null) put("station_id", stationId)
+                        if (!token.isNullOrBlank()) put("token", token)
+                    }.toString()
                     val sent = ws.send(helloJson)
                     try {
                         android.util.Log.i("EventUploader", "Sent hello: $sent")
@@ -206,6 +358,7 @@ class EventUploader(
             })
             synchronized(lock) {
                 webSocket = socket
+                closeHandled = false   // M5: the flag belongs to one socket; a fresh one starts clean
             }
         } catch (e: Exception) {
             handleFailure(e)
@@ -225,16 +378,33 @@ class EventUploader(
                     }
                     backoffIndex.set(0)
                     listener?.onStateChanged(ConnectionState.CONNECTED)
+                    listener?.onHelloAck()
 
                     // Start pings and flush spool
                     startPings()
                     flushSpool()
                 }
+                "challenge" -> {
+                    // households mode: sign nonce|station_id|device so the server knows it is this station
+                    val nonce = root["nonce"]?.jsonPrimitive?.content
+                    val signer = this.signer
+                    if (nonce != null && stationId != null && signer != null) {
+                        try {
+                            webSocket.send(StationPairing.authEnvelope(nonce, stationId, deviceName, signer))
+                        } catch (_: Exception) {}
+                    }
+                }
                 "pong" -> {
-                    // Clock skew offset handled by server
+                    if (lastPingSentMs > 0L) {
+                        lastRttMs = (System.currentTimeMillis() - lastPingSentMs).coerceAtLeast(0L)
+                    }
                 }
                 "treat" -> {
-                    val ts = root["ts"]?.jsonPrimitive?.double ?: clock()
+                    // The server sends {"type":"treat","data":{"ts":<phone clock>,"offset_s":...}}; the
+                    // legacy root-level ts is still honoured, and the phone clock is the last resort.
+                    val ts = root["data"]?.jsonObject?.get("ts")?.jsonPrimitive?.double
+                        ?: root["ts"]?.jsonPrimitive?.double
+                        ?: clock()
                     listener?.onTreatDownlink(ts)
                 }
                 "config" -> {
@@ -242,8 +412,30 @@ class EventUploader(
                     listener?.onConfigDownlink(data)
                 }
                 "torch" -> {
-                    val enabled = root["data"]?.jsonObject?.get("enabled")?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true
+                    val enabled = root["data"]?.jsonObject?.get("enabled")?.jsonPrimitive?.content?.toBooleanStrictOrNull()
+                        ?: root["enabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
+                        ?: true
                     listener?.onTorchDownlink(enabled)
+                }
+                "cue" -> {
+                    val data = root["data"]?.jsonObject
+                    val sound = data?.get("sound")?.jsonPrimitive?.content ?: "squeak"
+                    val light = data?.get("light")?.jsonPrimitive?.content
+                    listener?.onCueDownlink(sound, light)
+                }
+                "voice" -> {
+                    val data = root["data"]?.jsonObject
+                    val base64Pcm = data?.get("pcm")?.jsonPrimitive?.content
+                    if (!base64Pcm.isNullOrBlank()) {
+                        try {
+                            val pcmBytes = android.util.Base64.decode(base64Pcm, android.util.Base64.DEFAULT)
+                            listener?.onVoiceDownlink(pcmBytes)
+                        } catch (e: Exception) {
+                            try {
+                                android.util.Log.w("EventUploader", "Failed to decode voice PCM: ${e.message}")
+                            } catch (_: Throwable) {}
+                        }
+                    }
                 }
                 "flip" -> {
                     listener?.onFlipDownlink()
@@ -252,6 +444,27 @@ class EventUploader(
                     val enabled = root["data"]?.jsonObject?.get("enabled")?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true
                     listener?.onPrivacyDownlink(enabled)
                 }
+                "policy" -> {
+                    val data = root["data"]?.jsonObject
+                    val mode = data?.get("mode")?.jsonPrimitive?.content ?: return
+                    val preview = data?.get("preview")?.jsonObject
+                    val viewers = data?.get("viewers")?.jsonObject
+                    listener?.onPolicyDownlink(
+                        mode = mode,
+                        previewFps = preview?.get("fps")?.jsonPrimitive?.content?.toIntOrNull() ?: 2,
+                        previewMaxEdge = preview?.get("max_edge")?.jsonPrimitive?.content?.toIntOrNull() ?: 320,
+                        previewQuality = preview?.get("quality")?.jsonPrimitive?.content?.toIntOrNull() ?: 60,
+                        audio = data?.get("audio")?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
+                        videoViewers = viewers?.get("video")?.jsonPrimitive?.content?.toIntOrNull() ?: 0,
+                        audioViewers = viewers?.get("audio")?.jsonPrimitive?.content?.toIntOrNull() ?: 0,
+                    )
+                }
+                "mode_request" -> {
+                    val data = root["data"]?.jsonObject
+                    val mode = data?.get("mode")?.jsonPrimitive?.content ?: return
+                    val from = data?.get("from")?.jsonPrimitive?.content ?: "owner"
+                    listener?.onModeRequest(mode, from)
+                }
             }
         } catch (e: Exception) {
             android.util.Log.e("EventUploader", "Error handling server text: ${e.message}", e)
@@ -259,6 +472,16 @@ class EventUploader(
     }
 
     private fun handleClose(code: Int, reason: String) {
+        // A deliberate stop() already set TERMINATED; a late close callback must not
+        // overwrite it or notify the listener a second time.
+        synchronized(lock) {
+            if (closeHandled) return   // M5: the second callback of the same socket joins nothing
+            closeHandled = true
+            if (state == ConnectionState.TERMINATED && !isRunning.get()) return
+        }
+        if (code == CLOSE_UNAUTHORIZED || code == CLOSE_REVOKED) {
+            listener?.onPairingInvalid(reason)  // T2.5: the UI should offer to pair again
+        }
         android.util.Log.w("EventUploader", "WebSocket closed ($serverUrl): code=$code, reason=$reason")
         pingJob?.cancel()
         synchronized(lock) {
@@ -278,6 +501,10 @@ class EventUploader(
     }
 
     private fun handleFailure(t: Throwable) {
+        // stop()'s deferred cancel() lands here after STOP_GRACE_MS; stay terminated.
+        synchronized(lock) {
+            if (state == ConnectionState.TERMINATED && !isRunning.get()) return
+        }
         android.util.Log.e("EventUploader", "WebSocket failed ($serverUrl): ${t.message}", t)
         pingJob?.cancel()
         synchronized(lock) {
@@ -322,6 +549,7 @@ class EventUploader(
             while (isActive && connectionState == ConnectionState.CONNECTED) {
                 delay(pingIntervalMs)
                 if (connectionState == ConnectionState.CONNECTED) {
+                    lastPingSentMs = System.currentTimeMillis()
                     val pingJson = """{"type":"ping","phone_time":${clock()}}"""
                     webSocket?.send(pingJson)
                 }
@@ -393,6 +621,37 @@ class EventUploader(
         return spool?.enqueue("treat", ts, jsonPayload) ?: false
     }
 
+    /** T3.1: tell the server what this station currently allows and is actually doing. Sent after any
+     *  change to the local cap and on connect, so the dashboard's mode is never a guess. */
+    fun sendModeState(cap: String, effective: String, reason: String): Boolean {
+        if (connectionState != ConnectionState.CONNECTED) return false
+        val escaped = reason.replace("\\", "\\\\").replace("\"", "\\\"")
+        return sendEnvelope("mode_state", """{"cap":"$cap","effective":"$effective","reason":"$escaped"}""")
+    }
+
+    /**
+     * T3.2 outcome of a raise prompt: `{"type":"mode_result","data":{"mode","result"}}` with result
+     * `allowed | denied | timeout`. Sent once per answered prompt so the dashboard can say what happened.
+     */
+    fun sendModeResult(mode: String, result: String): Boolean {
+        if (connectionState != ConnectionState.CONNECTED) return false
+        return sendEnvelope("mode_result", """{"mode":"$mode","result":"$result"}""")
+    }
+
+    /** T3.4: station requests to disconnect all active remote viewers immediately. */
+    fun sendKickViewers(): Boolean {
+        if (connectionState != ConnectionState.CONNECTED) return false
+        val json = buildJsonObject {
+            put("type", "kick_viewers")
+        }.toString()
+        val ws = synchronized(lock) { webSocket } ?: return false
+        return try {
+            ws.send(json)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     fun sendPreview(jpeg: ByteArray, ts: Double = clock()): Boolean {
         if (connectionState != ConnectionState.CONNECTED) {
             return false
@@ -405,9 +664,11 @@ class EventUploader(
             return false
         }
 
+        previewsOffered.incrementAndGet()
         // Backpressure: drop preview first if queue > maxQueueBytes
         if (ws.queueSize() > maxQueueBytes) {
             android.util.Log.w("EventUploader", "sendPreview backpressure drop: queue=${ws.queueSize()} > $maxQueueBytes")
+            previewDroppedBackpressure.incrementAndGet()
             return false
         }
 
@@ -420,6 +681,34 @@ class EventUploader(
             android.util.Log.w("EventUploader", "ws.send preview failed, queue=${ws.queueSize()}")
         }
         return sent
+    }
+
+    /**
+     * T3.9: send one complete audio frame (built by `AdpcmCodec.packFrame`, kind byte included) as a
+     * binary message. Refused when not connected; dropped and counted when the socket queue is backed up,
+     * because a late audio chunk is worse than a missing one. Never spooled.
+     */
+    fun sendAudioChunk(frame: ByteArray): Boolean {
+        if (connectionState != ConnectionState.CONNECTED) return false
+        val ws = webSocket ?: return false
+        if (frame.size < AUDIO_HEADER_BYTES || frame[0] != KIND_AUDIO) return false
+        if (ws.queueSize() > audioMaxQueueBytes) {
+            audioDroppedBackpressure.incrementAndGet()
+            return false
+        }
+        val sent = ws.send(frame.toByteString())
+        if (sent) {
+            audioFramesSent.incrementAndGet()
+            audioBytesSent.addAndGet(frame.size.toLong())
+        }
+        return sent
+    }
+
+    fun sendTelemetry(json: String): Boolean {
+        if (connectionState != ConnectionState.CONNECTED) return false
+        val ws = webSocket ?: return false
+        if (ws.queueSize() > maxQueueBytes) return false
+        return ws.send(json)
     }
 
     private fun sendEnvelope(type: String, jsonPayload: String): Boolean {

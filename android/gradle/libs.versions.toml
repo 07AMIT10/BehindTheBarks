@@ -23,6 +23,12 @@ junit = "5.14.4"
 junitPlatform = "1.14.4"
 truth = "1.4.5"
 zxing = "3.5.3"
+# On-device (androidTest) tests. Pinned to releases built for API 34/35: the newest androidx.test
+# artifacts ask for compileSdk 36, and this app compiles against 35.
+androidxTestRunner = "1.6.2"
+androidxTestCore = "1.6.1"
+androidxTestExtJunit = "1.2.1"
+junit4 = "4.13.2"
 
 [libraries]
 # Inference runtime. Ships prebuilt 16 KB-aligned .so; CPU/XNNPACK only.
@@ -48,6 +54,12 @@ junit-platform-launcher = { group = "org.junit.platform", name = "junit-platform
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
 okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "okhttp" }
 truth = { group = "com.google.truth", name = "truth", version.ref = "truth" }
+
+# Instrumented tests (src/androidTest, run on the phone). JUnit4 runner, not the JUnit5 unit tests.
+androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidxTestRunner" }
+androidx-test-core = { group = "androidx.test", name = "core", version.ref = "androidxTestCore" }
+androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestExtJunit" }
+junit4 = { group = "junit", name = "junit", version.ref = "junit4" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

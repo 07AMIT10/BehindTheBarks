@@ -70,6 +70,29 @@ If you are running the backend behind a Cloudflare Tunnel or Tailscale:
 2. Enter your tunnel domain (e.g. `your-tunnel.trycloudflare.com`).
 3. Tap **Set URL**. The app will configure `wss://your-tunnel.trycloudflare.com/ingest-events`.
 
+### Method D: Multi-Household Pairing (v2 — one phone, several dashboards)
+
+A tester build ships **with the dashboard address already baked in**. You do not type any URL:
+
+1. Open the dashboard and click **📱 Pair Phone**. A QR code appears. This QR carries the
+   household id, so the same app can pair with *different* dashboards from the same install.
+2. In the app, tap the green **📷 Scan QR** button (the standalone scanner works even before you
+   have ever paired a station).
+3. Scan the code. The app shows **Household: <name>** so you can confirm you are joining the right
+   household before you accept.
+4. Tap **Pair**. The app generates an ECDSA key in the Android Keystore, signs the server's
+   challenge, and is bound to that household. The private key never leaves the phone.
+5. Tap **Start Monitoring**.
+
+Because the key lives in the Keystore, the dashboard shows the station as `SM-E075F` (or similar
+model name) — not `Phone` — and a *reinstall of the app* creates a new station, while a re-scan
+re-uses the existing one.
+
+To move the phone to a different household, open **Settings → Household → Move to another
+household**, scan that household's QR, and confirm. To stop a household losing access, the owner
+removes the station in **Members & access → Stations → Revoke**; the phone gets a clear
+"removed by owner" message instead of silently reconnecting.
+
 ---
 
 ## 🌙 Step 4: Station Mode & "Station Dim" (CRITICAL)
@@ -107,7 +130,7 @@ When controls are expanded, the on-screen heads-up display shows real-time diagn
 
 ---
 
-## 🎮 Step 6: Remote Downlinks from the Web Dashboard
+## 🎮 Step 6: Remote Controls & Viewing Modes
 
 While you are away or on the couch, the web dashboard gives you full remote control over the phone station:
 
@@ -115,8 +138,25 @@ While you are away or on the couch, the web dashboard gives you full remote cont
 | :--- | :--- | :--- |
 | 🔦 **Torch** | Turns the phone's rear LED flash ON / OFF | Illuminate a dark room at night to check on your dog without turning on room lights. |
 | 🔄 **Flip Camera** | Swaps between rear camera and front selfie camera | Useful if your phone stand requires placing the screen facing the dog. |
-| 🛡️ **Privacy Mode** | Instantly mutes camera stream with black slate | Mute the video feed when family members or house guests enter the room. |
+| 🛡️ **Viewing Mode** | Adjusts privacy tier (`Full`, `Limited`, `Privacy`, `Blackout`) | Regulate domestic privacy exposure for viewers and family members. |
 | 🍖 **Dispense Treat** | Plays an acoustic treat chime on the phone | Alert your dog to an automatic feeder or reinforce calm behavior remotely. |
+
+### 🛡️ Understanding the 4 Viewing Modes
+
+WagWatch is designed from the ground up for **domestic co-inhabitant privacy**—so family members, roommates, and pet sitters never feel surveilled:
+
+1. **Full Mode**: Live camera preview (2 FPS) and behavior telemetry. Designed for live pet observation.
+2. **Limited Mode**: Privacy-preserving blurred snapshots refreshed every 10 seconds. Includes a temporary **15-Second Peek** button to verify room safety without continuous optical streaming.
+3. **Privacy Mode**: **Zero camera images leave the phone.** Only AI numerical telemetry (emotion classification, pose keypoints, and bark detections) is delivered. Ideal when family members are relaxing in the room.
+4. **Blackout Mode (Family Privacy)**: Immediate local hardware shutter. All camera analysis and microphone processing stop completely at the device driver level.
+
+### 🔔 Anti-Lurking Invariants & Station Sovereignty
+
+* **Audible Chime on Connect**: Whenever a viewer opens the live video stream, the Android phone station plays a soft two-tone intercom chime so anyone in the room knows they are being watched.
+* **On-Screen Viewer Badge**: The station HUD and Android status bar notification display `👁️ N viewers watching` in real time.
+* **Instant Disconnect**: Anyone near the phone can tap **"Disconnect Viewers"** on the screen or notification to immediately drop all remote connections.
+* **Station Sovereignty**: The phone station holder has absolute authority. Remote viewers can lower the mode (e.g. to Privacy or Blackout) immediately, but **cannot turn the camera back on** without an on-screen approval prompt on the physical phone station.
+* **180-Second Inactivity Watchdog**: If a browser tab is left open and untouched for 3 minutes (or minimized/hidden), the video stream pauses automatically to save bandwidth and preserve household privacy.
 
 ---
 
@@ -170,3 +210,26 @@ You can receive real-time notifications with snapshot photos on your phone whene
 
 ### Q: Is my dog's video being saved to the cloud?
 **A:** **No.** All computer vision (YOLO26, RTMPose, DogFLW) runs locally on the phone's processor. Video frames are processed in volatile RAM and immediately discarded. Continuous video is never saved to disk or sent to any company server.
+
+---
+
+## 🔐 Production PIN (self-hosted / Render deployments)
+
+If you deploy the backend yourself (e.g. the included [`render.yaml`](../render.yaml) Blueprint):
+
+1. In the Render dashboard, open your service → **Environment** → **Add Environment Variable**:
+   - `BTB_DASHBOARD_PIN` — the dashboard PIN viewers must type (pick something other than the old default; treat any value that ever lived in this repo's git history as compromised).
+   - Recommended alongside it: `BTB_API_TOKEN` and `BTB_INGEST_TOKEN` (see [`config.yaml`](../config.yaml) → `web.access`).
+2. **Never commit these values.** This repository is public; a PIN in `render.yaml` is a public PIN. The Blueprint deliberately does not define `BTB_DASHBOARD_PIN`, so the value you set in the dashboard is the only source.
+3. Setting `BTB_DASHBOARD_PIN` turns on authentication (`backend/web/settings.py`); leave it unset only for trusted local networks.
+4. Render keeps dashboard-set env vars across deploys as long as the Blueprint does not define the same key — another reason the key is absent from `render.yaml`.
+
+### Pet name and location
+
+Open the dashboard, tap the **pencil** next to Pair Phone, and set your pet's name, where the
+camera is, and the zone label (e.g. "feeding area"). Every viewer sees the change immediately.
+
+These values are saved on the server as `profile.json` next to the event log. On a host with a
+persistent disk they survive restarts; **Render's free tier has an ephemeral disk**, so after a
+redeploy the profile falls back to the `BTB_DOG_NAME` / `BTB_LOCATION` env vars (or the neutral
+defaults) — just set it again, or pin a Render disk if you need it to stick.

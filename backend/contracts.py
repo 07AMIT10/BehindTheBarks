@@ -76,6 +76,8 @@ class AudioEvent(_Contract):
     ts: float
     label: AudioLabel
     score: float = Field(ge=0.0, le=1.0)
+    snippet_id: str | None = None
+    duration_s: float | None = None
 
 
 class RulesLabel(_Contract):

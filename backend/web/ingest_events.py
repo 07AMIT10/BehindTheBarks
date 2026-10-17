@@ -12,6 +12,7 @@ Protocol (phone -> server):
   2. text    {"type": "frame" | "audio" | "rules", "data": {<the JSON contract>}}
      text    {"type": "treat", "data": {"ts": <epoch s>}}          (optional ts)
      text    {"type": "ping", "phone_time": <epoch s>}   ->  reply {"type": "pong", "server_time": ...}
+     text    {"type": "bye"}                              (deliberate stop: Stop Monitoring)
   3. binary  0x01 + JPEG                    (preview frame, for /video and notification snapshots)
 
 `data.ts` is the phone's clock. It is rebased by `server_time_at_hello - phone_time` before anything
@@ -21,11 +22,18 @@ and echoed back down as the treat downlink (idempotent on the phone: it must not
 received).
 
 server -> phone: {"type": "treat", "ts": ...} and {"type": "config", "data": {"rules": {...}}}.
+
+Households mode (web.auth.mode: households, proto 2) adds the station handshake: the hello carries
+`station_id`, the server replies {"type":"challenge","nonce":...,"server_time":...} and the phone must
+answer {"type":"auth","sig":"<b64 DER ECDSA P-256 signature>"} within 10 s. The signed message is
+b"btb-auth-v1|" + nonce_bytes + b"|" + station_id + b"|" + device. Failure or a revoked station closes
+the socket with 4401 (or 4410 when the owner revokes a live session).
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import math
 import statistics
 import time
@@ -33,15 +41,25 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
+log = logging.getLogger("ingest-events")
+
 from backend.contracts import AudioEvent, FrameEvent, RulesLabel
+from backend.web import audio_codec
 from backend.web.ingest import CLOSE_BAD_HELLO, CLOSE_BUSY, CLOSE_REPLACED, FpsMeter, HelloError, MAX_DEVICE_LEN
+from backend.web.resource_alerts import evaluate_resource_alerts
 
 PROTO = 1
+PROTO_STATION = 2  # households mode: the hello carries a paired station_id and signs a challenge
 KIND_PREVIEW = 0x01
+KIND_AUDIO = 0x02  # phone audio frame: codec | seq | t_ms | payload (docs/AUDIO_WIRE.md)
+MAX_AUDIO_FRAME_BYTES = 4096  # the largest valid frame is 814 bytes (ADPCM); anything bigger is not audio
 
 EVENT_MODELS: dict[str, type] = {"frame": FrameEvent, "audio": AudioEvent, "rules": RulesLabel}
 
 AUDIO_OK_S = 2.0  # an AudioEvent within this many seconds means "the mic is alive", as in Pipeline
+from backend.web.modes import ModeError, parse_mode  # T3.1
+MODE_RESULTS = ("allowed", "denied", "timeout")  # T3.2: how a raise prompt ended on the phone
+
 MAX_SKEW_S = 60.0  # an envelope whose rebased ts is further than this from our clock is dropped
 MIN_EPOCH = 1_000_000_000.0   # 2001-09-09: below this the phone sent something other than seconds
 MAX_EPOCH = 4_102_444_800.0   # 2100-01-01: above this, most likely milliseconds
@@ -57,6 +75,7 @@ class RemoteHello:
     profile: str = "mobile"
     proto: int = PROTO
     token: str | None = None
+    station_id: str | None = None  # households mode (proto 2): paired in advance, no token needed
 
 
 def _num(msg: dict, key: str, lo: float, hi: float) -> float:
@@ -96,8 +115,11 @@ def parse_remote_hello(text: str | None) -> RemoteHello:
     if not isinstance(msg, dict) or msg.get("type") != "hello":
         raise HelloError('first message must be {"type": "hello", "proto": %d, ...}' % PROTO)
     proto = msg.get("proto", PROTO)
-    if isinstance(proto, bool) or not isinstance(proto, int) or proto != PROTO:
-        raise HelloError(f"hello.proto must be {PROTO}")
+    if isinstance(proto, bool) or not isinstance(proto, int) or proto not in (PROTO, PROTO_STATION):
+        raise HelloError(f"hello.proto must be {PROTO} or {PROTO_STATION}")
+    station_id = msg.get("station_id")
+    if station_id is not None and (not isinstance(station_id, str) or not 1 <= len(station_id) <= 64):
+        raise HelloError("hello.station_id must be a string of 1-64 characters")
     tok = msg.get("token")
     token_str = str(tok).strip() if tok is not None and isinstance(tok, str) else None
     return RemoteHello(
@@ -107,6 +129,7 @@ def parse_remote_hello(text: str | None) -> RemoteHello:
         profile=_name(msg, "profile", MAX_NAME_LEN, "mobile"),
         proto=proto,
         token=token_str,
+        station_id=station_id,
     )
 
 
@@ -157,6 +180,7 @@ class RemoteSession:
         self.ping_every_s = ping_every_s
         self.max_skew_s = max_skew_s
         self.connected = True
+        self.stopped = False  # the phone said bye: this socket ended on purpose, not a drop
         self.server_time_at_hello = clock()
         self.connected_at = self.server_time_at_hello
         self.last_msg_ts = self.server_time_at_hello
@@ -172,10 +196,25 @@ class RemoteSession:
         self.pings = 0
         self.previews = 0
         self.dropped = 0
+        # Phone audio (T3.9). `audio_frames`/`audio_bytes` count frames relayed to listeners; a frame that
+        # is well formed but not allowed right now (mode below full, nobody listening) is a policy drop,
+        # and a malformed one is also counted in `dropped`.
+        self.audio_frames = 0
+        self.audio_bytes = 0
+        self.audio_dropped_policy = 0
+        self.audio_dropped_invalid = 0
         self.offset = ClockOffset(offset_samples)
         self.offset.seed(self.server_time_at_hello, hello.phone_time)
         self._fps = FpsMeter(fps_window_s)
         self._preview_fps = FpsMeter(fps_window_s)
+        # T3.1: what the person holding the phone allows, and what it says it is actually doing.
+        self.station_cap = "full"          # an un-upgraded station is assumed full until it says otherwise
+        self.effective_mode: str | None = None
+        # T3.2: the answer the person on the phone gave to the last raise prompt (None until one happened).
+        self.last_mode_request_result: dict | None = None
+        # T6.1: station telemetry (battery, temperature, thermal, inference, RTT)
+        self.latest_telemetry: dict | None = None
+        self.telemetry_history: deque[dict] = deque(maxlen=360)
 
     @property
     def events(self) -> int:
@@ -199,9 +238,20 @@ class RemoteSession:
         kind = msg.get("type")
         if kind == "ping":
             return self._ping(msg, now)
+        if kind == "bye":  # deliberate stop before its close frame: phone forgotten, pipeline idle
+            self.stopped = True
+            return "bye"
         data = msg.get("data")
         if kind == "treat":
             return self._treat(data, now)
+        if kind == "mode_state":
+            return self._mode_state(data)
+        if kind == "mode_result":
+            return self._mode_result(data, now)
+        if kind == "kick_viewers":
+            return self._kick_viewers()
+        if kind == "telemetry":
+            return self._telemetry(data, now)
         model = EVENT_MODELS.get(kind) if isinstance(kind, str) else None
         if model is None or not isinstance(data, dict):
             self.dropped += 1
@@ -229,12 +279,117 @@ class RemoteSession:
         self._fps.add(now)
         return kind
 
+    def _mode_state(self, data: object) -> str | None:
+        """T3.1: `{"type":"mode_state","data":{cap,effective,reason}}`. An unknown mode is a bad
+        message, never a silent default: it is counted in `dropped` and the previous cap stands."""
+        if not isinstance(data, dict) or "cap" not in data or "effective" not in data:
+            self.dropped += 1
+            return None
+        try:
+            cap = parse_mode(data.get("cap"))
+            effective = parse_mode(data.get("effective"))
+        except ModeError:
+            self.dropped += 1
+            return None
+        self.station_cap, self.effective_mode = cap, effective
+        if hasattr(self.pipeline, "set_station_cap"):
+            self.pipeline.set_station_cap(cap)
+        return "mode_state"
+
+    def _mode_result(self, data: object, now: float) -> str | None:
+        """T3.2: the outcome of a raise prompt, `{"type":"mode_result","data":{"mode","result"}}` with result
+        `allowed | denied | timeout`. Exactly these two fields; anything else is counted in `dropped`. A valid
+        result is kept on the phone card (`last_mode_request_result`) and published at once."""
+        if not isinstance(data, dict) or set(data) != {"mode", "result"}:
+            self.dropped += 1
+            return None
+        try:
+            mode = parse_mode(data.get("mode"))
+        except ModeError:
+            self.dropped += 1
+            return None
+        result = data.get("result")
+        if not isinstance(result, str) or result not in MODE_RESULTS:
+            self.dropped += 1
+            return None
+        self.last_mode_request_result = {"mode": mode, "result": result, "ts": now}
+        publish = getattr(self.runtime, "publish_phone", None)
+        if publish is not None:
+            publish()
+        return "mode_result"
+
+    def _kick_viewers(self) -> str:
+        """T3.4: station requested to disconnect all remote viewers."""
+        tracker = getattr(self.runtime, "tracker", None)
+        if tracker:
+            tracker.kick_all(cooldown_s=60.0)
+        return "kick_viewers"
+
+    def _telemetry(self, data: object, now: float) -> str | None:
+        """T6.1: validate telemetry envelope and store latest + ring buffer."""
+        if not isinstance(data, dict):
+            self.dropped += 1
+            return None
+
+        # Validate numeric ranges:
+        # battery: 0..100
+        # temp: -20..90
+        # ms values: 0..60000
+        bat = data.get("battery_pct")
+        if bat is not None:
+            if isinstance(bat, bool) or not isinstance(bat, (int, float)) or not (0 <= bat <= 100):
+                self.dropped += 1
+                return None
+
+        temp = data.get("temp_c")
+        if temp is not None:
+            if isinstance(temp, bool) or not isinstance(temp, (int, float)) or not (-20.0 <= temp <= 90.0):
+                self.dropped += 1
+                return None
+
+        rtt = data.get("ws_rtt_ms")
+        if rtt is not None:
+            if isinstance(rtt, bool) or not isinstance(rtt, (int, float)) or not (0 <= rtt <= 60000):
+                self.dropped += 1
+                return None
+
+        inf_ms = data.get("inference_ms")
+        if inf_ms is not None:
+            if not isinstance(inf_ms, dict):
+                self.dropped += 1
+                return None
+            for v in inf_ms.values():
+                if isinstance(v, bool) or not isinstance(v, (int, float)) or not (0 <= v <= 60000):
+                    self.dropped += 1
+                    return None
+
+        stored = dict(data)
+        stored["server_ts"] = now
+        self.latest_telemetry = stored
+        self.telemetry_history.append(stored)
+
+        alerts = evaluate_resource_alerts(stored, list(self.telemetry_history))
+        if alerts:
+            dev = getattr(getattr(self, "hello", None), "device", "station")
+            for alert in alerts:
+                log.warning("station %s resource alert: %s", dev, alert)
+            if hasattr(self.runtime, "hub") and self.runtime.hub is not None:
+                self.runtime.hub.publish(
+                    "notification",
+                    {"kind": "resource_alert", "text": f"{dev}: {'; '.join(alerts)}", "alerts": alerts},
+                    meta={"station": getattr(getattr(self, "hello", None), "station_id", None)}
+                )
+        return "telemetry"
+
     def handle(self, data: bytes) -> str | None:
-        """Dispatch one binary message: 0x01 + JPEG preview. Returns "preview" or None."""
+        """Dispatch one binary message: 0x01 + JPEG preview or 0x02 audio frame. Returns "preview",
+        "audio" or None."""
         if not self.connected:
             return None
         now = self.clock()
         self.last_msg_ts = now
+        if len(data) >= 1 and data[0] == KIND_AUDIO:
+            return self._handle_audio(data)
         if len(data) < 2 or len(data) > self.max_message_bytes or data[0] != KIND_PREVIEW:
             self.dropped += 1
             return None
@@ -247,6 +402,31 @@ class RemoteSession:
         self.last_preview_ts = now
         self._preview_fps.add(now)
         return "preview"
+
+    def _handle_audio(self, data: bytes) -> str | None:
+        """0x02 audio frame. Validated like the codec module says (magic, codec in {0,1}, exact payload
+        length); the server never decodes it. Relayed only when the station's effective mode is full AND a
+        listener is connected (the hub is `runtime.audio_hub`, see audio_hub.py); otherwise dropped and counted."""
+        if len(data) > MAX_AUDIO_FRAME_BYTES:
+            return self._audio_invalid()
+        try:
+            audio_codec.parse_frame(data)
+        except ValueError:
+            return self._audio_invalid()
+        hub = getattr(self.runtime, "audio_hub", None)
+        listeners = hub.client_count if hub is not None else 0
+        if getattr(self.pipeline, "effective_mode", None) != "full" or listeners == 0:
+            self.audio_dropped_policy += 1
+            return None
+        hub.publish(bytes(data[1:]))
+        self.audio_frames += 1
+        self.audio_bytes += len(data)
+        return "audio"
+
+    def _audio_invalid(self) -> None:
+        self.dropped += 1
+        self.audio_dropped_invalid += 1
+        return None
 
     def _rebased(self, data: dict, now: float) -> dict:
         """The envelope's ts, moved onto the server clock. A ts that is not an epoch number, or that
@@ -301,12 +481,17 @@ class RemoteSession:
         since = now - (self.last_ping_ts if self.last_ping_ts is not None else self.server_time_at_hello)
         return round(self.ping_every_s - since, 1)
 
+    def _audio_clients(self) -> int:
+        hub = getattr(self.runtime, "audio_hub", None)
+        return hub.client_count if hub is not None else 0
+
     def _age(self, ts: float | None, now: float) -> float | None:
         return None if ts is None else round(max(0.0, now - ts), 2)
 
     def snapshot(self, now: float) -> dict:
         """The dashboard's phone card (/status -> phone)."""
         h = self.hello
+        telem = self.latest_telemetry or {}
         return {
             "connected": self.connected, "device": h.device, "transport": "ingest-events", "camera": True,
             "facing": None,  # the app has one camera; the card shape stays the /ingest one
@@ -318,11 +503,22 @@ class RemoteSession:
             "clock_offset_s": round(self.offset.offset, 3), "clock_samples": self.offset.count,
             "ping_due_s": self.ping_due_s(now),
             "last_event_age_s": self._age(self.last_event_ts, now),
-            "last_frame_age_s": self._age(self.last_frame_ts, now),
+            "last_frame_age_s": self._age(self.last_frame_ts or self.last_preview_ts, now),
+            "last_preview_age_s": self._age(self.last_preview_ts, now),
+            "audio_frames": self.audio_frames, "audio_bytes": self.audio_bytes,
+            "audio_dropped_policy": self.audio_dropped_policy, "audio_dropped_invalid": self.audio_dropped_invalid,
+            "audio_clients": self._audio_clients(),
+            "station_cap": self.station_cap, "effective_mode": self.effective_mode,
+            "last_mode_request_result": self.last_mode_request_result,
+            "battery_pct": telem.get("battery_pct"),
+            "charging": telem.get("charging"),
+            "temp_c": telem.get("temp_c"),
+            "latest_telemetry": self.latest_telemetry,
         }
 
     def metrics(self, now: float) -> dict:
         """What RemotePipeline.status() mirrors."""
+        telem = self.latest_telemetry or {}
         return {
             "events_s": self._fps.rate(now), "preview_fps": self._preview_fps.rate(now),
             "events": self.events, "previews": self.previews, "dropped": self.dropped,
@@ -333,6 +529,14 @@ class RemoteSession:
             "last_frame_age_s": self._age(self.last_frame_ts, now),
             "last_preview_age_s": self._age(self.last_preview_ts, now),
             "audio_ok": self.last_audio_ts is not None and now - self.last_audio_ts <= AUDIO_OK_S,
+            "audio_frames": self.audio_frames, "audio_bytes": self.audio_bytes,
+            "audio_dropped_policy": self.audio_dropped_policy, "audio_dropped_invalid": self.audio_dropped_invalid,
+            "audio_clients": self._audio_clients(),
+            "station_cap": self.station_cap, "effective_mode": self.effective_mode,
+            "battery_pct": telem.get("battery_pct"),
+            "charging": telem.get("charging"),
+            "temp_c": telem.get("temp_c"),
+            "latest_telemetry": self.latest_telemetry,
         }
 
 

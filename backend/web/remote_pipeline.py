@@ -5,7 +5,8 @@ event sink needs:
     run()               awaits until stop(): no source, no models, no watchdog thread
     ingest_frame()      the phone's 0x01 preview JPEG, so /video and notification snapshots work
     mark_treat()        pushes {"type": "treat"} back down, so the phone's rules see treat_event_recent
-    status()            mirrors the phone's own metrics and reports stalled after web.remote.stale_s
+    status()            mirrors the phone's own metrics; "idle" before the first phone and after a
+                        deliberate stop, "stalled" after web.remote.stale_s of camera silence
 
 Everything the pipeline would normally report as a fault is the phone's fault now: no previews or no
 envelopes for longer than stale_s means the app (or the network) went quiet, and the Runtime's
@@ -21,6 +22,8 @@ import time
 from collections import deque
 from typing import Any, Awaitable, Callable
 
+
+from backend.web.modes import DEFAULT_PREVIEW, ModeError, min_mode, parse_mode  # T3.1
 log = logging.getLogger("remote-pipeline")
 
 DOWNLINK_QUEUE = 64
@@ -61,7 +64,7 @@ class RemotePipeline:
         self.cfg = config
         self.clock = clock
         # Same meaning as the browser source's stall_s in Pipeline: no camera data for this long.
-        self.stale_s = float(remote.get("stale_s", source.get("stall_s", 2.0)))
+        self.stale_s = float(remote.get("stale_s", source.get("stall_s", 8.0)))
         # A downlink on a half-open socket never resolves, so every send gets a deadline: without one
         # the flush task wedges and every later treat and config push piles up undelivered.
         self.send_timeout_s = float(remote.get("downlink_timeout_s", 5.0))
@@ -69,6 +72,8 @@ class RemotePipeline:
         self._started_at = clock()
         self._stopped = False
         self._running = False
+        self._idle = False  # the phone stopped on purpose (or never showed up): not an error
+        self._ever_attached = False
         self._halt: asyncio.Event | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._session: Any = None
@@ -88,7 +93,15 @@ class RemotePipeline:
         self._last_torch_ts = 0.0
         self._last_flip_ts = 0.0
         self._last_treat_ts = 0.0
-        self._privacy_mode = False
+        # T3.1: the station cap is what the phone allows (it reports it); the policy mode is what
+        # the household owner chose. The effective mode is the lower of the two -- the phone always wins.
+        self._station_cap = "full"
+        self._policy_mode = "full"
+        # The last preview/audio/viewer values the policy tracker pushed. A mode change (POST /mode)
+        # calls set_policy(mode) without them and must not reset viewers or preview on the phone.
+        self._policy_preview: dict = dict(DEFAULT_PREVIEW)
+        self._policy_audio = False
+        self._policy_viewers: dict = {"video": 0, "audio": 0}
         self._privacy_jpeg: bytes = _build_privacy_slate()
 
     # -- Pipeline interface -------------------------------------------------------------------
@@ -112,7 +125,9 @@ class RemotePipeline:
 
     def latest_frame_jpeg(self) -> bytes | None:
         """The newest preview JPEG the phone sent, or privacy slate in privacy mode, or None before the first one."""
-        if self._privacy_mode:
+        if self._idle:
+            return None  # nothing is streaming: no stale frame and no privacy slate either
+        if self.effective_mode == "blackout":  # the policy engine decides, never a legacy flag
             return self._privacy_jpeg
         return self._jpeg
 
@@ -134,6 +149,11 @@ class RemotePipeline:
     def ingest_audio(self, pcm16: bytes, sample_rate: int, ts: float) -> None:
         """Not part of /ingest-events: the phone sends AudioEvents as JSON. Kept for the interface."""
         self._raw_audio_ts = float(ts)
+
+    def mark_stopped(self) -> None:
+        """The phone said bye / closed with 1000: forget its last frame so the dashboard shows
+        'idle' instead of 'stalled'."""
+        self._jpeg, self._preview_ts, self._idle = None, None, True
 
     def push_config(self, rules: dict | None = None) -> bool:
         """Push data.rules overrides to the phone, so retuning needs no APK rebuild. With no
@@ -158,20 +178,88 @@ class RemotePipeline:
         log.info("remote: sent camera flip to phone (%s)", "sent" if sent else "no phone")
         return sent
 
-    def set_privacy(self, enabled: bool) -> bool:
-        """Enable or disable family privacy mode remotely (mutes mic & replaces video with privacy slate)."""
-        self._privacy_mode = bool(enabled)
-        sent = self._post({"type": "privacy", "data": {"enabled": self._privacy_mode}})
-        log.info("remote: sent privacy=%s to phone (%s)", self._privacy_mode, "sent" if sent else "no phone")
+    def send_cue(self, sound: str = "squeak", light: str | None = None) -> bool:
+        """Send a multi-sensory attention cue (sound chime + light pattern) to the station phone."""
+        sent = self._post({"type": "cue", "data": {"sound": str(sound), "light": light}})
+        log.info("remote: sent cue sound=%s light=%s to phone (%s)", sound, light, "sent" if sent else "no phone")
         return sent
 
+    def send_voice(self, pcm_base64: str) -> bool:
+        """Send a 16kHz PCM audio chunk to the station phone for two-way push-to-talk."""
+        sent = self._post({"type": "voice", "data": {"pcm": str(pcm_base64)}})
+        return sent
+
+    def set_policy(self, mode: str, *, preview: dict | None = None, audio: bool | None = None,
+                   viewers: dict | None = None) -> bool:
+        """T3.1: send one `policy` downlink (mode + preview params + audio + viewer counts), then
+        the legacy `privacy` downlink so an old APK still mutes. Returns whether a phone took it.
+
+        `mode` is validated here: an unknown mode raises rather than reaching the phone.
+        `audio` is accepted for callers that predate T3.9 but never trusted: the flag sent is derived by
+        `_audio_wanted()` (effective mode full AND at least one audio listener), so a mode change cannot
+        leave a stale `audio: true` behind."""
+        mode = parse_mode(mode)  # ModeError propagates: a bad mode must never be sent
+        self._policy_mode = mode
+        if preview is not None:
+            self._policy_preview = dict(preview)
+        if viewers is not None:
+            self._policy_viewers = dict(viewers)
+        self._policy_audio = self._audio_wanted()
+        data = {"mode": mode, "preview": dict(self._policy_preview),
+                "audio": self._policy_audio, "viewers": dict(self._policy_viewers)}
+        sent = self._post({"type": "policy", "data": data})
+        # Legacy compatibility: old APKs only understand `privacy`. New APKs act on `policy` and
+        # ignore `privacy` once they have seen a `policy`, so sending both is safe.
+        self._post({"type": "privacy", "data": {"enabled": self.effective_mode == "blackout"}})
+        log.info("remote: sent policy=%s to phone (%s)", mode, "sent" if sent else "no phone")
+        return sent
+
+    def request_mode(self, mode: str, *, from_role: str = "owner") -> bool:
+        """T3.3: ask the phone to raise its cap (mode_request downlink). Returns False with no phone."""
+        mode = parse_mode(mode)
+        sent = self._post({"type": "mode_request", "data": {"mode": mode, "from": from_role}})
+        log.info("remote: sent mode_request=%s (from=%s) to phone (%s)", mode, from_role,
+                 "sent" if sent else "no phone")
+        return sent
+
+    def raw_frame_jpeg(self) -> bytes | None:
+        """The un-processed newest preview JPEG from the phone, or None if idle/none yet."""
+        if self._idle:
+            return None
+        return self._jpeg
+
     def get_privacy(self) -> bool:
-        return self._privacy_mode
+        """Legacy boolean view: True only when the effective mode is the total mute."""
+        return self.effective_mode == "blackout"
+
+    @property
+    def effective_mode(self) -> str:
+        """min(station cap, household policy). The phone's cap can only lower exposure here."""
+        return min_mode(self._station_cap, self._policy_mode)
+
+    @property
+    def station_cap(self) -> str:
+        return self._station_cap
+
+    def set_station_cap(self, cap: str) -> None:
+        """Called by the session when the phone reports a new cap (T3.1/T3.2). A cap that changes whether
+        audio may flow is pushed at once, so the phone stops or starts its microphone stream."""
+        self._station_cap = parse_mode(cap)
+        if self._audio_wanted() != self._policy_audio:
+            self.set_policy(self._policy_mode)
+
+    def _audio_wanted(self) -> bool:
+        """T3.9: the phone streams audio only in Full mode, and only while somebody listens."""
+        return self.effective_mode == "full" and int(self._policy_viewers.get("audio", 0) or 0) > 0
 
     # -- phone session --------------------------------------------------------------------------
     def attach(self, session: Any, send: Callable[[dict], Awaitable[None]] | None) -> None:
         """The live phone session plus the downlink sender, wired up by the /ingest-events endpoint."""
         self._session, self._send = session, send
+        self._ever_attached, self._idle = True, False
+        # A newly attached phone gets the same grace a booting pipeline gets, so the dashboard
+        # does not flash 'stalled' between the handshake and the phone's first preview frame.
+        self._started_at = self.clock()
         device = getattr(getattr(session, "hello", None), "device", None)
         log.info("remote: phone attached: %s", device or "unknown")
 
@@ -281,6 +369,11 @@ class RemotePipeline:
             "events": m["events"],
             "previews": m["previews"],
             "dropped": m["dropped"],
+            "audio_frames": m["audio_frames"],
+            "audio_bytes": m["audio_bytes"],
+            "audio_dropped_policy": m["audio_dropped_policy"],
+            "audio_dropped_invalid": m["audio_dropped_invalid"],
+            "audio_clients": m["audio_clients"],
             "device": m["device"],
             "models": m["models"],
             "clock_offset_s": m["clock_offset_s"],
@@ -290,15 +383,25 @@ class RemotePipeline:
             "downlinks_dropped": self.downlinks_dropped,
             "treats": len(self._treats),
             "torch": self._torch_enabled,
-            "privacy_mode": self._privacy_mode,
+            "privacy_mode": self.effective_mode == "blackout",
+            "station_cap": self._station_cap,
+            "effective_mode": self.effective_mode,
+            "policy_mode": self._policy_mode,
+            "battery_pct": m.get("battery_pct"),
+            "charging": m.get("charging"),
+            "temp_c": m.get("temp_c"),
+            "latest_telemetry": m.get("latest_telemetry"),
         }
 
     def _metrics(self, now: float) -> dict:
         if self._session is not None and hasattr(self._session, "metrics"):
             return self._session.metrics(now)
         return {"events_s": 0.0, "preview_fps": 0.0, "events": 0, "previews": 0, "dropped": 0, "device": None,
+                "audio_frames": 0, "audio_bytes": 0, "audio_dropped_policy": 0, "audio_dropped_invalid": 0,
+                "audio_clients": 0,
                 "models": {}, "clock_offset_s": 0.0, "clock_samples": 0, "ping_due_s": None, "audio_ok": False,
-                "last_event_age_s": None, "last_frame_age_s": None, "last_preview_age_s": None}
+                "last_event_age_s": None, "last_frame_age_s": None, "last_preview_age_s": None,
+                "battery_pct": None, "charging": None, "temp_c": None, "latest_telemetry": None}
 
     def _frame_ts(self) -> float | None:
         """The newest camera data we have seen: a FrameEvent envelope or a preview JPEG."""
@@ -314,7 +417,22 @@ class RemotePipeline:
     def _state(self, now: float) -> str:
         if self._stopped:
             return "stopped"
+        # Idle is not an error: the phone stopped on purpose, or has never been here (first run).
+        if self._idle or not self._ever_attached:
+            return "idle"
+        if self._paused(now):
+            return "paused"  # a deliberate blackout: the phone is alive and silent on purpose
         age = self._frame_age_s(now)
         # Never having had a frame counts as stalled once the grace period is over (Pipeline._state).
         since = age if age is not None else now - self._started_at
         return "stalled" if since > self.stale_s else "running"
+
+    def _paused(self, now: float) -> bool:
+        """A blackout is silence on purpose (T3.2): the phone sends no frames, events or previews, but
+        it keeps pinging. Paused = effective blackout AND a message (ping or any envelope) within two
+        ping intervals. A blackout phone that went quiet is stalled, like a phone in any other mode."""
+        s = self._session
+        if s is None or self.effective_mode != "blackout" or not hasattr(s, "idle_s"):
+            return False
+        ping_every = float(getattr(s, "ping_every_s", 30.0))
+        return s.idle_s(now) <= 2 * ping_every

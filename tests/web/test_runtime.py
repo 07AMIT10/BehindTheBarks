@@ -6,6 +6,7 @@ from backend.demo.mock_pipeline import MockPipeline
 from backend.notify.base import NotifyResult
 from backend.web.hub import Hub
 from backend.web.runtime import Runtime
+from backend.web.remote_pipeline import RemotePipeline
 from backend.web.settings import load_config
 
 T0 = 1_000_000.0
@@ -150,7 +151,7 @@ async def test_start_stop_with_real_loop(tmp_path):
     assert set(st) == {"pipeline", "pipeline_status", "demo_mode", "llm", "notify_mode", "clients", "fps", "profile",
                        "phone", "modes", "mode"}
     assert st["modes"] == ["live"] and st["mode"] == "live"  # no demo clips in this test
-    assert st["profile"]["dog_name"] == "Bruno" and st["llm"]["online"] is True
+    assert st["profile"]["dog_name"] == "Your dog" and st["llm"]["online"] is True
 
 
 # -- phone (/ingest) ---------------------------------------------------------------------------
@@ -233,3 +234,71 @@ async def test_phone_stop_button_forgets_the_phone(tmp_path):
     rt.phone_close(s, 1000)  # the page's Stop button closes with 1000
     assert rt.status()["phone"] is None
     assert [m["data"]["phone"] for m in drain(q) if m["type"] == "status"] == [None]
+
+
+async def test_revoked_station_close_4410_forgets_the_phone(tmp_path):
+    """The owner removed the station: it is no longer in the household, so the dashboard must not keep a
+    disconnected card ("Reconnecting to camera") for it. Same as a deliberate stop."""
+    rt, mp, hub, q, clock = make(tmp_path)
+    s = rt.phone_open(HELLO)
+    drain(q)
+    rt.phone_close(s, 4410)
+    assert rt.status()["phone"] is None
+    assert [m["data"]["phone"] for m in drain(q) if m["type"] == "status"] == [None]
+
+
+async def test_unexpected_close_still_keeps_a_disconnected_card(tmp_path):
+    rt, mp, hub, q, clock = make(tmp_path)
+    s = rt.phone_open(HELLO)
+    rt.phone_close(s, 1005)  # a dropped socket, not a stop: the dashboard says Reconnecting
+    assert rt.status()["phone"]["connected"] is False
+
+
+# -- deliberate stop with bye, and the idle pipeline ------------------------------------------
+def _remote_runtime(tmp_path):
+    """A Runtime whose pipeline is a RemotePipeline: it has mark_stopped(), MockPipeline does not."""
+    rt, mp, hub, q, clock = make(tmp_path)
+    rt.pipeline = RemotePipeline(rt.cfg, clock=rt.clock)
+    return rt, mp, hub, q, clock
+
+
+async def test_phone_close_after_bye_forgets_the_phone_and_idles_the_pipeline(tmp_path):
+    rt, mp, hub, q, clock = _remote_runtime(tmp_path)
+    s = rt.phone_open(HELLO)
+    drain(q)
+    rt.pipeline.attach(s, None)
+    assert rt.pipeline.status()["state"] == "running"
+    s.stopped = True  # RemoteSession.handle_text('{"type":"bye"}') sets exactly this
+    rt.phone_close(s, 1005)  # the app's old bug: the close frame never made it, only bye did
+    assert rt.phone is None
+    assert rt.status()["phone"] is None
+    assert [m["data"]["phone"] for m in drain(q) if m["type"] == "status"] == [None]
+    assert rt.pipeline.status()["state"] == "idle"
+
+
+async def test_phone_close_after_bye_is_ignored_for_a_replaced_session(tmp_path):
+    rt, mp, hub, q, clock = _remote_runtime(tmp_path)
+    first = rt.phone_open(HELLO)
+    clock["t"] += 6.0  # > ingest.stale_s: a newcomer replaces the quiet session
+    rt.pipeline.detach(first)
+    second = rt.phone_open(HELLO)
+    await settle(rt)
+    assert rt.phone is second
+    rt.pipeline.attach(second, None)
+    first.stopped = True
+    rt.phone_close(first, 1005)  # the old socket's finally: must not idle the live phone's pipeline
+    assert rt.phone is second and rt.phone_status()["connected"] is True
+    assert rt.pipeline.status()["state"] == "running"
+
+
+async def test_status_fps_ages_out_after_the_last_frame(tmp_path):
+    rt, mp, hub, q, clock = make(tmp_path)
+    feed(rt, mp, T0)
+    clock["t"] += 0.1
+    feed(rt, mp, clock["t"])
+    assert rt.status()["fps"] > 0.0
+    clock["t"] += 4.0  # > FPS_FRESH_S, with no new frames
+    assert rt.status()["fps"] == 0.0
+    clock["t"] += 0.1
+    feed(rt, mp, clock["t"])
+    assert rt.status()["fps"] > 0.0  # frames arriving again bring it back

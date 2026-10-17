@@ -1,5 +1,7 @@
 import time
+import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from backend.demo.mock_pipeline import MockPipeline
 from backend.main import create_app
@@ -26,7 +28,7 @@ def test_auth_status_and_verification(tmp_path):
         # Check auth status
         r = c.get("/auth/status")
         assert r.status_code == 200
-        assert r.json() == {"enabled": True, "auth_required": True}
+        assert r.json() == {"enabled": True, "auth_required": True, "mode": "pin", "debug": False}
 
         # Failed verify
         r = c.post("/auth/verify", json={"pin": "wrong"})
@@ -54,11 +56,10 @@ def test_auth_status_and_verification(tmp_path):
         assert c.get(f"/status?token={token}").status_code == 200
 
         # Protected websocket rejects without auth
-        try:
-            with c.websocket_connect("/ws") as ws:
-                ws.receive_json()
-        except Exception:
-            pass  # closed with 4401
+        with pytest.raises(WebSocketDisconnect) as exc:
+            with c.websocket_connect("/ws"):
+                pass
+        assert exc.value.code == 4401
 
         # Protected websocket succeeds with token param
         with c.websocket_connect(f"/ws?token={token}") as ws:
@@ -124,12 +125,11 @@ def test_ingest_token_rejection_and_acceptance(tmp_path):
     now = time.time()
     with TestClient(app) as c:
         # Connect without token -> should close with 4401
-        try:
+        with pytest.raises(WebSocketDisconnect) as exc:
             with c.websocket_connect("/ingest-events") as ws:
                 ws.send_json({"type": "hello", "proto": PROTO, "device": "TestPhone", "phone_time": now})
                 ws.receive_json()
-        except Exception:
-            pass  # Expected disconnect
+        assert exc.value.code == 4401
 
         # Connect with correct token in query param
         with c.websocket_connect("/ingest-events?token=phone-guard-token-123") as ws:

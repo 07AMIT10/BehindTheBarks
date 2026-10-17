@@ -10,6 +10,7 @@ type Props = {
   nowMs: number;
   nowSec: number;
   paused: boolean;
+  idle?: boolean;
   projector: boolean;
   dogName: string;
   lastDogTs: number | null;
@@ -56,13 +57,13 @@ export default function EmotionCard(p: Props) {
     <section aria-label="Current emotion" className="relative flex flex-col gap-[18px] overflow-hidden rounded-xl border border-border bg-surface p-6 lg:p-7">
       <div className="absolute inset-x-0 top-0 h-1" style={{ background: p.paused ? "var(--unknown)" : v.solid }} />
       <div className="flex items-center gap-2.5">
-        <div className="micro text-muted">{p.paused ? "Paused · last reading" : "Right now"}</div>
+        <div className="micro text-muted">{p.idle ? "No live reading" : p.paused ? "Paused · last reading" : "Right now"}</div>
         <div className="grow" />
         {!p.paused && !noDog && <SourceBadge source={c.source} />}
         {!p.paused && <div className="font-mono text-[12px] text-muted">updated {updated}</div>}
       </div>
 
-      <div className={`flex items-center gap-5 ${p.paused ? "opacity-55" : ""}`}>
+      <div className="flex items-center gap-5">
         <div className="flex shrink-0 items-center justify-center rounded-[18px]"
           style={{ width: sizes.tile, height: sizes.tile, background: noDog ? "var(--unknown-tint)" : v.tint }}>
           <EmotionIcon emotion={c.emotion} size={sizes.glyph} strokeWidth={1.6} />
@@ -88,7 +89,7 @@ export default function EmotionCard(p: Props) {
       </div>
 
       {!noDog && (
-        <div className={`flex flex-col gap-2 ${p.paused ? "opacity-55" : ""}`}>
+        <div className="flex flex-col gap-2">
           <div className="flex justify-between text-small">
             <span className="font-semibold text-muted">Confidence</span>
             <span className="font-mono font-medium">{pct(c.confidence)}</span>
@@ -100,7 +101,7 @@ export default function EmotionCard(p: Props) {
         </div>
       )}
 
-      {!noDog && <p className={`m-0 leading-[1.45] text-pretty ${sizes.reason} ${p.paused ? "opacity-55" : ""}`}>{c.reason}</p>}
+      {!noDog && <p className={`m-0 leading-[1.45] text-pretty ${sizes.reason}`}>{c.reason}</p>}
     </section>
   );
 }

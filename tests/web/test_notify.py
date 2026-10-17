@@ -19,18 +19,26 @@ STATE = EmotionState(
     reason="Tail tucked, body low, whimpering.",
 )
 
-PROFILE = {"dog_name": "Bruno", "location": "Kitchen", "zone_label": "feeding area"}
+PROFILE = {"dog_name": "Buddy", "location": "Living room", "zone_label": "feeding area"}
 
 
 def test_caption_matches_design():
     lines = caption_for(STATE, PROFILE).splitlines()
-    assert lines[0].endswith("Bruno seems fearful · 81%")
+    assert lines[0].endswith("Buddy seems fearful · 81%")
     assert lines[1] == "Tail tucked, body low, whimpering."
-    assert lines[2].startswith("Kitchen · feeding area · Fused reading · ")
+    assert lines[2].startswith("Living room · feeding area · Fused reading · ")
     happy = STATE.model_copy(update={"emotion": "happy", "source": "llm"})
     first, _, last = caption_for(happy, PROFILE).splitlines()
-    assert first.endswith("Bruno is happy · 81%") and "AI reading" in last
+    assert first.endswith("Buddy is happy · 81%") and "AI reading" in last
     assert "Your dog" in caption_for(STATE)  # no profile
+
+
+def test_caption_without_a_location_has_no_dangling_separator():
+    profile = {"dog_name": "Rex", "location": "", "zone_label": "feeding area"}
+    line = caption_for(STATE, profile).splitlines()[2]
+    assert line.startswith("feeding area · ")
+    profile2 = {"dog_name": "Rex", "location": "", "zone_label": ""}
+    assert not caption_for(STATE, profile2).splitlines()[2].startswith(" · ")
 
 
 async def test_dashboard_only():

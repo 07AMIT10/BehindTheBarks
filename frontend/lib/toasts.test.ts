@@ -9,22 +9,22 @@ const N = (id: number, emotion: NotificationItem["state"]["emotion"], reason = "
 
 describe("toasts", () => {
   it("negative is sticky with 'seems', positive fades with 'is'", () => {
-    let t = toastFromNotification([], N(1, "anxious"), "Bruno", 0);
-    t = toastFromNotification(t, N(2, "excited"), "Bruno", 0);
-    expect(t[0]).toMatchObject({ kind: "positive", title: "Bruno is excited", sticky: false });
-    expect(t[1]).toMatchObject({ kind: "negative", title: "Bruno seems anxious", sticky: true, status: "dashboard_only" });
+    let t = toastFromNotification([], N(1, "anxious"), "Buddy", 0);
+    t = toastFromNotification(t, N(2, "excited"), "Buddy", 0);
+    expect(t[0]).toMatchObject({ kind: "positive", title: "Buddy is excited", sticky: false });
+    expect(t[1]).toMatchObject({ kind: "negative", title: "Buddy seems anxious", sticky: true, status: "dashboard_only" });
   });
   it("repeat of the same emotion within 2 min is grouped and moved to top", () => {
-    let t = toastFromNotification([], N(1, "anxious", "first"), "Bruno", 0);
-    t = toastFromNotification(t, N(2, "excited"), "Bruno", 1000);
-    t = toastFromNotification(t, N(3, "anxious", "second"), "Bruno", GROUP_MS - 1);
+    let t = toastFromNotification([], N(1, "anxious", "first"), "Buddy", 0);
+    t = toastFromNotification(t, N(2, "excited"), "Buddy", 1000);
+    t = toastFromNotification(t, N(3, "anxious", "second"), "Buddy", GROUP_MS - 1);
     expect(t).toHaveLength(2);
     expect(t[0]).toMatchObject({ emotion: "anxious", count: 2, body: "second" });
-    t = toastFromNotification(t, N(4, "anxious"), "Bruno", 3 * GROUP_MS);
+    t = toastFromNotification(t, N(4, "anxious"), "Buddy", 3 * GROUP_MS);
     expect(t.filter((x) => x.emotion === "anxious")).toHaveLength(2);
   });
   it("expire removes non-sticky after 6 s; dismiss removes by id", () => {
-    let t = toastFromNotification([], N(1, "fearful"), "Bruno", 0);
+    let t = toastFromNotification([], N(1, "fearful"), "Buddy", 0);
     t = systemToast(t, "AI back online · fused readings resumed", 0);
     expect(expireToasts(t, FADE_MS - 1)).toHaveLength(2);
     const left = expireToasts(t, FADE_MS + 1);
@@ -33,8 +33,33 @@ describe("toasts", () => {
   });
   it("keeps at most MAX_TOASTS", () => {
     let t: ReturnType<typeof systemToast> = [];
-    for (let i = 0; i < 10; i++) t = systemToast(t, `s${i}`, i);
+    for (let i = 0; i < 10; i++) t = systemToast(t, `s${i}`, i * 100);
     expect(t).toHaveLength(MAX_TOASTS);
     expect(t[0].title).toBe("s9");
+  });
+  it("deduplicates identical system toasts and throttles rapid re-triggers", () => {
+    let t = systemToast([], "DebugPhone battery low (19%)", 0);
+    // Rapid duplicate within 60s
+    t = systemToast(t, "DebugPhone battery low (19%)", 1000);
+    t = systemToast(t, "DebugPhone battery low (19%)", 2000);
+    t = systemToast(t, "DebugPhone battery low (19%)", 3000);
+    expect(t).toHaveLength(1);
+    expect(t[0].title).toBe("DebugPhone battery low (19%)");
+  });
+  it("deduplicates and updates battery alerts when device label or severity changes", () => {
+    let t = systemToast([], "Station battery critical (9%)", 0);
+    expect(t).toHaveLength(1);
+    expect(t[0].title).toBe("Station battery critical (9%)");
+
+    // Later status update resolves the specific station name 'DebugPhone': must update in-place, NOT stack
+    t = systemToast(t, "DebugPhone battery critical (9%)", 500);
+    expect(t).toHaveLength(1);
+    expect(t[0].title).toBe("DebugPhone battery critical (9%)");
+
+    // Severity transitions from low to critical: must update in-place, NOT stack
+    let t2 = systemToast([], "DebugPhone battery low (20%)", 0);
+    t2 = systemToast(t2, "DebugPhone battery critical (9%)", 60000);
+    expect(t2).toHaveLength(1);
+    expect(t2[0].title).toBe("DebugPhone battery critical (9%)");
   });
 });

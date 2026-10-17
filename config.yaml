@@ -133,11 +133,14 @@ web:
   pipeline: real              # mock | real | remote (remote = the phone runs the perception and streams events)
   log_dir: out
   ws:
-    frame_fps: 8              # max frame messages/s per client
+    frame_fps: 4              # max frame messages/s per client (bandwidth; admin-tunable at PATCH /admin/tuning)
     client_queue: 64          # per-client buffer; oldest dropped when full
     history: 2000             # non-frame events kept for GET /events
   video:
-    fps: 8                    # MJPEG rate for GET /video
+    fps: 4                    # MJPEG send-rate ceiling for GET /video; only new frames are sent (admin-tunable)
+  compression:                # gzip JSON/JS/CSS/HTML; streams and media are never compressed (admin-tunable)
+    enabled: true
+    min_size: 1000            # bytes
   state:
     persist_s: 3.0            # new emotion must hold this long to become the state
     no_dog_unknown_s: 2.0
@@ -176,13 +179,14 @@ web:
     manifest: data/fallback/manifest.json   # Person A's file; falls back to backend/demo/clips/manifest.json
     clips_dir: backend/demo/clips           # web-owned placeholder clips
     telegram_first: false                   # also send the first demo notification via Telegram if configured
+    video_source: local                     # local | r2 (r2: presigned Cloudflare R2 URLs; upload first with scripts/upload_demo_clips.py)
   ingest:                     # /ingest browser phone camera; every key optional, defaults live in settings.py
     stale_s: 5.0              # a quiet phone counts as gone; a newcomer replaces it (both /ingest transports)
     status_every_s: 2.0       # phone status broadcast to dashboards
     fps_window_s: 3.0         # sliding window for received-fps metering
     max_message_bytes: 2000000
   remote:                     # /ingest-events, the on-device phone (web.pipeline: remote)
-    stale_s: 2.0              # no camera data for this long -> pipeline status 'stalled' (as data.source.stall_s)
+    stale_s: 8.0              # no camera data for this long -> pipeline status 'stalled' (as data.source.stall_s)
     clock_samples: 5          # median of the last N phone/server clock samples used to rebase ts
     ping_every_s: 30.0        # how often the phone is expected to send {"type": "ping", "phone_time": ...}
     max_skew_s: 60.0          # an envelope whose rebased ts is further than this from the server clock is
@@ -190,9 +194,9 @@ web:
                               # spools events across a longer outage)
     downlink_timeout_s: 5.0   # deadline for one treat/config downlink; a half-open socket must not wedge
                               # the queue, so a send that misses it is counted in pipeline_status.downlinks_dropped
-  profile:                    # shown in the UI header and Telegram captions (ui/screens)
-    dog_name: Bruno
-    location: Kitchen
+  profile:                    # shown in the UI header and Telegram captions; editable in the dashboard (PUT /profile)
+    dog_name: Your dog       # override with BTB_DOG_NAME
+    location: ""             # override with BTB_LOCATION; empty hides the location segment
     zone_label: feeding area
   auth:                       # Access control & security (set BTB_DASHBOARD_PIN or BTB_INGEST_TOKEN in .env)
     enabled: false            # true to require PIN for dashboard & token for phone ingest

@@ -1,7 +1,7 @@
 PY ?= .venv/bin/python
 ANDROID_BUILD_TOOLS ?= 35.0.0
 ANDROID_APK = android/app/build/outputs/apk/debug/app-debug.apk
-.PHONY: dev-backend dev-backend-remote dev-frontend dev demo test-web test-frontend tunnel-backend tunnel-frontend android-build android-test android-install
+.PHONY: dev-backend dev-backend-remote dev-frontend dev demo test-web test-frontend tunnel-backend tunnel-frontend android-build android-test android-install android-test-device
 dev-backend:
 	$(PY) -m uvicorn backend.main:app --reload --port 8000
 dev-backend-remote:
@@ -31,6 +31,11 @@ android-build:
 android-test:
 	@test -n "$(ANDROID_HOME)" || { echo "ANDROID_HOME is not set. Install the Android SDK (platform-tools, platforms;android-35, build-tools;$(ANDROID_BUILD_TOOLS)), accept the licences with 'sdkmanager --licenses', then export ANDROID_HOME=/path/to/Android/Sdk."; exit 1; }
 	cd android && ./gradlew :app:testDebugUnitTest :app:lintDebug
+# On-device instrumented tests (android/app/src/androidTest) on the plugged-in phone (USB debugging,
+# screen unlocked). --leave-installed keeps com.btb.ondevice (and its saved pairing) installed after the run.
+android-test-device:
+	@test -n "$(ANDROID_HOME)" || { echo "ANDROID_HOME is not set. Export ANDROID_HOME=/path/to/Android/Sdk."; exit 1; }
+	cd android && ./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
 android-install:
 	@test -n "$(ANDROID_HOME)" || { echo "ANDROID_HOME is not set. Install the Android SDK (platform-tools, platforms;android-35, build-tools;$(ANDROID_BUILD_TOOLS)), accept the licences with 'sdkmanager --licenses', then export ANDROID_HOME=/path/to/Android/Sdk."; exit 1; }
 	cd android && ./gradlew :app:installDebug

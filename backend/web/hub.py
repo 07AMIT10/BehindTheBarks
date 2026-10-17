@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import deque
-from typing import Any
+from typing import Any, Callable
 
 from pydantic import BaseModel
 
@@ -15,34 +15,91 @@ from backend.web.event_log import EventLog
 MESSAGE_TYPES = ("frame", "audio", "rules", "emotion", "llm", "notification", "treat", "status")
 
 
+KICKED = object()  # sentinel a kicked viewer's /ws loop watches for (T2.6)
+DISCONNECTED_ALL = object()  # sentinel when viewers are disconnected by station/owner (T3.4, close 4411)
+
+
 class Hub:
-    def __init__(self, client_queue: int = 64, history: int = 2000, frame_fps: float = 8.0,
+    def __init__(self, client_queue: int = 64, history: int = 2000, frame_fps: float | Callable[[], float] = 8.0,
                  clock=time.time, log: EventLog | None = None) -> None:
         self._qsize, self._clock, self._log = client_queue, clock, log
         self._clients: set[asyncio.Queue] = set()
+        self._viewers: dict[str, set[asyncio.Queue]] = {}  # viewer_id -> its live queues (T2.6)
+        self._queue_meta: dict[asyncio.Queue, dict[str, Any]] = {}  # metadata for T3.3/T3.4
         self._history: deque[dict] = deque(maxlen=history)
         self._seq = 0
-        self._frame_period = 1.0 / frame_fps if frame_fps > 0 else 0.0
+        # A callable is read on every frame, so an admin change to ws_frame_fps applies without a restart.
+        self._frame_fps = frame_fps
         self._last_frame = -1e18
+        self._taps: list[Any] = []
+
+    def add_tap(self, fn: Any) -> None:
+        """Register a tap callback fn(env) called inside publish (T4.1)."""
+        self._taps.append(fn)
+
+    def remove_tap(self, fn: Any) -> None:
+        if fn in self._taps:
+            self._taps.remove(fn)
 
     @property
     def client_count(self) -> int:
         return len(self._clients)
 
-    def subscribe(self) -> asyncio.Queue:
+    def subscribe(self, viewer_id: str | None = None, role: str | None = None) -> asyncio.Queue:
+        """`viewer_id` and `role` tag the subscription so an owner can kick or track viewers (T2.6, T3.3)."""
         q: asyncio.Queue = asyncio.Queue(maxsize=self._qsize)
         self._clients.add(q)
+        if viewer_id:
+            self._viewers.setdefault(viewer_id, set()).add(q)
+        self._queue_meta[q] = {"viewer_id": viewer_id, "role": role}
         return q
+
+    def kick(self, viewer_id: str) -> int:
+        """Revoke one viewer: their queues stop receiving and are handed a KICKED sentinel, so their
+        /ws loop closes the socket (4410) instead of waiting on a queue nobody will write to."""
+        queues = self._viewers.pop(viewer_id, set())
+        for q in queues:
+            self._clients.discard(q)
+            self._queue_meta.pop(q, None)
+            try:
+                q.put_nowait(KICKED)
+            except asyncio.QueueFull:
+                pass
+        return len(queues)
+
+    def kick_all_viewers(self, include_owners: bool = False) -> int:
+        """Disconnect viewers (code 4411) when requested by station or owner (T3.4)."""
+        kicked_count = 0
+        for q, meta in list(self._queue_meta.items()):
+            if include_owners or meta.get("role") != "owner":
+                self._clients.discard(q)
+                self._queue_meta.pop(q, None)
+                for vid, qs in list(self._viewers.items()):
+                    qs.discard(q)
+                    if not qs:
+                        del self._viewers[vid]
+                try:
+                    q.put_nowait(DISCONNECTED_ALL)
+                except asyncio.QueueFull:
+                    pass
+                kicked_count += 1
+        return kicked_count
 
     def unsubscribe(self, q: asyncio.Queue) -> None:
         self._clients.discard(q)
+        self._queue_meta.pop(q, None)
+        for vid, queues in list(self._viewers.items()):
+            queues.discard(q)
+            if not queues:
+                del self._viewers[vid]
 
     def publish(self, type: str, data: BaseModel | dict[str, Any], meta: dict | None = None) -> dict | None:
         if type not in MESSAGE_TYPES:
             raise ValueError(f"unknown message type {type!r}")
         now = self._clock()
         if type == "frame":
-            if now - self._last_frame < self._frame_period - 1e-9:
+            fps = self._frame_fps() if callable(self._frame_fps) else self._frame_fps
+            if fps > 0 and now - self._last_frame < 1.0 / fps - 1e-9:
                 return None
             self._last_frame = now
         self._seq += 1
@@ -61,6 +118,11 @@ class Hub:
                 except asyncio.QueueEmpty:
                     pass
             q.put_nowait(env)
+        for tap in list(self._taps):
+            try:
+                tap(env)
+            except Exception:
+                pass
         return env
 
     def history(self, since: int = 0) -> list[dict]:
@@ -69,3 +131,30 @@ class Hub:
     def close(self) -> None:
         if self._log:
             self._log.close()
+
+
+class HouseholdHub(Hub):
+    """A household-level fan-in hub (T4.1). Subscribes WebSocket viewers across all stations in the household.
+    Station hubs tap into this hub, tagging each envelope with {"station": station_id}.
+    """
+
+    def on_station_envelope(self, station_id: str, env: dict) -> None:
+        """Called by a station hub tap when that station publishes an envelope."""
+        tagged = {**env, "station": station_id}
+        if tagged.get("type") not in ("frame", "status"):
+            self._history.append(tagged)
+        if self._log:
+            self._log.write(tagged)
+        for q in list(self._clients):
+            if q.full():
+                try:
+                    q.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+            q.put_nowait(tagged)
+        for tap in list(self._taps):
+            try:
+                tap(tagged)
+            except Exception:
+                pass
+

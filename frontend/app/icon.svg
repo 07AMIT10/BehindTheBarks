@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <rect width="1024" height="1024" rx="224" fill="#0F1113"/>
+  <g transform="translate(512 512) scale(1.0) translate(-512 -512)">
+    <!-- Palm Pad -->
+    <path d="M 300,620 C 330,510 450,480 512,490 C 574,480 694,510 724,620 C 734,690 684,755 630,755 C 575,755 545,715 512,715 C 479,715 449,755 394,755 C 340,755 290,690 300,620 Z" fill="#3FB8C1"/>
+    <!-- Toe Beans -->
+    <ellipse cx="245" cy="410" rx="62" ry="95" transform="rotate(-30 245 410)" fill="#3FB8C1"/>
+    <ellipse cx="410" cy="280" rx="70" ry="115" transform="rotate(-10 410 280)" fill="#3FB8C1"/>
+    <ellipse cx="614" cy="280" rx="70" ry="115" transform="rotate(10 614 280)" fill="#3FB8C1"/>
+    <ellipse cx="779" cy="410" rx="62" ry="95" transform="rotate(30 779 410)" fill="#3FB8C1"/>
+  </g>
+</svg>

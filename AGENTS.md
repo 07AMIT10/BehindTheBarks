@@ -64,8 +64,8 @@ npm --prefix frontend run build
 ### Android App
 ```bash
 # Set required environment paths
-export JAVA_HOME=/tmp/opencode/jdk
-export PATH="/tmp/opencode/jdk/bin:$PATH"
+export JAVA_HOME=$HOME/jdk17/jdk-17.0.20.1+1
+export PATH="$JAVA_HOME/bin:$PATH"
 export ANDROID_HOME=$HOME/Android/Sdk
 
 # Run all 136 unit tests
@@ -81,6 +81,9 @@ $ANDROID_HOME/build-tools/35.0.0/zipalign -c -P 16 4 app/build/outputs/apk/relea
 
 # Install to connected phone via ADB
 adb install -r android/app/build/outputs/apk/release/app-release.apk
+
+# On-device instrumented tests on the USB phone (screen unlocked); keeps the app installed after the run
+make android-test-device   # = cd android && ./gradlew connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
 ```
 
 ---
@@ -107,11 +110,11 @@ adb install -r android/app/build/outputs/apk/release/app-release.apk
 See detailed specification in `docs/privacy_architecture_and_threat_model.md`.
 
 1. **Zero Silent Watching (Anti-Lurking Invariant)**:
-   - A remote browser must never stream `/video` silently. The on-device Android station plays an audible chime on viewer connection and displays active viewer count (`👁️ N Viewers Active`).
+   - A remote browser must never stream `/video` silently. The on-device Android station plays an audible chime (`ToneGenerator` ACK + BEEP2) on viewer connection and displays active viewer count (`👁️ N viewers watching`) on-screen and in notifications. Viewers can be kicked instantly via station button or notification action.
 2. **Kinematic-First Modality Separation**:
-   - Remote access defaults to behavioral telemetry (emotion state, tail wag frequency, meal events, and skeletal wireframe). Raw optical room video is a privileged secondary tier requiring explicit time-bounded access.
+   - Remote access defaults to behavioral telemetry (emotion state, tail wag frequency, meal events, and skeletal wireframe). Raw optical room video is a privileged secondary tier requiring explicit time-bounded access. (Implemented viewing modes: `blackout`, `privacy`, `limited`, `full`).
 3. **Session Inactivity Watchdog**:
-   - All active video streams automatically pause after 180 seconds of continuous viewing.
+   - All active video streams automatically pause after 180 seconds of continuous viewing (`frontend/lib/watchdog.ts`, used by `VideoPanel.tsx`) or immediately when the tab is hidden, requiring explicit tap to resume.
 4. **Local Hardware Shutter**:
-   - The station phone possesses absolute sovereignty over media delivery. Activating "Family Privacy" immediately mutes the camera and audio buffers at the local hardware level, returning a privacy slate to remote viewers.
+   - The station phone possesses absolute sovereignty over media delivery. Setting "Family Privacy" / Blackout immediately mutes camera and audio buffers at the local hardware level, returning a privacy slate to remote viewers.
 

@@ -17,6 +17,17 @@ describe("backendBase", () => {
       http: "https://b.example", ws: "wss://b.example",
     });
   });
+  it("a page served by the backend on another port is its own backend", () => {
+    // Same-origin is what the households cookies and the v2 invite links need (T2.3/T2.6).
+    expect(backendBase({
+      search: "", env: "", location: { origin: "http://192.168.1.20:8001", port: "8001", protocol: "http:", hostname: "192.168.1.20", search: "" },
+    })).toEqual({ http: "http://192.168.1.20:8001", ws: "ws://192.168.1.20:8001" });
+  });
+  it("next dev on :3000 still falls back to :8000", () => {
+    expect(backendBase({
+      search: "", env: "", location: { origin: "http://localhost:3000", port: "3000", protocol: "http:", hostname: "localhost", search: "" },
+    })).toEqual({ http: "http://localhost:8000", ws: "ws://localhost:8000" });
+  });
   it("https protocol uses standard origin without port 8000", () => {
     expect(backendBase({ search: "", env: "", protocol: "https:", hostname: "behind-the-barks.onrender.com" })).toEqual({
       http: "https://behind-the-barks.onrender.com", ws: "wss://behind-the-barks.onrender.com",

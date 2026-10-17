@@ -1,4 +1,49 @@
+import org.gradle.api.execution.TaskExecutionGraph
+import org.gradle.kotlin.dsl.closureOf
+import java.io.File as PlainFile
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+// The server URL baked into the APK (BuildConfig.DEFAULT_INGEST_URL). Resolved once: the BuildConfig field and the
+// release guard below must agree on it.
+val defaultIngestUrl: String = (project.findProperty("btbDefaultIngestUrl") as? String)
+    ?: System.getenv("BTB_DEFAULT_INGEST_URL")
+    ?: "ws://10.0.2.2:8000/ingest-events"
+
+// The release keystore (T2.8). Resolved at the top level so the release guard below can name the same path.
+// NOTE: Project.file() always returns an absolute path, so the isAbsolute test must run on the *raw* argument,
+// otherwise "release.jks" would silently resolve to app/release.jks and the release build would quietly fall
+// back to the debug key.
+val releaseKeystorePath: String = System.getenv("BTB_KEYSTORE_PATH")
+    ?: project.findProperty("btbKeystorePath") as? String
+    ?: "release.jks"
+val releaseKeystoreFile: PlainFile = PlainFile(releaseKeystorePath).let {
+    if (it.isAbsolute) it else rootProject.file(releaseKeystorePath)
+}
+
+// UNSAFE, local testing only: lets assembleRelease/bundleRelease build with a non-wss default URL (H2).
+val allowCleartextRelease = (project.findProperty("btbAllowCleartextRelease") as? String)
+    ?.equals("true", ignoreCase = true) == true
+
+// M7: release signing credentials come from the environment or -P properties, one lookup each,
+// never from a baked-in default (the old "behindthebarks"/"btb_release" fallback signed real
+// uploads with a password anyone could read in git).
+fun releaseCredential(property: String, envVar: String): String? =
+    System.getenv(envVar)?.takeIf { it.isNotBlank() }
+        ?: (project.findProperty(property) as? String)?.takeIf { it.isNotBlank() }
+
+val releaseKeystorePassword = releaseCredential("btbKeystorePassword", "BTB_KEYSTORE_PASSWORD")
+val releaseKeyAlias = releaseCredential("btbKeyAlias", "BTB_KEY_ALIAS")
+// The key password may conventionally equal the keystore password (scripts/generate_release_keystore.sh
+// generates both with the same passphrase), so it falls back to the store password - a convention,
+// not a hardcoded secret, and it keeps CI/documented flows working when only three of four vars are set.
+val releaseKeyPassword = releaseCredential("btbKeyPassword", "BTB_KEY_PASSWORD") ?: releaseKeystorePassword
+
+// M7: which credentials are still missing for a release build of the existing keystore.
+val missingReleaseCredentials: List<String> = buildList {
+    if (releaseKeystorePassword.isNullOrBlank()) add("BTB_KEYSTORE_PASSWORD (or -PbtbKeystorePassword)")
+    if (releaseKeyAlias.isNullOrBlank()) add("BTB_KEY_ALIAS (or -PbtbKeyAlias)")
+    if (releaseKeyPassword.isNullOrBlank()) add("BTB_KEY_PASSWORD (or -PbtbKeyPassword)")
+}
 
 plugins {
     alias(libs.plugins.android.application)
@@ -25,29 +70,23 @@ android {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
 
-        val defaultIngestUrl = project.findProperty("btbDefaultIngestUrl") as? String
-            ?: System.getenv("BTB_DEFAULT_INGEST_URL")
-            ?: "ws://10.0.2.2:8000/ingest-events"
         buildConfigField("String", "DEFAULT_INGEST_URL", "\"$defaultIngestUrl\"")
+
+        // On-device tests (src/androidTest), run with `make android-test-device`.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
         create("release") {
-            val keystorePath = System.getenv("BTB_KEYSTORE_PATH")
-                ?: project.findProperty("btbKeystorePath") as? String
-                ?: "release.jks"
-            val keystoreFile = file(keystorePath).let { if (it.isAbsolute) it else rootProject.file(keystorePath) }
-            if (keystoreFile.exists()) {
-                storeFile = keystoreFile
-                storePassword = System.getenv("BTB_KEYSTORE_PASSWORD")
-                    ?: project.findProperty("btbKeystorePassword") as? String
-                    ?: "behindthebarks"
-                keyAlias = System.getenv("BTB_KEY_ALIAS")
-                    ?: project.findProperty("btbKeyAlias") as? String
-                    ?: "btb_release"
-                keyPassword = System.getenv("BTB_KEY_PASSWORD")
-                    ?: project.findProperty("btbKeyPassword") as? String
-                    ?: "behindthebarks"
+            if (releaseKeystoreFile.exists()) {
+                storeFile = releaseKeystoreFile
+                // M7: no hardcoded password default here. A keystore found without credentials
+                // does NOT get "behindthebarks"/"btb_release" silently: the release guard in the
+                // task graph below fails assembleRelease/bundleRelease with a clear error, and
+                // debug builds / unit tests (which never sign with this config) stay green.
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
             }
         }
     }
@@ -56,14 +95,38 @@ android {
         release {
             isMinifyEnabled = false
             val releaseSigning = signingConfigs.findByName("release")
-            signingConfig = if (releaseSigning?.storeFile?.exists() == true) {
-                releaseSigning
-            } else {
-                signingConfigs.getByName("debug")
-            }
+            // Unsigned when the keystore is absent. That is never shipped: the release guard below fails the
+            // release tasks first, with the keystore message. Configuration itself must not fail, or debug
+            // builds, unit tests and CI's debug steps would need the release key too.
+            signingConfig = releaseSigning?.takeIf { releaseKeystoreFile.exists() }
         }
         debug {
             isMinifyEnabled = false
+        }
+    }
+
+    // Never ship a tester build signed with the debug key by accident: a silent fallback means the APK
+    // cannot be updated in place and looks "broken" for no visible reason. This runs only when a release
+    // artifact is requested, so unit tests and debug builds (and CI, which has no keystore) are unaffected.
+    project.gradle.taskGraph.whenReady {
+        val releaseRequested = allTasks.any { it.name == "assembleRelease" || it.name == "bundleRelease" }
+        when {
+            releaseRequested && !releaseKeystoreFile.exists() -> {
+            throw GradleException(
+                "release signing key not found (BTB_KEYSTORE_PATH=$releaseKeystorePath). " +
+                    "Run scripts/generate_release_keystore.sh, or pass -PbtbKeystorePath, " +
+                    "or build the debug APK instead.",
+            )
+            }
+            // M7: the keystore exists but no credentials were provided: hard fail instead of
+            // silently signing with a source-controlled default. Debug/test tasks never run this.
+            releaseRequested && missingReleaseCredentials.isNotEmpty() -> throw GradleException(
+                "release keystore found at BTB_KEYSTORE_PATH=$releaseKeystorePath, but signing " +
+                    "credentials are missing: ${missingReleaseCredentials.joinToString("; ")}. " +
+                    "Export the variables (see scripts/generate_release_keystore.sh) or pass the " +
+                    "-P properties shown. Debug APK builds and unit tests do not need them.",
+            )
+            else -> {}
         }
     }
 
@@ -113,6 +176,35 @@ kotlin {
     }
 }
 
+// H2 build guard: a release APK must default to a wss:// server. The release app refuses ws:// and http:// at
+// runtime anyway, so a cleartext default would ship a build that cannot connect. Checked before any task runs,
+// and only when a release bundle or APK is in the graph: debug builds are unaffected.
+gradle.taskGraph.whenReady(closureOf<TaskExecutionGraph> {
+    val releaseTasks = allTasks.filter {
+        it.project == project && (it.name == "assembleRelease" || it.name == "bundleRelease")
+    }
+    // Never sign a tester build with the debug key by accident: a silent fallback means the APK cannot be
+    // updated in place and looks "broken" for no visible reason (T2.8).
+    if (releaseTasks.isNotEmpty() && !releaseKeystoreFile.exists()) {
+        throw GradleException(
+            "release signing key not found (BTB_KEYSTORE_PATH=$releaseKeystorePath). " +
+                "Run scripts/generate_release_keystore.sh, or pass -PbtbKeystorePath, " +
+                "or build the debug APK instead.",
+        )
+    }
+    if (releaseTasks.isNotEmpty() && !allowCleartextRelease &&
+        !defaultIngestUrl.startsWith("wss://", ignoreCase = true)
+    ) {
+        throw GradleException(
+            "Refusing to build the release variant: the default server URL is '$defaultIngestUrl', " +
+                "but release builds must default to a wss:// server (the release app refuses ws:// and http://).\n" +
+                "Fix: pass -PbtbDefaultIngestUrl=wss://<host>/ingest-events (or set BTB_DEFAULT_INGEST_URL).\n" +
+                "UNSAFE, local testing only: -PbtbAllowCleartextRelease=true skips this check. The APK then ships a " +
+                "cleartext default that the release app will refuse; never distribute it.",
+        )
+    }
+})
+
 dependencies {
     implementation(libs.litert)
 
@@ -131,4 +223,9 @@ dependencies {
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.truth)
     testRuntimeOnly(libs.junit.platform.launcher)
+
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.core)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.junit4)
 }

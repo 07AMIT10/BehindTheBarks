@@ -195,8 +195,46 @@ are untouched; only the producer of the envelopes moves. (Plan:
      only move for envelopes that were actually dispatched.
   3. text `{"type": "ping", "phone_time": <epoch s>}` every `web.remote.ping_every_s` (30 s) →
      `{"type": "pong", "server_time": ...}`. This keeps the clock offset fresh.
-  4. binary `0x01` + JPEG preview (≤ 2 fps, ~320 px long side, quality ~0.6). Stamped at server receipt
+  4. text `{"type": "bye"}` — a deliberate stop (the app's Stop Monitoring), sent immediately before
+     its close frame. The session is marked `stopped`, so the phone is forgotten even if the close
+     frame itself never reaches the wire.
+  5. **T3.1 viewing modes.** `MODE_ORDER` is `blackout < privacy < limited < full`; a viewer sees
+     `min(station_cap, household_mode, viewer.mode_ceiling)`.
+     * phone → server `{"type": "mode_state", "data": {"cap", "effective", "reason"}}`, sent on
+       connect and after any cap change. An unknown mode string is counted in `dropped` and the
+       previous cap stands — a bad message never guesses a mode.
+     * phone → server `{"type": "mode_result", "data": {"mode": "full", "result": "allowed|denied|timeout"}}`,
+       sent once when a raise prompt is answered on the phone (Allow, Keep private, or the 60 s timeout).
+       Exactly those two fields; anything else is counted in `dropped`. The server keeps the last one as
+       `status.phone.last_mode_request_result` = `{mode, result, ts}` and publishes a status update at once, so
+       the dashboard mode sheet can say "approved", "declined" or "no answer" instead of just ending its countdown.
+     * server → phone `{"type": "policy", "data": {"mode", "preview": {"fps", "max_edge", "quality"},
+       "audio", "viewers": {"video", "audio"}}}`. The legacy `{"type": "privacy", "data": {"enabled"}}`
+       is still sent immediately after it so old APKs keep muting; new APKs ignore `privacy` once
+       they have seen a `policy`.
+     * server → phone `{"type": "mode_request", "data": {"mode", "from": "owner"}}` when the owner asks
+       for **more** exposure than the station allows. Raising always needs an on-device decision
+       (T3.2); lowering applies immediately from anywhere.
+  5. binary `0x01` + JPEG preview. Its rate and size are policy-driven (`backend/web/modes.py`,
+     `tracker.py`): a viewer focusing a station gets `FOCUS_PREVIEW` (3 fps, 640 px long side, quality 70),
+     a grid tile gets `GRID_PREVIEW` (0.5 fps, 240 px, quality 50), and with no viewer the phone sends
+     nothing (`viewers.video == 0`) and the stored default `DEFAULT_PREVIEW` (2 fps, 320 px, quality 60)
+     applies. The phone's `PreviewLadder` only lowers these under thermal pressure or upload backpressure
+     (5 fps/640 px/q75 at the top rung down to 1 fps/320 px/q60), never raises them. Stamped at server receipt
      like `/ingest`; it feeds `pipeline.latest_frame_jpeg()`, not the rules.
+- **Live audio (T3.9, Full mode only).** Phone to server: binary `0x02` frame
+  `codec u8 | seq u32 LE | t_ms u32 LE | payload` (codec 0 PCM16 or 1 IMA-ADPCM; wire format and vectors in
+  `docs/AUDIO_WIRE.md`). The server validates it and never decodes it; a malformed frame is counted in
+  `dropped` and `audio_dropped_invalid`, and a valid one is relayed only when the station is in `full` and a
+  listener is connected (otherwise `audio_dropped_policy`). `GET /audio` (pin or households, optional
+  `?station=`, default station otherwise) sends one text `audio_hello`, `{"type":"audio_hello","codec":1,
+  "rate":16000,"chunk_ms":100,"station":"<id>"}` (again when the codec changes), then the phone frames as
+  binary without the `0x02` byte. Close codes: `4401` unauthorized, `4403` viewer ceiling below full or the
+  effective mode not full at connect (also a foreign Origin in households), `4404` unknown station (no HTTP
+  status exists after the handshake), `4411` kicked, `4412` effective mode fell below full while listening.
+  The policy `audio` flag is true exactly while the station is `full` with a listener; `viewers.audio`
+  counts listeners. `pipeline_status` and `status.phone` carry `audio_frames`, `audio_bytes`,
+  `audio_dropped_policy`, `audio_dropped_invalid` and `audio_clients`.
 - **Clocks:** `data.ts` is the phone's clock and every other timer (`no_dog_unknown_s`, `llm_stale_s`,
   cooldowns) compares against the server's. The server rebases `ts` by
   `server_time_at_hello − phone_time`, refreshed by each ping as the **median of the last
@@ -217,11 +255,26 @@ are untouched; only the producer of the envelopes moves. (Plan:
   a half-open socket is counted in `pipeline_status.downlinks_dropped` and the queue drains, so one
   dead connection cannot silently swallow later treats and config pushes.
 - **/ingest-events close codes:** same as `/ingest` — `4400` bad hello, `4408` replaced by a newer
-  phone after `web.ingest.stale_s` of silence, `4409` another phone is already streaming. Close code
-  `1000` (the app's own Stop) forgets the phone; anything else leaves a disconnected card.
+  phone after `web.ingest.stale_s` of silence, `4409` another phone is already streaming, `4410` the
+  station was revoked by its owner, `4411` viewer kicked by station or owner. Close code `1000` (the app's own Stop) **or a `bye` envelope**
+  forgets the phone and idles the pipeline; anything else leaves a disconnected card.
+- **Station pairing v2** (`web.auth.mode: households`): the owner mints a one-time, 300 s code
+  (`POST /households/me/pairing`); the app registers its ECDSA P-256 public key with it
+  (`POST /pair`, unauthenticated — the code is the credential) and then sends a `proto: 2` hello with
+  its `station_id`. The server replies `{"type":"challenge","nonce":...,"server_time":...}` and the app
+  answers `{"type":"auth","sig":"<b64 DER ECDSA-SHA256>"}` over
+  `b"btb-auth-v1|" + nonce + b"|" + station_id + b"|" + device`. Only then comes `hello_ack`. In `pin`
+  mode the `proto: 1` hello and the shared-token check apply exactly as before.
 - **Stalling:** no FrameEvent or preview for `web.remote.stale_s` (2 s) → `pipeline.status().state`
   is `stalled`. There is no watchdog to inject "no dog" frames, so the Runtime's own no-dog path takes
   the label to `unknown` after `web.state.no_dog_unknown_s` and recovers by itself when events resume.
+- **Idle vs stalled vs paused:** a phone that stopped on purpose (`bye` + close, or close `1000`) is not an
+  error — the pipeline forgets its last frame and reports `state: "idle"` (never `stalled`), and the
+  same `idle` state covers a server no phone has ever attached to (first run). A **deliberate blackout**
+  is `state: "paused"`: the phone is silent on purpose but still pinging, so while the effective mode
+  is `blackout` and any message (ping or envelope) arrived within 2 x `ping_every_s` (60 s), the pipeline
+  reports `paused`, which the dashboard shows as a neutral card (never "Reconnecting"). A blackout phone
+  that stopped pinging, and a phone that went quiet in any other mode, is `stalled`.
 - **Status card:** `status.phone` gains `transport: "ingest-events"`, `profile`, `proto`, `models`,
   `events`/`previews`/`treats`/`pings`/`dropped`, `preview_fps`, `clock_offset_s`, `clock_samples` and
   `ping_due_s` (negative = the phone is overdue or half-open).
@@ -456,7 +509,7 @@ class Pipeline:
 `mark_treat()` sets the rules engine's `treat_event_recent` flag for `data.rules.treat_window_s`
 (default 10 s). `ingest_*` are non-blocking, never raise, drop the oldest data when behind, and are
 no-ops (with one warning) unless the source type is `browser`. `status()` returns
-`{"source", "state": "running" | "stalled" | "stopped", "fps", "last_frame_age_s", "audio_ok"}`
+`{"source", "state": "running" | "idle" | "paused" | "stalled" | "stopped", "fps", "last_frame_age_s", "audio_ok"}`
 (those five keys always; `RemotePipeline` adds the phone's own counters on top, and there
 `mark_treat()` pushes a downlink instead of setting a local flag — see "On-device phone").
 Web calls only these methods and never imports anything else from `vision/` or `audio/`.

@@ -147,6 +147,11 @@ class DemoClips:
         return json.loads(p.read_text())
 
 
+def demo_object_key(cid: str) -> str:
+    """The R2 object key for a demo clip. Keyed by clip id: the bundled clips are all named clip.mp4."""
+    return f"demo/{cid}.mp4"
+
+
 def load_demo_clips(cfg: dict) -> DemoClips:
     demo = cfg["web"]["demo"]
     return DemoClips(Path(demo["manifest"]), Path(demo["clips_dir"]))
