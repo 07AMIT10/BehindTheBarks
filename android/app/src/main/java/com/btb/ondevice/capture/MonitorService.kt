@@ -909,7 +909,8 @@ class MonitorService : Service(), LifecycleOwner {
     /** I5: the AudioTrack lives on the voice thread; the reader thread never blocks here. */
     private fun playVoiceChunkOnVoiceThread(pcmBytes: ByteArray) {
         val now = System.currentTimeMillis()
-        if (now - lastVoiceChunkMs > 2000L) {
+        val chimeJustFired = now - lastVoiceChunkMs > 2000L
+        if (chimeJustFired) {
             // Gentle 150ms canine safety pre-chime so dog isn't startled
             try {
                 val toneGen = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 80)
@@ -920,6 +921,10 @@ class MonitorService : Service(), LifecycleOwner {
             } catch (e: Exception) {
                 Log.w("MonitorService", "Failed to play voice pre-chime: ${e.message}")
             }
+            // M3: the dog hears the warning before the voice. The chime above is asynchronous, so
+            // hold the first AudioTrack.write of the burst for ~200ms; parking here is fine now -
+            // this is the dedicated voice thread (I5), the socket reader no longer waits on it.
+            android.os.SystemClock.sleep(VOICE_FIRST_WRITE_DELAY_MS)
         }
         lastVoiceChunkMs = now
 
@@ -1220,6 +1225,9 @@ class MonitorService : Service(), LifecycleOwner {
 
         /** I5: at most this many voice chunks may wait for the dedicated playback thread. */
         const val MAX_QUEUED_VOICE_CHUNKS = 5
+
+        /** M3: after the 150ms pre-chime fires, the first write of the burst waits this long. */
+        const val VOICE_FIRST_WRITE_DELAY_MS = 200L
 
         /** T3.9: codec of the live audio frames (AdpcmCodec.CODEC_IMA_ADPCM; PCM16 = 0 is for debugging). */
         const val AUDIO_CODEC = AdpcmCodec.CODEC_IMA_ADPCM
