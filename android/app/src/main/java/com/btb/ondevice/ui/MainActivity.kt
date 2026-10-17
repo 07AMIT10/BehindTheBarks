@@ -754,11 +754,17 @@ class MainActivity : Activity() {
         val spooled = monitorService?.getSpooledBytes() ?: 0L
         val spooledKb = spooled / 1024
 
+        // M6: the pill names THIS phone, not a hardcoded Samsung model: whatever the user typed
+        // (or the persisted device name), falling back to Build.MODEL.
+        val deviceLabel = deviceEditText.text.toString().trim()
+            .ifBlank { prefs.getString(KEY_DEVICE, null)?.trim().takeUnless { it.isNullOrBlank() } }
+            ?: Build.MODEL
+
         when (state) {
             ConnectionState.CONNECTED -> {
                 statusTextView.text = "● Live · Connected to Server"
                 statusTextView.setTextColor(Color.parseColor("#00E676"))
-                floatingPill.text = "● Live [Galaxy-A07] · Tap for Menu"
+                floatingPill.text = "● Live [$deviceLabel] · Tap for Menu"
                 ambientStatusText.text = "● Monitoring Active · Live"
                 ambientStatusText.setTextColor(Color.parseColor("#43A047"))
             }
