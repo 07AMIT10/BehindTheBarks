@@ -215,6 +215,16 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         # credentialed requests cannot use "*": only the listed dev origins (web.cors_origins) get CORS
         app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_credentials=True,
                            allow_methods=["*"], allow_headers=["*"])
+    # Demo MP4s: local files (default) or presigned R2 URLs. Misconfiguration fails at startup, not
+    # in the demo. Built before the CSP on purpose: with video_source=r2 the browser follows the
+    # 302 to the object host, so that origin belongs in media-src at policy build time.
+    demo_source = str((web.get("demo") or {}).get("video_source", "local")).strip().lower()
+    if demo_source not in {"local", "r2"}:
+        raise ValueError(f"web.demo.video_source must be 'local' or 'r2', not {demo_source!r}")
+    app.state.demo_r2 = build_r2(cfg) if demo_source == "r2" else None
+    if demo_source == "r2" and app.state.demo_r2 is None:
+        raise ValueError("web.demo.video_source is 'r2' but R2 is not configured (set BTB_R2_* in the environment)")
+
     # H2/H3: security headers, dashboard CSP, households Origin check, TLS-only mode (backend/web/security.py)
     frontend_out = Path(__file__).resolve().parent.parent / "frontend" / "out"
     force_https = bool(web.get("force_https", False))
@@ -222,7 +232,13 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     csp_policy = None
     if bool(csp_cfg.get("enabled", True)):
         extra = [str(o).strip().rstrip("/") for o in (csp_cfg.get("extra_connect_src") or []) if str(o).strip()]
-        csp_policy = build_csp(inline_script_hashes(frontend_out), [*cors_origins, *extra])
+        media_extra = []
+        if app.state.demo_r2 is not None:
+            # The origin the /demo redirect actually serves from, presign included and key irrelevant.
+            probe = urlparse(app.state.demo_r2.url_for(demo_object_key("csp-probe")))
+            media_extra = [f"{probe.scheme}://{probe.netloc}"]
+        csp_policy = build_csp(inline_script_hashes(frontend_out), [*cors_origins, *extra],
+                               media_extra=media_extra)
     app.add_middleware(SecurityMiddleware, csp=csp_policy, force_https=force_https,
                        origin_check=households_mode, allowed_origins=cors_origins)
     app.add_middleware(ToggleGzip, tuning=tuning)
@@ -266,13 +282,6 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             log.warning("HTTP request timed out after 25s: %s %s", request.method, path)
             return JSONResponse(status_code=504, content={"error": "gateway_timeout", "detail": "Request timed out after 25 seconds"})
 
-    # Demo MP4s: local files (default) or presigned R2 URLs. Misconfiguration fails at startup, not in the demo.
-    demo_source = str((web.get("demo") or {}).get("video_source", "local")).strip().lower()
-    if demo_source not in {"local", "r2"}:
-        raise ValueError(f"web.demo.video_source must be 'local' or 'r2', not {demo_source!r}")
-    app.state.demo_r2 = build_r2(cfg) if demo_source == "r2" else None
-    if demo_source == "r2" and app.state.demo_r2 is None:
-        raise ValueError("web.demo.video_source is 'r2' but R2 is not configured (set BTB_R2_* in the environment)")
     dashboard_pin = str(auth_cfg.get("dashboard_pin", "")).strip()
     api_token = str(auth_cfg.get("api_token", "")).strip()
     ingest_token = str(auth_cfg.get("ingest_token", "")).strip()

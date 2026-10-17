@@ -58,16 +58,21 @@ def inline_script_hashes(out_dir: str | Path) -> list[str]:
     return sorted(found)
 
 
-def build_csp(script_hashes: Iterable[str], connect_extra: Iterable[str] = ()) -> str:
-    """The dashboard policy. `connect_extra` carries web.cors_origins and web.csp.extra_connect_src."""
+def build_csp(script_hashes: Iterable[str], connect_extra: Iterable[str] = (),
+              media_extra: Iterable[str] = ()) -> str:
+    """The dashboard policy. `connect_extra` carries web.cors_origins and web.csp.extra_connect_src;
+    `media_extra` carries the object-storage host the demo-video redirect points to (present only
+    when demo.video_source is r2): the browser follows that 302 for the <video> element, so an R2
+    bucket would otherwise be playable never."""
     scripts = " ".join(f"'sha256-{h.removeprefix('sha256-')}'" for h in script_hashes)
     connect = " ".join(["'self'", "ws:", "wss:", *dict.fromkeys(o for o in connect_extra if o)])
+    media = " ".join(["'self'", "blob:", *dict.fromkeys(o for o in media_extra if o)])
     directives = [
         "default-src 'self'",
         ("script-src 'self' " + scripts).strip(),
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' data: blob:",
-        "media-src 'self' blob:",
+        f"media-src {media}",
         "worker-src 'self' blob:",
         f"connect-src {connect}",
         "object-src 'none'",

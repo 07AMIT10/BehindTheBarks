@@ -113,6 +113,42 @@ def test_csp_script_src_lists_only_hashes_and_self(tmp_path):
     assert directives["default-src"] == "default-src 'self'"
 
 
+def test_csp_media_src_accepts_an_object_store_host():
+    csp = build_csp(["sha256-AAA="], media_extra=["https://media.example.com"])
+    directives = {d.split(" ")[0]: d for d in (p.strip() for p in csp.split(";"))}
+    assert directives["media-src"] == "media-src 'self' blob: https://media.example.com"
+    assert "media-src 'self' blob:" == build_csp([]).split("; ")[4]  # unchanged without extras
+
+
+class _MediaR2:
+    """Just enough of the R2 store for the CSP probe: the host the 302 actually points at."""
+
+    def url_for(self, key: str) -> str:
+        return f"https://media.example.com/presigned/{key}?sig=x"
+
+
+def test_with_demo_video_on_r2_the_media_origin_is_in_the_csp(tmp_path, monkeypatch):
+    cfg = load_config(tmp_path / "none.yaml", env={})
+    cfg["web"]["log_dir"] = str(tmp_path / "out")
+    cfg["web"]["demo"]["video_source"] = "r2"
+    monkeypatch.setattr("backend.main.build_r2", lambda _cfg: _MediaR2())
+    app_ = create_app(cfg, pipeline=MockPipeline(cfg), interpreter=NoLLM(), notifier=DashboardOnlyNotifier())
+    with TestClient(app_) as c:
+        csp = c.get("/").headers["content-security-policy"]
+    media = [d for d in csp.split("; ") if d.startswith("media-src")][0]
+    assert media == "media-src 'self' blob: https://media.example.com"
+
+
+def test_csp_media_src_stays_local_when_demo_video_serves_files_itself(tmp_path):
+    cfg = load_config(tmp_path / "none.yaml", env={})
+    cfg["web"]["log_dir"] = str(tmp_path / "out")
+    app_ = create_app(cfg, pipeline=MockPipeline(cfg), interpreter=NoLLM(), notifier=DashboardOnlyNotifier())
+    with TestClient(app_) as c:
+        csp = c.get("/").headers["content-security-policy"]
+    media = [d for d in csp.split("; ") if d.startswith("media-src")][0]
+    assert media == "media-src 'self' blob:"  # no redirect target, nothing added
+
+
 def test_cors_origins_and_extra_connect_src_reach_connect_src(tmp_path):
     app_ = _app(tmp_path, cors_origins=["http://localhost:3000/"],
                 csp={"enabled": True, "extra_connect_src": ["https://dev.example"]})
