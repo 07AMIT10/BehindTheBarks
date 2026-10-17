@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useTalk, type TalkControl, type UseTalkOptions } from "./useTalk";
@@ -45,7 +45,10 @@ const roots: Root[] = [];
 
 function Harness(props: UseTalkOptions) {
   const control = useTalk(props);
-  latest = control;
+  // Test-only snapshot of the control; done in an effect to keep render pure.
+  useEffect(() => {
+    latest = control;
+  });
   const state = control.talking ? "talking" : control.starting ? "starting" : "idle";
   return <div data-state={state}>{state}</div>;
 }
