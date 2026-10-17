@@ -49,7 +49,16 @@ export type PhoneStatus = {
   battery_pct?: number | null; // T6.1
   charging?: boolean; // T6.1
   temp_c?: number | null; // T6.1
-  latest_telemetry?: Record<string, any> | null;
+  latest_telemetry?: StationTelemetry | null;
+};
+
+export type StationTelemetry = {
+  server_ts?: number;
+  ts?: number;
+  battery_pct?: number | null;
+  charging?: boolean;
+  temp_c?: number | null;
+  [key: string]: unknown;
 };
 
 export type StationSummary = {
