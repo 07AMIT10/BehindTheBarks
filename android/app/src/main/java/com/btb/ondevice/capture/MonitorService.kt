@@ -48,6 +48,7 @@ import com.btb.ondevice.pipeline.OnDevicePipeline
 import com.btb.ondevice.pipeline.ThermalGovernor
 import com.btb.ondevice.ui.ListenerIndicator
 import com.btb.ondevice.ui.OverlayState
+import com.btb.ondevice.ui.StationPrefs
 import com.btb.ondevice.vision.DogDetector
 import com.btb.ondevice.vision.FaceLandmarker
 import com.btb.ondevice.vision.PoseEstimator
@@ -406,7 +407,14 @@ class MonitorService : Service(), LifecycleOwner {
             ?: intent?.getStringExtra("token")
             ?: defaultToken
         // A paired station (households, T2.5) identifies itself with its id and Keystore key, never a token.
-        val stationId = intent?.getStringExtra(EXTRA_STATION_ID)?.takeIf { it.isNotBlank() }
+        // C1: the service returns START_STICKY, so after the process dies the restart arrives with a
+        // null intent. Every other start input already falls back to the pairing prefs; the station id
+        // must too, or the hello loses its identity, the server answers 4401, onPairingInvalid fires
+        // and the UI deletes the pairing: monitoring stops untended after a mere OS process kill.
+        val stationId = StationIdentity.resolveStationId(
+            intent?.getStringExtra(EXTRA_STATION_ID),
+            prefs.getString(StationPrefs.STATION_ID, null),
+        )
 
         startMonitoring(serverUrl, deviceName, if (stationId != null) null else token, stationId)
         return START_STICKY
