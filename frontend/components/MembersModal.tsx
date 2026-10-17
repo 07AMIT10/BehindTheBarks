@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { useDialog } from "@/lib/useDialog";
+import { fetchWithTimeout } from "@/lib/useBackend";
 
 import { toggleSetting } from "../lib/household";
 
@@ -36,7 +37,7 @@ export default function MembersModal({ isOpen, onClose, isOwner, fetchMembers, r
 
   const loadTelegram = async () => {
     try {
-      const res = await fetch("/telegram/subscribers");
+      const res = await fetchWithTimeout("/telegram/subscribers", {}, 5000);
       if (res.ok) {
         const data = await res.json();
         setTelegramSubs(data.subscribers || []);
@@ -49,7 +50,7 @@ export default function MembersModal({ isOpen, onClose, isOwner, fetchMembers, r
   const connectTelegram = async () => {
     setTgLoading(true);
     try {
-      const res = await fetch("/telegram/link-code", { method: "POST" });
+      const res = await fetchWithTimeout("/telegram/link-code", { method: "POST" }, 5000);
       if (res.ok) {
         const data = await res.json();
         if (data.link) {
@@ -66,7 +67,7 @@ export default function MembersModal({ isOpen, onClose, isOwner, fetchMembers, r
 
   const disconnectTelegram = async (subId: string) => {
     try {
-      const res = await fetch(`/telegram/subscribers/${subId}`, { method: "DELETE" });
+      const res = await fetchWithTimeout(`/telegram/subscribers/${subId}`, { method: "DELETE" }, 5000);
       if (res.ok) {
         setTelegramSubs((prev) => prev.filter((s) => s.id !== subId));
       }

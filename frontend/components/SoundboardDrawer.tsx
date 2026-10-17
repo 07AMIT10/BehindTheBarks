@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useDialog } from "@/lib/useDialog";
+import { fetchWithTimeout } from "@/lib/useBackend";
 
 type CueOption = {
   id: string;
@@ -97,7 +98,7 @@ export default function SoundboardDrawer({
       const tokenParam = token ? `?token=${encodeURIComponent(token)}` : "";
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (token) headers["Authorization"] = `Bearer ${token}`;
-      const res = await fetch(`${http}/cue${tokenParam}`, {
+      const res = await fetchWithTimeout(`${http}/cue${tokenParam}`, {
         method: "POST",
         headers,
         credentials: "include",
@@ -106,10 +107,14 @@ export default function SoundboardDrawer({
           light: cue.light,
           station: stationId,
         }),
-      });
-      const data = await res.json();
-      if (!data.sent) {
-        setFeedback("Station phone is currently offline");
+      }, 4000);
+      if (res.ok) {
+        const data = await res.json();
+        if (!data.sent) {
+          setFeedback("Station phone is currently offline");
+        }
+      } else {
+        setFeedback("Failed to trigger cue");
       }
     } catch {
       setFeedback("Failed to trigger cue");

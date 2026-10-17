@@ -12,6 +12,7 @@ import { ModeSheet } from "./ModeSheet";
 import { ListenButton, ListenStatus } from "./ListenButton";
 import { useTalk } from "@/lib/useTalk";
 import { TalkButton } from "./TalkButton";
+import { fetchWithTimeout } from "@/lib/useBackend";
 
 type Props = {
   http: string;
@@ -203,7 +204,7 @@ export default function VideoPanel({
     if (token) q.set("token", token);
     if (station) q.set("station", station);
     const qs = q.toString() ? `?${q.toString()}` : "";
-    fetch(`${http}/torch${qs}`, { headers: getAuthHeaders() })
+    fetchWithTimeout(`${http}/torch${qs}`, { headers: getAuthHeaders() }, 4000)
       .then((r) => r.json())
       .then((d) => {
         if (typeof d.enabled === "boolean") setTorchOn(d.enabled);
@@ -214,6 +215,8 @@ export default function VideoPanel({
   const toggleTorch = async () => {
     const next = !torchOn;
     setTorchOn(next);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
     try {
       const q = new URLSearchParams();
       if (token) q.set("token", token);
@@ -223,6 +226,7 @@ export default function VideoPanel({
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify({ enabled: next, station }),
+        signal: controller.signal,
       });
       const data = await res.json();
       if (data.ok && typeof data.enabled === "boolean") {
@@ -233,18 +237,23 @@ export default function VideoPanel({
     } catch (e) {
       console.warn("Torch failed", e);
       setTorchOn(!next);
+    } finally {
+      clearTimeout(timer);
     }
   };
 
   const flipCamera = async () => {
     setFlipping(true);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
     try {
       const tokenParam = token ? `?token=${encodeURIComponent(token)}` : "";
-      await fetch(`${http}/camera/flip${tokenParam}`, { method: "POST", headers: getAuthHeaders() });
+      await fetch(`${http}/camera/flip${tokenParam}`, { method: "POST", headers: getAuthHeaders(), signal: controller.signal });
       setTorchOn(false);
     } catch (e) {
       console.warn("Camera flip failed", e);
     } finally {
+      clearTimeout(timer);
       setTimeout(() => setFlipping(false), 800);
     }
   };

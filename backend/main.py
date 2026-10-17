@@ -202,6 +202,22 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                        origin_check=households_mode, allowed_origins=cors_origins)
     app.add_middleware(ToggleGzip, tuning=tuning)
     app.state.tuning = tuning
+
+    @app.middleware("http")
+    async def request_timeout_middleware(request: Request, call_next):
+        path = request.url.path
+        if path.startswith(("/video", "/ws", "/ingest-events", "/audio")):
+            response = await call_next(request)
+            response.headers.setdefault("Keep-Alive", "timeout=75, max=1000")
+            return response
+        try:
+            response = await asyncio.wait_for(call_next(request), timeout=25.0)
+            response.headers.setdefault("Keep-Alive", "timeout=75, max=1000")
+            return response
+        except asyncio.TimeoutError:
+            log.warning("HTTP request timed out after 25s: %s %s", request.method, path)
+            return JSONResponse(status_code=504, content={"error": "gateway_timeout", "detail": "Request timed out after 25 seconds"})
+
     # Demo MP4s: local files (default) or presigned R2 URLs. Misconfiguration fails at startup, not in the demo.
     demo_source = str((web.get("demo") or {}).get("video_source", "local")).strip().lower()
     if demo_source not in {"local", "r2"}:

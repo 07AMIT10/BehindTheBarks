@@ -51,7 +51,7 @@ export default function Header({ dogName, location, fallback, children }: Props)
         </div>
       </div>
       <div className="grow" />
-      <div className="flex max-w-[55%] items-center gap-1.5 overflow-x-auto p-1 [&>*]:shrink-0 lg:max-w-none lg:gap-2 lg:overflow-visible lg:p-0">{children}</div>
+      <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">{children}</div>
     </header>
   );
 }

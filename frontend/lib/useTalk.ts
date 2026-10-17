@@ -52,15 +52,22 @@ export function useTalk(opts: UseTalkOptions): TalkControl {
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (token) headers["Authorization"] = `Bearer ${token}`;
 
-        await fetch(`${http}/voice/chunk${tokenParam}`, {
-          method: "POST",
-          headers,
-          credentials: "include",
-          body: JSON.stringify({
-            pcm: b64,
-            station: stationId && stationId !== "default" ? stationId : undefined,
-          }),
-        });
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 4000);
+        try {
+          await fetch(`${http}/voice/chunk${tokenParam}`, {
+            method: "POST",
+            headers,
+            credentials: "include",
+            body: JSON.stringify({
+              pcm: b64,
+              station: stationId && stationId !== "default" ? stationId : undefined,
+            }),
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timer);
+        }
       } catch (err) {
         console.warn("Failed to stream voice chunk", err);
       }

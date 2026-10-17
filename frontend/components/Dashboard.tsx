@@ -36,6 +36,7 @@ import StationGrid from "./StationGrid";
 import DebugDrawer from "./DebugDrawer";
 import MomentModal, { type MomentDetail } from "./MomentModal";
 import SoundboardDrawer from "./SoundboardDrawer";
+import MobileMenuDrawer from "./MobileMenuDrawer";
 import type { Toast } from "@/lib/toasts";
 
 export default function Dashboard() {
@@ -95,6 +96,7 @@ export default function Dashboard() {
   const [profileOpen, setProfileOpen] = useState<number | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   // The pairing code is fetched on click (never in an effect, so no cascading renders); a fresh key
   // per open re-seeds it, like the profile sheet (T1.8).
   const [pairOpenCount, setPairOpenCount] = useState(0);
@@ -191,12 +193,19 @@ export default function Dashboard() {
         const tokenParam = token ? `?token=${encodeURIComponent(token)}` : "";
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (token) headers["Authorization"] = `Bearer ${token}`;
-        await fetch(`${backend.http}/cue${tokenParam}`, {
-          method: "POST",
-          headers,
-          credentials: "include",
-          body: JSON.stringify({ sound, light, station: stationId }),
-        });
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 4000);
+        try {
+          await fetch(`${backend.http}/cue${tokenParam}`, {
+            method: "POST",
+            headers,
+            credentials: "include",
+            body: JSON.stringify({ sound, light, station: stationId }),
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timer);
+        }
       } catch (e) {
         console.warn("Failed to trigger quick cue", e);
       }
@@ -231,18 +240,55 @@ export default function Dashboard() {
     return <WelcomeScreen onCreate={createHousehold} onRecover={recoverHousehold} />;
   }
 
+  const focusedStationSummary = stations.find((st) => st.id === state.focusedStation);
+  const phoneObj = focusedStationSummary?.phone ?? state.status?.phone;
+  const activeBatteryPct = focusedStationSummary?.phone?.battery_pct ?? focusedStationSummary?.battery ?? state.status?.phone?.battery_pct ?? null;
+  const activeIsCharging = Boolean(phoneObj?.charging);
+  const telemetryTs = phoneObj?.latest_telemetry?.server_ts ?? phoneObj?.latest_telemetry?.ts;
+  const activeLastAge = phoneObj?.last_frame_age_s ?? phoneObj?.last_event_age_s;
+  const isConnected = Boolean(phoneObj?.connected);
+  const activeIsStale = !isConnected || (telemetryTs != null ? isTelemetryStale(telemetryTs) : (activeLastAge != null ? isTelemetryStale(activeLastAge) : false));
+  const activeBClass = batteryLevelClass(activeBatteryPct, activeIsStale);
+  const activeBText = batteryDisplay(activeBatteryPct, activeIsStale);
+
   return (
     <div className={projector ? "projector" : undefined}>
       <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-3 px-3 pb-28 pt-2 sm:gap-4 sm:px-4 lg:gap-5 lg:p-8">
         <Header dogName={profile.dog_name} location={profile.location} fallback={Boolean(state.status?.fallback)}>
+          {/* Station Status Pill: Always visible on mobile and desktop */}
           <button
             type="button"
             onClick={() => openPairModal("station")}
-            title="Pair Phone Station"
-            className="flex h-11 md:h-9 min-w-11 md:min-w-0 items-center gap-1.5 px-3 rounded-lg border border-accent/40 bg-accent/10 text-accent-ink hover:bg-accent/20 text-xs font-semibold transition-colors"
+            title={
+              state.status?.phone?.connected
+                ? "Phone Station is live · tap to manage"
+                : stations.length > 0
+                ? "Station is paired · tap to manage"
+                : "Pair a phone as station camera"
+            }
+            className={`flex h-10 md:h-9 items-center gap-1.5 px-3 rounded-lg text-xs font-semibold transition-all active:scale-95 shrink-0 shadow-xs ${
+              state.status?.phone?.connected
+                ? "border border-emerald-500/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25"
+                : stations.length > 0
+                ? "border border-amber-500/40 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25"
+                : "border border-accent/40 bg-accent/15 text-accent hover:bg-accent/25"
+            }`}
           >
-            <span>📱</span>
-            <span className="hidden sm:inline">
+            <span className="relative flex h-2 w-2">
+              {state.status?.phone?.connected && (
+                <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" />
+              )}
+              <span
+                className={`relative inline-flex h-2 w-2 rounded-full ${
+                  state.status?.phone?.connected
+                    ? "bg-emerald-500"
+                    : stations.length > 0
+                    ? "bg-amber-500"
+                    : "bg-accent"
+                }`}
+              />
+            </span>
+            <span className="whitespace-nowrap font-medium">
               {state.status?.phone?.connected
                 ? "Station Live"
                 : stations.length > 0
@@ -250,12 +296,14 @@ export default function Dashboard() {
                 : "Pair Phone"}
             </span>
           </button>
+
+          {/* Desktop-only navigation icons (moved to MobileMenuDrawer on phones) */}
           <button
             type="button"
             onClick={() => setProfileOpen((n) => (n ?? 0) + 1)}
             title="Edit pet profile"
             aria-label="Edit pet profile"
-            className="flex h-11 w-11 md:h-9 md:w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
+            className="hidden lg:flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
           </button>
@@ -266,7 +314,7 @@ export default function Dashboard() {
                 onClick={() => setMembersOpen(true)}
                 title="Household members"
                 aria-label="Household members"
-                className="flex h-11 w-11 md:h-9 md:w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
+                className="hidden lg:flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
               </button>
@@ -275,7 +323,7 @@ export default function Dashboard() {
                 onClick={() => setDeleteOpen(true)}
                 title="Delete household"
                 aria-label="Delete household"
-                className="flex h-11 w-11 md:h-9 md:w-9 items-center justify-center rounded-lg border border-red-500/40 text-red-300 hover:text-white transition-colors"
+                className="hidden lg:flex h-9 w-9 items-center justify-center rounded-lg border border-red-500/40 text-red-300 hover:text-white transition-colors"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
               </button>
@@ -284,7 +332,7 @@ export default function Dashboard() {
                 onClick={() => void logoutHousehold()}
                 title="Sign out"
                 aria-label="Sign out"
-                className="flex h-11 w-11 md:h-9 md:w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
+                className="hidden lg:flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></svg>
               </button>
@@ -295,7 +343,7 @@ export default function Dashboard() {
               type="button"
               onClick={logout}
               title="Lock Dashboard / Sign out"
-              className="flex h-11 w-11 md:h-9 md:w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
+              className="hidden lg:flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
@@ -303,65 +351,52 @@ export default function Dashboard() {
               </svg>
             </button>
           )}
-          {(() => {
-            const focusedStationSummary = stations.find((st) => st.id === state.focusedStation);
-            const phoneObj = focusedStationSummary?.phone ?? state.status?.phone;
-            const activeBatteryPct = focusedStationSummary?.phone?.battery_pct ?? focusedStationSummary?.battery ?? state.status?.phone?.battery_pct ?? null;
-            const activeIsCharging = Boolean(phoneObj?.charging);
-            const telemetryTs = phoneObj?.latest_telemetry?.server_ts ?? phoneObj?.latest_telemetry?.ts;
-            const activeLastAge = phoneObj?.last_frame_age_s ?? phoneObj?.last_event_age_s;
-            const isConnected = Boolean(phoneObj?.connected);
-            const activeIsStale = !isConnected || (telemetryTs != null ? isTelemetryStale(telemetryTs) : (activeLastAge != null ? isTelemetryStale(activeLastAge) : false));
-            const activeBClass = batteryLevelClass(activeBatteryPct, activeIsStale);
-            const activeBText = batteryDisplay(activeBatteryPct, activeIsStale);
-
-            if (activeBatteryPct === null && activeIsStale) return null;
-
-            return (
-              <div
-                className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[12px] font-mono transition-colors ${
-                  activeBClass === "critical"
-                    ? "border-red-500/40 bg-red-500/20 text-red-400 font-semibold"
-                    : activeBClass === "low"
-                    ? "border-amber-500/40 bg-amber-500/20 text-amber-400 font-semibold"
-                    : "border-border bg-surface text-muted"
-                }`}
-                title={`Active station battery: ${activeBText}${activeIsCharging ? " (charging)" : ""}${activeIsStale ? " (stale)" : ""}`}
-              >
-                {activeIsCharging ? (
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                    stroke="currentColor"
-                    strokeWidth="1"
-                    className="text-amber-400 animate-pulse"
-                    aria-label="Charging"
-                  >
-                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-                  </svg>
-                ) : (
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <rect x="2" y="7" width="16" height="10" rx="2" ry="2" />
-                    <line x1="22" y1="11" x2="22" y2="13" />
-                  </svg>
-                )}
-                <span>{activeBText}</span>
-              </div>
-            );
-          })()}
-          <ThemeToggle />
+          {activeBatteryPct !== null && !activeIsStale && (
+            <div
+              className={`hidden lg:flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[12px] font-mono transition-colors ${
+                activeBClass === "critical"
+                  ? "border-red-500/40 bg-red-500/20 text-red-400 font-semibold"
+                  : activeBClass === "low"
+                  ? "border-amber-500/40 bg-amber-500/20 text-amber-400 font-semibold"
+                  : "border-border bg-surface text-muted"
+              }`}
+              title={`Active station battery: ${activeBText}${activeIsCharging ? " (charging)" : ""}${activeIsStale ? " (stale)" : ""}`}
+            >
+              {activeIsCharging ? (
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  stroke="currentColor"
+                  strokeWidth="1"
+                  className="text-amber-400 animate-pulse"
+                  aria-label="Charging"
+                >
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                </svg>
+              ) : (
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <rect x="2" y="7" width="16" height="10" rx="2" ry="2" />
+                  <line x1="22" y1="11" x2="22" y2="13" />
+                </svg>
+              )}
+              <span>{activeBText}</span>
+            </div>
+          )}
+          <div className="hidden lg:flex items-center">
+            <ThemeToggle />
+          </div>
           <NotificationsBell
             notifications={state.notifications}
             dogName={profile.dog_name}
@@ -374,7 +409,7 @@ export default function Dashboard() {
               onClick={() => setDebugOpen(true)}
               title="Diagnostics & Debug Mode"
               aria-label="Diagnostics & Debug Mode"
-              className="flex h-11 w-11 md:h-9 md:w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
+              className="hidden lg:flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-white transition-colors"
             >
               <svg
                 width="16"
@@ -392,6 +427,30 @@ export default function Dashboard() {
               </svg>
             </button>
           )}
+
+          {/* Mobile menu trigger */}
+          <button
+            type="button"
+            onClick={() => setMobileMenuOpen(true)}
+            aria-label="Open mobile menu"
+            className="flex h-10 w-10 md:h-9 md:w-9 items-center justify-center rounded-lg border border-border bg-surface text-text hover:bg-surface-2 transition-colors lg:hidden shrink-0 active:scale-95"
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <line x1="4" y1="6" x2="20" y2="6" />
+              <line x1="4" y1="12" x2="20" y2="12" />
+              <line x1="4" y1="18" x2="20" y2="18" />
+            </svg>
+          </button>
         </Header>
         <StatusBar connected={state.connected} everConnected={state.everConnected} reconnectAttempt={state.reconnectAttempt}
           status={state.status} onMode={(m) => void setMode(m)} />
@@ -759,6 +818,30 @@ export default function Dashboard() {
         clockOffset={state.clockOffset}
         eventFps={state.status?.pipeline_status?.fps ?? state.status?.phone?.fps}
         previewFps={state.status?.pipeline_status?.preview_fps}
+      />
+      <MobileMenuDrawer
+        isOpen={mobileMenuOpen}
+        onClose={() => setMobileMenuOpen(false)}
+        dogName={profile.dog_name}
+        location={profile.location}
+        stationConnected={Boolean(state.status?.phone?.connected)}
+        hasPairedStation={stations.length > 0}
+        batteryPct={activeBatteryPct}
+        isCharging={activeIsCharging}
+        isBatteryStale={activeIsStale}
+        hasMultipleStations={hasMultipleStations}
+        showGrid={showGrid}
+        onOpenProfile={() => setProfileOpen((n) => (n ?? 0) + 1)}
+        onOpenMembers={() => setMembersOpen(true)}
+        onOpenPairModal={() => openPairModal("station")}
+        onOpenDeleteHousehold={() => setDeleteOpen(true)}
+        onToggleGrid={() => {
+          setShowGrid((g) => !g);
+          backend.reportFocus(showGrid ? state.focusedStation : undefined, showGrid ? "focus" : "grid");
+        }}
+        onLogout={authMode === "households" && authenticated ? logoutHousehold : token ? logout : undefined}
+        isOwner={!me || me.role === "owner"}
+        themeToggleNode={<ThemeToggle />}
       />
     </div>
   );

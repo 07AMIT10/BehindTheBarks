@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { useDialog } from "@/lib/useDialog";
+import { fetchWithTimeout } from "@/lib/useBackend";
 import Sparkline from "./Sparkline";
 import {
   type DebugMetrics,
@@ -52,7 +53,7 @@ export default function DebugDrawer({
         const headers: Record<string, string> = {};
         if (token) headers.Authorization = `Bearer ${token}`;
 
-        const res = await fetch(url, { headers, credentials: "include" });
+        const res = await fetchWithTimeout(url, { headers, credentials: "include" }, 4000);
         if (!res.ok) {
           throw new Error(`Failed to load metrics: ${res.status}`);
         }

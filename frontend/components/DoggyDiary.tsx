@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { fetchWithTimeout } from "@/lib/useBackend";
 
 export type DiaryHighlight = {
   kind: "rest" | "play" | "alert" | "routine";
@@ -49,7 +50,7 @@ export default function DoggyDiary({ stationId, onViewSnapshot }: Props) {
     setError(null);
     try {
       const qs = stationId && stationId !== "default" ? `?station=${encodeURIComponent(stationId)}` : "";
-      const res = await fetch(`/diary/daily${qs}`);
+      const res = await fetchWithTimeout(`/diary/daily${qs}`, {}, 6000);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: DiaryData = await res.json();
       setDiary(data);

@@ -25,6 +25,17 @@ export function clearStoredToken(): void {
   localStorage.removeItem(STORAGE_KEY);
 }
 
+export async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = 8000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const signal = init.signal ?? controller.signal;
+  try {
+    return await fetch(url, { ...init, signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function useBackend() {
   const [state, dispatch] = useReducer(reduce, initialState);
   const base = useMemo(() => backendBase(), []);
@@ -62,7 +73,7 @@ export function useBackend() {
   // localStorage token is still written by AuthModal). In households mode the HttpOnly cookie decides:
   // no localStorage token is involved, and a 401 on any request means "show the Welcome screen".
   useEffect(() => {
-    fetch(`${base.http}/auth/status`, { credentials: "include" })
+    fetchWithTimeout(`${base.http}/auth/status`, { credentials: "include" }, 6000)
       .then((r) => r.json())
       .then((data: AuthStatus) => {
         setAuthStatus(data);
@@ -73,7 +84,7 @@ export function useBackend() {
             return;
           }
           // The session cookie is HttpOnly: probe /me once to learn whether we have one (and who).
-          void fetch(`${base.http}/me`, { credentials: "include" })
+          void fetchWithTimeout(`${base.http}/me`, { credentials: "include" }, 6000)
             .then(async (r) => {
               setAuthenticated(r.ok);
               if (r.ok) setMe(await r.json());
@@ -109,10 +120,10 @@ export function useBackend() {
       return h;
     };
 
-    const getJson = async <T,>(path: string): Promise<T> => {
+    const getJson = async <T,>(path: string, timeoutMs = 8000): Promise<T> => {
       const sep = path.includes("?") ? "&" : "?";
       const fullUrl = `${base.http}${path}${activeToken ? `${sep}token=${encodeURIComponent(activeToken)}` : ""}`;
-      const r = await fetch(fullUrl, { headers: getHeaders(), credentials: "include", cache: "no-store" });
+      const r = await fetchWithTimeout(fullUrl, { headers: getHeaders(), credentials: "include", cache: "no-store" }, timeoutMs);
       if (r.status === 401) {
         setAuthRequired(true);
         setAuthenticated(false);
@@ -124,7 +135,7 @@ export function useBackend() {
 
     const bootstrap = async () => {
       try {
-        const st = await getJson<Status>("/status");
+        const st = await getJson<Status>("/status", 6000);
         if (stopped) return;
         dispatch({ kind: "status", status: st });
 
@@ -133,7 +144,7 @@ export function useBackend() {
           stations.map(async (s) => {
             const evPath = s.id === "default" ? "/events" : `/events?station=${encodeURIComponent(s.id)}`;
             try {
-              const ev = await getJson<{ events: Envelope[]; timeline: Span[] }>(evPath);
+              const ev = await getJson<{ events: Envelope[]; timeline: Span[] }>(evPath, 6000);
               if (!stopped) {
                 dispatch({ kind: "bootstrap", stationId: s.id, events: ev.events, timeline: ev.timeline, at: Date.now() });
               }
@@ -178,18 +189,65 @@ export function useBackend() {
     };
 
     connect();
-    const poll = setInterval(() => {
-      getJson<Status>("/status")
-        .then((st) => !stopped && dispatch({ kind: "status", status: st }))
-        .catch(() => undefined);
-    }, STATUS_POLL_MS);
+
+    // Sequential self-scheduling poll that never queues up multiple requests concurrently
+    let isPolling = false;
+    let pollTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const schedulePoll = (delayMs: number) => {
+      if (stopped) return;
+      clearTimeout(pollTimer);
+      pollTimer = setTimeout(async () => {
+        if (stopped) return;
+        // Pause/back-off when tab is in background (e.g. mobile phone locked)
+        if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+          schedulePoll(15000);
+          return;
+        }
+        const isWsConnected = ws?.readyState === WebSocket.OPEN;
+        const nextDelay = isWsConnected ? 8000 : STATUS_POLL_MS;
+
+        if (isPolling) {
+          schedulePoll(nextDelay);
+          return;
+        }
+
+        isPolling = true;
+        try {
+          const st = await getJson<Status>("/status", 6000);
+          if (!stopped) {
+            dispatch({ kind: "status", status: st });
+          }
+        } catch {
+          // ignore transient poll failure
+        } finally {
+          isPolling = false;
+          schedulePoll(nextDelay);
+        }
+      }, delayMs);
+    };
+
+    schedulePoll(STATUS_POLL_MS);
+
+    const onVisibilityChange = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible" && !stopped) {
+        schedulePoll(50);
+      }
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibilityChange);
+    }
+
     const tick = setInterval(() => dispatch({ kind: "tick", at: Date.now() }), 1000);
 
     return () => {
       stopped = true;
       clearTimeout(retry);
-      clearInterval(poll);
+      clearTimeout(pollTimer);
       clearInterval(tick);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibilityChange);
+      }
       if (ws) {
         ws.onclose = null;
         ws.close();
@@ -199,11 +257,11 @@ export function useBackend() {
 
   const verifyPin = useCallback(async (pin: string): Promise<{ ok: boolean; error?: string }> => {
     try {
-      const res = await fetch(`${base.http}/auth/verify`, {
+      const res = await fetchWithTimeout(`${base.http}/auth/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pin }),
-      });
+      }, 6000);
       if (!res.ok) {
         return { ok: false, error: "Invalid PIN or access token" };
       }
@@ -232,7 +290,7 @@ export function useBackend() {
     const headers: Record<string, string> = {};
     if (tok) headers["Authorization"] = `Bearer ${tok}`;
     const url = `${base.http}/treat${tok ? `?token=${encodeURIComponent(tok)}` : ""}`;
-    await fetch(url, { method: "POST", headers }).catch(() => undefined);
+    await fetchWithTimeout(url, { method: "POST", headers }, 4000).catch(() => undefined);
   }, [base, token]);
 
   const setMode = useCallback(async (mode: "live" | "demo") => {
@@ -240,11 +298,11 @@ export function useBackend() {
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (tok) headers["Authorization"] = `Bearer ${tok}`;
     const url = `${base.http}/mode${tok ? `?token=${encodeURIComponent(tok)}` : ""}`;
-    await fetch(url, {
+    await fetchWithTimeout(url, {
       method: "POST",
       headers,
       body: JSON.stringify({ mode }),
-    }).catch(() => undefined);
+    }, 5000).catch(() => undefined);
   }, [base, token]);
 
   const setViewMode = useCallback(
@@ -254,11 +312,11 @@ export function useBackend() {
       if (tok) headers["Authorization"] = `Bearer ${tok}`;
       const url = `${base.http}/mode${tok ? `?token=${encodeURIComponent(tok)}` : ""}`;
       try {
-        const res = await fetch(url, {
+        const res = await fetchWithTimeout(url, {
           method: "POST",
           headers,
           body: JSON.stringify({ mode }),
-        });
+        }, 5000);
         if (res.ok) {
           return await res.json();
         }
@@ -276,7 +334,7 @@ export function useBackend() {
     if (tok) headers["Authorization"] = `Bearer ${tok}`;
     const url = `${base.http}/peek${tok ? `?token=${encodeURIComponent(tok)}` : ""}`;
     try {
-      const res = await fetch(url, { method: "POST", headers });
+      const res = await fetchWithTimeout(url, { method: "POST", headers }, 5000);
       return res.ok;
     } catch {
       return false;
@@ -286,12 +344,12 @@ export function useBackend() {
   const authMode = authStatus?.mode ?? "pin";
 
   const createHousehold = useCallback(async (v: { dog_name: string; location: string }) => {
-    const res = await fetch(`${base.http}/households`, {
+    const res = await fetchWithTimeout(`${base.http}/households`, {
       method: "POST",
       credentials: "include",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(v),
-    });
+    }, 8000);
     if (!res.ok) throw new Error(`create household: HTTP ${res.status}`);
     const data = await res.json();
     // Deliberately NOT flipping `authenticated` here: the Welcome screen must stay mounted to show
@@ -301,18 +359,18 @@ export function useBackend() {
   }, [base]);
 
   const recoverHousehold = useCallback(async (recovery_key: string) => {
-    const res = await fetch(`${base.http}/auth/recover`, {
+    const res = await fetchWithTimeout(`${base.http}/auth/recover`, {
       method: "POST",
       credentials: "include",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ recovery_key }),
-    });
+    }, 8000);
     if (!res.ok) throw new Error("That recovery key did not work");
     setAuthenticated(true);
   }, [base]);
 
   const logoutHousehold = useCallback(async () => {
-    await fetch(`${base.http}/auth/logout`, { method: "POST", credentials: "include" }).catch(() => undefined);
+    await fetchWithTimeout(`${base.http}/auth/logout`, { method: "POST", credentials: "include" }, 5000).catch(() => undefined);
     setAuthenticated(false);
     clearStoredToken();
   }, [base]);
@@ -322,18 +380,18 @@ export function useBackend() {
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (tok) headers["Authorization"] = `Bearer ${tok}`;
     const url = `${base.http}/households/me/pairing${tok ? `?token=${encodeURIComponent(tok)}` : ""}`;
-    const res = await fetch(url, { method: "POST", headers, credentials: "include", body: JSON.stringify({ kind, ...opts }) });
+    const res = await fetchWithTimeout(url, { method: "POST", headers, credentials: "include", body: JSON.stringify({ kind, ...opts }) }, 10000);
     if (!res.ok) throw new Error(`pairing: HTTP ${res.status}`);
     return res.json() as Promise<{ code: string; expires_in: number; qr: { v: 2; url: string; pair_url: string; code: string } }>;
   }, [base, token]);
 
   const joinHousehold = useCallback(async (code: string, label: string) => {
-    const res = await fetch(`${base.http}/join`, {
+    const res = await fetchWithTimeout(`${base.http}/join`, {
       method: "POST",
       credentials: "include",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ code, label }),
-    });
+    }, 10000);
     if (!res.ok) throw new Error("That invite code did not work");
     setAuthenticated(true);
   }, [base]);
@@ -342,7 +400,7 @@ export function useBackend() {
     const tok = token ?? getStoredToken();
     const headers: Record<string, string> = {};
     if (tok) headers["Authorization"] = `Bearer ${tok}`;
-    const res = await fetch(`${base.http}/households/me/members`, { credentials: "include", headers });
+    const res = await fetchWithTimeout(`${base.http}/households/me/members`, { credentials: "include", headers }, 8000);
     if (!res.ok) throw new Error(`members: HTTP ${res.status}`);
     return res.json() as Promise<{ stations: { id: string; name: string; last_seen: number | null; revoked: boolean }[];
                                    viewers: { id: string; label: string; role: string; mode_ceiling: string; last_seen: number | null; revoked: boolean }[] }>;
@@ -352,7 +410,7 @@ export function useBackend() {
     const tok = token ?? getStoredToken();
     const headers: Record<string, string> = {};
     if (tok) headers["Authorization"] = `Bearer ${tok}`;
-    const res = await fetch(`${base.http}/households/me/settings`, { credentials: "include", headers });
+    const res = await fetchWithTimeout(`${base.http}/households/me/settings`, { credentials: "include", headers }, 8000);
     if (!res.ok) throw new Error(`settings: HTTP ${res.status}`);
     return res.json() as Promise<{ llm_enabled: boolean; log_enabled: boolean }>;
   }, [base, token]);
@@ -361,9 +419,9 @@ export function useBackend() {
     const tok = token ?? getStoredToken();
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (tok) headers["Authorization"] = `Bearer ${tok}`;
-    const res = await fetch(`${base.http}/households/me/settings`, {
+    const res = await fetchWithTimeout(`${base.http}/households/me/settings`, {
       method: "PATCH", credentials: "include", headers, body: JSON.stringify(next),
-    });
+    }, 8000);
     if (!res.ok) throw new Error(`save settings: HTTP ${res.status}`);
     return res.json() as Promise<{ llm_enabled: boolean; log_enabled: boolean }>;
   }, [base, token]);
@@ -372,16 +430,16 @@ export function useBackend() {
     const tok = token ?? getStoredToken();
     const headers: Record<string, string> = {};
     if (tok) headers["Authorization"] = `Bearer ${tok}`;
-    const res = await fetch(`${base.http}/viewers/${viewerId}`, { method: "DELETE", credentials: "include", headers });
+    const res = await fetchWithTimeout(`${base.http}/viewers/${viewerId}`, { method: "DELETE", credentials: "include", headers }, 8000);
     if (!res.ok) throw new Error(`revoke: HTTP ${res.status}`);
   }, [base, token]);
 
   const revokeStation = useCallback(async (stationId: string) => {
     const tok = token ?? getStoredToken();
     const headers: Record<string, string> = {};
-    const res = await fetch(`${base.http}/stations/${stationId}`, { method: "DELETE", credentials: "include", headers });
+    const res = await fetchWithTimeout(`${base.http}/stations/${stationId}`, { method: "DELETE", credentials: "include", headers }, 8000);
     if (!res.ok) throw new Error(`revoke station: HTTP ${res.status}`);
-    void fetch(`${base.http}/status${tok ? `?token=${encodeURIComponent(tok)}` : ""}`, { headers, credentials: "include", cache: "no-store" })
+    void fetchWithTimeout(`${base.http}/status${tok ? `?token=${encodeURIComponent(tok)}` : ""}`, { headers, credentials: "include", cache: "no-store" }, 6000)
       .then((r) => r.ok && r.json())
       .then((st: Status) => st && dispatch({ kind: "status", status: st }))
       .catch(() => undefined);
@@ -392,11 +450,11 @@ export function useBackend() {
     const headers: Record<string, string> = {};
     if (tok) headers["Authorization"] = `Bearer ${tok}`;
     try {
-      const res = await fetch(`${base.http}/status${tok ? `?token=${encodeURIComponent(tok)}` : ""}`, {
+      const res = await fetchWithTimeout(`${base.http}/status${tok ? `?token=${encodeURIComponent(tok)}` : ""}`, {
         headers,
         credentials: "include",
         cache: "no-store",
-      });
+      }, 6000);
       if (res.ok) {
         const st = (await res.json()) as Status;
         dispatch({ kind: "status", status: st });
@@ -409,12 +467,12 @@ export function useBackend() {
   }, [base, token]);
 
   const deleteHousehold = useCallback(async (recovery_key: string) => {
-    const res = await fetch(`${base.http}/households/me`, {
+    const res = await fetchWithTimeout(`${base.http}/households/me`, {
       method: "DELETE",
       credentials: "include",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ recovery_key }),
-    });
+    }, 8000);
     if (!res.ok) throw new Error(`delete household: HTTP ${res.status}`);
     setAuthenticated(false);
   }, [base]);
@@ -422,19 +480,19 @@ export function useBackend() {
   const saveProfile = useCallback(async (patch: { dog_name: string; location: string; zone_label: string }) => {
     const tok = token ?? getStoredToken();
     if (authMode === "households") {
-      const res = await fetch(`${base.http}/households/me/profile`, {
+      const res = await fetchWithTimeout(`${base.http}/households/me/profile`, {
         method: "PUT",
         credentials: "include",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ dog_name: patch.dog_name, location: patch.location }),
-      });
+      }, 6000);
       if (!res.ok) throw new Error(`profile: HTTP ${res.status}`);
       return res.json();
     }
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (tok) headers["Authorization"] = `Bearer ${tok}`;
     const url = `${base.http}/profile${tok ? `?token=${encodeURIComponent(tok)}` : ""}`;
-    const res = await fetch(url, { method: "PUT", headers, body: JSON.stringify(patch) });
+    const res = await fetchWithTimeout(url, { method: "PUT", headers, body: JSON.stringify(patch) }, 6000);
     if (res.status === 401) {
       setAuthRequired(true);
       setAuthenticated(false);
@@ -452,11 +510,11 @@ export function useBackend() {
     const target = enabled !== undefined ? enabled : !privacyMode;
     setPrivacyOverride(target);
     try {
-      const res = await fetch(url, {
+      const res = await fetchWithTimeout(url, {
         method: "POST",
         headers,
         body: JSON.stringify({ enabled: target }),
-      });
+      }, 5000);
       if (res.ok) {
         const data = await res.json();
         setPrivacyOverride(Boolean(data.privacy_mode));
@@ -482,11 +540,11 @@ export function useBackend() {
       if (tok) headers["Authorization"] = `Bearer ${tok}`;
       const url = `${base.http}/focus${tok ? `?token=${encodeURIComponent(tok)}` : ""}`;
       try {
-        await fetch(url, {
+        await fetchWithTimeout(url, {
           method: "POST",
           headers,
           body: JSON.stringify({ station, view }),
-        });
+        }, 4000);
       } catch {
         /* ignore */
       }
