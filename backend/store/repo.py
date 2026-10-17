@@ -217,6 +217,8 @@ def any_of(session: Session, model: Any) -> int:
 # -- telegram subscribers -----------------------------------------------------
 def add_telegram_subscriber(session: Session, household_id: str, chat_id: str | int, *,
                             chat_type: str = "private", title: str = "", label: str = "",
+                            notify_barks: bool = True, notify_distress: bool = True,
+                            notify_battery: bool = True,
                             now: float | None = None) -> HouseholdTelegramSubscriber:
     chat_str = str(chat_id).strip()
     now = now if now is not None else _now()
@@ -241,6 +243,9 @@ def add_telegram_subscriber(session: Session, household_id: str, chat_id: str | 
         chat_type=chat_type,
         title=title,
         label=label,
+        notify_barks=notify_barks,
+        notify_distress=notify_distress,
+        notify_battery=notify_battery,
         created_at=now,
     )
     session.add(sub)

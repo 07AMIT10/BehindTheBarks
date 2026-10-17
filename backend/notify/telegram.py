@@ -65,20 +65,31 @@ class TelegramNotifier:
         self._burst_count: int = 0
         self._last_msg_ids: dict[str, int] = {}  # chat_id -> message_id
 
-    def _resolve_chats(self) -> list[str]:
+    def _resolve_chats(self, kind: str = "barks") -> list[str]:
+        """The chats to notify for one alert `kind` ('barks' | 'distress' | 'battery').
+
+        When the household's subscriber rows are available, each row's stored mute flags
+        (`notify_barks`, `notify_distress`, `notify_battery` — store.models) decide whether that chat
+        receives this kind. Without rows/flags, the configured single chat always counts as allowed."""
         chats: list[str] = []
         if self._db_session_factory and self._household_id:
             try:
                 with self._db_session_factory() as session:
                     subs = store_repo.list_telegram_subscribers(session, self._household_id)
+                    flag = "notify_" + kind
                     for sub in subs:
-                        if sub.chat_id:
+                        if sub.chat_id and bool(getattr(sub, flag, True)):
                             chats.append(str(sub.chat_id).strip())
             except Exception as e:
                 log.warning("failed to load telegram subscribers from db: %s", e)
         if not chats and self._chat:
             chats.append(self._chat)
         return list(dict.fromkeys(chats))
+
+    def _alert_kind(self, state: EmotionState) -> str:
+        """Which mute class an alert belongs to. The base reporter treats every emotion alert as a
+        bark alert; household-aware subclasses may separate distress out."""
+        return "barks"
 
     async def _send_to_chat(
         self,
@@ -143,7 +154,7 @@ class TelegramNotifier:
         return False
 
     async def send(self, state: EmotionState, jpeg: bytes | None, *, is_privacy_mode: bool = False) -> NotifyResult:
-        chats = self._resolve_chats()
+        chats = self._resolve_chats(self._alert_kind(state))
         if not chats:
             return NotifyResult("failed", "telegram", "No chat ID or subscribers configured")
 
@@ -193,3 +204,20 @@ class TelegramNotifier:
             return NotifyResult("sent", "telegram")
         log.warning("telegram failed: %s", last_error)
         return NotifyResult("failed", "telegram", last_error)
+
+
+class HouseholdTelegramNotifier(TelegramNotifier):
+    """One household's Telegram reporter (households mode): the chats come from the household's
+    stored `HouseholdTelegramSubscriber` rows and the per-subscriber mutes decide who gets what.
+
+    Alert kinds: `barks` — the ordinary emotion/bark stream; `distress` — the alarming states
+    (fearful/aggressive/anxious, the same burst set the anti-spam logic uses); `battery` — the
+    low-battery/operational alerts (available to any caller that sends that kind).
+    """
+
+    _DISTRESS_EMOTIONS = frozenset({"fearful", "aggressive", "anxious"})
+
+    def _alert_kind(self, state: EmotionState) -> str:
+        emotion = getattr(state, "emotion", None)
+        emotion = getattr(emotion, "name", emotion)  # tolerate enum-ish values
+        return "distress" if emotion in self._DISTRESS_EMOTIONS else "barks"

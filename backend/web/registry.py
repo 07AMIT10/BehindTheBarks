@@ -132,7 +132,10 @@ class HouseholdRuntime:
             interpreter = self.registry.build_interpreter(cfg, llm_enabled)
         else:
             interpreter = DisabledInterpreter()
-        notifier = DashboardOnlyNotifier()
+        # Station runtimes are the ones that actually tick FusionState and emit state changes, so
+        # they need the household's real notifier too (the household-level runtime receives nothing).
+        notifier = (self.registry.make_notifier(cfg, self.household_id)
+                    if (self.registry and self.registry.make_notifier) else DashboardOnlyNotifier())
         policy = Policy(household_mode=self.policy.household_mode)
         tracker = ViewerTracker(household_id=self.household_id, policy=policy, pipeline=pipeline, clock=clock)
         tracker.register_kick_callback(st_hub.kick_all_viewers)
@@ -173,7 +176,7 @@ class HouseholdRegistry:
     cfg: dict
     make_pipeline: Callable[[dict], Any] | None = None
     make_interpreter: Callable[[dict], Any] | None = None
-    make_notifier: Callable[[dict], Any] | None = None
+    make_notifier: Callable[..., Any] | None = None  # (cfg, household_id) -> the household's notifier
     clock: Callable[[], float] = time.time
     idle_evict_s: float = 600.0
     sessionmaker: Any = None  # set by create_app: the household profile lives in the DB (T2.3)
@@ -242,7 +245,7 @@ class HouseholdRegistry:
         # Tester households must never inherit the operator's LLM keys or Telegram/WhatsApp tokens
         # (T2.9): a disabled interpreter and a dashboard-only notifier unless the owner opted in.
         interpreter = self.build_interpreter(cfg, llm_enabled)
-        notifier = self.make_notifier(cfg) if self.make_notifier else DashboardOnlyNotifier()
+        notifier = self.make_notifier(cfg, hid) if self.make_notifier else DashboardOnlyNotifier()
         policy = Policy(household_mode="full")
         tracker = ViewerTracker(household_id=hid, policy=policy, pipeline=pipeline, clock=self.clock)
         tracker.register_kick_callback(hub.kick_all_viewers)

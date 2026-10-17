@@ -32,6 +32,8 @@ from sqlalchemy.orm import sessionmaker
 from backend.fusion.llm_interpreter import LLMInterpreter
 from backend.demo.clips import load_demo_clips
 from backend.notify import build_notifier
+from backend.notify.dashboard import DashboardOnlyNotifier
+from backend.notify.telegram import HouseholdTelegramNotifier
 from backend.store import db as store_db
 from backend.store import repo as store_repo
 from backend.store.models import KIND_STATION, KIND_VIEWER, ROLE_OWNER, ROLE_VIEWER, Household
@@ -83,6 +85,27 @@ def build_pipeline(cfg: dict) -> Any:
     return MockPipeline(cfg)
 
 
+def make_household_notifier(cfg: dict, household_id: str, sessionmaker: Any) -> Any:
+    """One household's external notifier, from the household's own config and its stored Telegram
+    subscriber rows (the submodule the webhook writes). The Telegram part lives in the household:
+    it loads the subscriber chats and their per-subscriber mutes from the DB at send time, carries
+    the `household_id` for the inline buttons, and never uses the operator's WEBHOOK/token chat ids.
+
+    Legacy/PIN mode never calls this (the registry wraps the injected operator notifier there)."""
+    notify_cfg = (cfg.get("web") or {}).get("notify") or {}
+    mode = str(notify_cfg.get("mode") or "dashboard_only").strip().lower()
+    tg_cfg = notify_cfg.get("telegram") if isinstance(notify_cfg.get("telegram"), dict) else {}
+    token = str(tg_cfg.get("token") or "").strip()
+    if mode in ("dashboard_only", "whatsapp") or not token:
+        return DashboardOnlyNotifier()
+    return HouseholdTelegramNotifier(
+        token=token,
+        profile=dict((cfg.get("web") or {}).get("profile") or {}),
+        household_id=household_id,
+        db_session_factory=sessionmaker,
+    )
+
+
 def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: Any = None,
                notifier: Any = None) -> FastAPI:
     if cfg is None:
@@ -123,7 +146,9 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         # app.state.rt / app.state.hub and every existing test keep working unchanged.
         registry = HouseholdRegistry(cfg, clock=rt.clock,
                                      idle_evict_s=float((web.get("registry") or {}).get("idle_evict_s", 600)),
-                                     sessionmaker=app.state.db_session, tuning=tuning)
+                                     sessionmaker=app.state.db_session, tuning=tuning,
+                                     make_notifier=lambda hcfg, hid: make_household_notifier(
+                                         hcfg, hid, app.state.db_session))
         lr = registry.use_legacy(rt, hub, rt.pipeline)
         app.state.registry = registry
         app.state.hub, app.state.rt, app.state.demo = hub, rt, demo
