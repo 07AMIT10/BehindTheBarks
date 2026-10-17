@@ -1147,10 +1147,13 @@ class MainActivity : Activity() {
 
         if (isBound) {
             monitorService?.detachCameraPreview()
-            monitorService?.setListener(null)
             unbindService(serviceConnection)
             isBound = false
         }
+        // M1: stop always clears the listener when the activity holds a service reference, even
+        // when it was never bound (unbind happens on other paths too): no callback targets a
+        // screen that has already finished monitoring.
+        monitorService?.setListener(null)
 
         val intent = Intent(this, MonitorService::class.java).apply {
             action = MonitorService.ACTION_STOP
@@ -1328,6 +1331,9 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // M1: drop the listener unconditionally. A service callback otherwise keeps a destroyed
+        // activity alive (dialog on a dead window, UI work into a tombstone) until the process dies.
+        monitorService?.setListener(null)
         if (isBound) {
             monitorService?.detachCameraPreview()
             unbindService(serviceConnection)
