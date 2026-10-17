@@ -115,11 +115,12 @@ class MonitorService : Service(), LifecycleOwner {
     // T3.2: the station's own cap plus the server policy decide what may leave the phone. The
     // controller is the single place that rule lives (and it is unit-tested without Android).
     // `lazy` because it reads the persisted cap, which needs a Context.
+    // I3: no `allowOwnerRaiseWithoutPrompt` here - it reverts to the documented default (false):
+    // "Raising exposure always needs an on-device decision" (EventUploader.kt, ViewMode.kt header,
+    // AGENTS.md section 4). A remote owner raise therefore prompts the person holding the phone
+    // again (dialog or notification); a shorter remote switch contradicts the anti-lurking design.
     private val modeController: ModeController by lazy {
-        ModeController(
-            stationCap = ViewMode.fromWire(readStationCap()) ?: ViewMode.FULL,
-            allowOwnerRaiseWithoutPrompt = true,
-        )
+        ModeController(stationCap = ViewMode.fromWire(readStationCap()) ?: ViewMode.FULL)
     }
     private var previewEncoder: PreviewEncoder? = null
     private var previewLadder = PreviewLadder()
