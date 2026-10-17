@@ -671,7 +671,14 @@ class MonitorService : Service(), LifecycleOwner {
                 }
                 val shortArray = ShortArray(pcm16.size / 2)
                 ByteBuffer.wrap(pcm16).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shortArray)
-                audioSnippetBuffer.push(shortArray)
+                // I1: a snippet is raw room audio (5s WAV), so it may leave the phone under exactly
+                // the same rule as live streaming (AudioStreamGate: Full mode, listener enabled).
+                // Privacy was documented as "barks and behaviour only (no audio)": barks keep
+                // flowing as numbers, but recording their audio for replay stops entirely.
+                val mayUploadSnippets = modeController.shouldStreamAudio()
+                if (mayUploadSnippets) {
+                    audioSnippetBuffer.push(shortArray)
+                }
                 val events = pipe.pushAudioPcm16(ts, shortArray)
                 events.forEach { event ->
                     val isBarkOrDistress = (event.label == com.btb.ondevice.contracts.AudioLabel.bark ||
@@ -679,12 +686,14 @@ class MonitorService : Service(), LifecycleOwner {
                                             event.label == com.btb.ondevice.contracts.AudioLabel.howl ||
                                             event.label == com.btb.ondevice.contracts.AudioLabel.growl) &&
                                            event.score >= 0.65
-                    if (isBarkOrDistress) {
+                    if (isBarkOrDistress && mayUploadSnippets) {
                         val snipId = "snip_${up.stationId ?: "station"}_${(ts * 1000).toLong()}"
                         val wavBytes = audioSnippetBuffer.captureWavSnippet(5.0)
                         up.uploadAudioSnippet(snipId, wavBytes)
                         up.sendAudio(event.copy(snippetId = snipId, durationS = 5.0))
                     } else {
+                        // No snippet recorded or drop pending: the event carries no snippetId, so the
+                        // server never points replay at audio that never arrived.
                         up.sendAudio(event)
                     }
                 }

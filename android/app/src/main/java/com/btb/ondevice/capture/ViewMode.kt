@@ -60,7 +60,9 @@ object ViewModeRegistry {
         ModeConfig(
             mode = ViewMode.PRIVACY,
             title = "Privacy",
-            subtitle = "Barks and behaviour only (No video)",
+            // I1: Privacy is truly bark/behaviour-only - barks are numbers, but no room audio
+            // (nor image) is recorded or uploaded, snippets included.
+            subtitle = "Barks and behaviour only (No video, no audio)",
             icon = "🔇",
         ),
         ModeConfig(
