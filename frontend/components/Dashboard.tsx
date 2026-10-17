@@ -38,8 +38,16 @@ import DebugDrawer from "./DebugDrawer";
 import MomentModal, { type MomentDetail } from "./MomentModal";
 import SoundboardDrawer from "./SoundboardDrawer";
 import MobileMenuDrawer from "./MobileMenuDrawer";
-import { hardReload } from "@/lib/reload";
+import { hardReload, bumpChunkReload, clearChunkReload, MAX_AUTO_RELOADS } from "@/lib/reload";
 import type { Toast } from "@/lib/toasts";
+
+function sessionStorageSafe(): Pick<Storage, "getItem" | "setItem" | "removeItem"> | null {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null; // storage blocked (privacy mode): the guard degrades to reloading
+  }
+}
 
 export default function Dashboard() {
   const backend = useBackend(); // backend.readAll / backend.http are used by Tasks 6 and 8
@@ -247,7 +255,21 @@ export default function Dashboard() {
       .catch(() => undefined);
   }, [authenticated, joinHousehold]);
 
-  // Handle ChunkLoadError when a hotfix replaces static JS chunks on the server
+  // Handle ChunkLoadError when a hotfix replaces static JS chunks on the server.
+  // Auto-reload at most MAX_AUTO_RELOADS times per session (sessionStorage counter); a load
+  // whose boot already hit a chunk error does not reset the counter, so a persistently
+  // broken deploy ends on a manual banner instead of reload-looping forever.
+  const [chunkReloadBlocked, setChunkReloadBlocked] = useState(false);
+  const chunkErrorSeenRef = useRef(false);
+  const reloadGuardResetRef = useRef(false);
+  const statusArrived = state.status !== null;
+  useEffect(() => {
+    if (!statusArrived || reloadGuardResetRef.current) return;
+    reloadGuardResetRef.current = true;
+    if (chunkErrorSeenRef.current) return;
+    const storage = sessionStorageSafe();
+    if (storage) clearChunkReload(storage);
+  }, [statusArrived]);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const handleChunkError = (event: ErrorEvent | PromiseRejectionEvent) => {
@@ -257,6 +279,13 @@ export default function Dashboard() {
         msg.includes("Loading chunk") ||
         msg.includes("failed to fetch dynamically imported module")
       ) {
+        chunkErrorSeenRef.current = true;
+        const count = bumpChunkReload(sessionStorageSafe() ?? { getItem: () => null, setItem: () => undefined, removeItem: () => undefined });
+        if (count > MAX_AUTO_RELOADS) {
+          setChunkReloadBlocked(true);
+          console.warn("ChunkLoadError persists after auto-reloads; showing manual reload banner:", msg);
+          return;
+        }
         console.warn("Detected ChunkLoadError, triggering hard reload for latest update:", msg);
         void hardReload();
       }
@@ -291,6 +320,27 @@ export default function Dashboard() {
   return (
     <div className={projector ? "projector" : undefined}>
       <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-3 px-3 pb-28 pt-2 sm:gap-4 sm:px-4 lg:gap-5 lg:p-8">
+        {chunkReloadBlocked && (
+          <aside
+            role="alert"
+            aria-label="Dashboard code is stale and auto-reload was capped"
+            className="sticky top-2 z-40 mx-auto w-full max-w-xl flex items-center justify-between gap-3 rounded-2xl border border-red-500/40 bg-[#241a1c]/95 px-4 py-2.5 text-xs sm:text-sm font-medium text-text shadow-xl backdrop-blur-md animate-in slide-in-from-top duration-300"
+          >
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-red-500/20 text-red-300 font-bold text-sm">
+                💥
+              </span>
+              <span>This dashboard is running stale code. Auto-reload stopped after {MAX_AUTO_RELOADS} attempts</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => hardReload()}
+              className="shrink-0 rounded-xl bg-red-500 px-3 py-1.5 text-xs font-bold text-white shadow hover:opacity-90 active:scale-95 transition-all cursor-pointer"
+            >
+              Reload now
+            </button>
+          </aside>
+        )}
         {isUpdateAvailable && (
           <aside
             aria-label="Application update available"
