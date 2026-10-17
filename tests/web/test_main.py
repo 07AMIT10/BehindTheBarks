@@ -86,11 +86,44 @@ def test_apk_and_download_routes(tmp_path):
             assert r_apk.status_code == 200
             assert r_apk.headers["content-type"] == "application/vnd.android.package-archive"
             assert 'filename="WagWatch.apk"' in r_apk.headers["content-disposition"]
+            assert "no-cache" in r_apk.headers.get("cache-control", "")
             assert r_dl_apk.status_code == 200
             assert r_debug.status_code == 200
         else:
             assert r_apk.status_code == 404
             assert r_dl_apk.status_code == 404
             assert r_debug.status_code == 404
+
+
+def test_version_and_build_id(tmp_path):
+    with client(tmp_path) as c:
+        v = c.get("/version").json()
+        assert "build_id" in v
+        assert "server_origin" in v
+        assert "fallback" in v
+
+        s = c.get("/status").json()
+        assert "build_id" in s
+
+
+def test_static_cache_control_headers(tmp_path):
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent.parent
+    frontend_out = root / "frontend" / "out"
+
+    with client(tmp_path) as c:
+        if (frontend_out / "index.html").is_file():
+            r = c.get("/")
+            assert r.status_code == 200
+            assert "no-cache" in r.headers.get("cache-control", "")
+            assert "no-store" in r.headers.get("cache-control", "")
+
+        # Check an asset under _next/static if any exist
+        static_chunks = list((frontend_out / "_next" / "static").glob("**/*.js")) if (frontend_out / "_next" / "static").is_dir() else []
+        if static_chunks:
+            rel = static_chunks[0].relative_to(frontend_out)
+            r_static = c.get(f"/{rel}")
+            if r_static.status_code == 200:
+                assert "immutable" in r_static.headers.get("cache-control", "")
 
 

@@ -203,6 +203,29 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     app.add_middleware(ToggleGzip, tuning=tuning)
     app.state.tuning = tuning
 
+    def _read_frontend_build_id() -> str:
+        candidates = [
+            frontend_out / "BUILD_ID",
+            frontend_out.parent / ".next" / "BUILD_ID",
+        ]
+        for c in candidates:
+            if c.is_file():
+                try:
+                    bid = c.read_text(encoding="utf-8").strip()
+                    if bid:
+                        return bid
+                except Exception:
+                    pass
+        index_file = frontend_out / "index.html"
+        if index_file.is_file():
+            try:
+                return hex(int(index_file.stat().st_mtime))[2:]
+            except Exception:
+                pass
+        return ""
+
+    app.state.frontend_build_id = _read_frontend_build_id()
+
     @app.middleware("http")
     async def request_timeout_middleware(request: Request, call_next):
         path = request.url.path
@@ -1037,6 +1060,16 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             return {"ok": True, "fallback": True, "server": "render"}
         return {"ok": True}
 
+    @app.get("/version")
+    async def version() -> dict:
+        import os
+        is_fallback = bool(os.getenv("BTB_IS_FALLBACK", "0") in ("1", "true", "True"))
+        return {
+            "build_id": getattr(app.state, "frontend_build_id", ""),
+            "server_origin": "render" if is_fallback else "self-hosted",
+            "fallback": is_fallback,
+        }
+
     @app.get("/status")
     async def status(ctx: Ctx = Depends(auth_ctx), station: str | None = None) -> dict:
         import os
@@ -1052,6 +1085,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                     "viewers": {"video": 0, "audio": 0},
                     "fallback": is_fallback,
                     "server_origin": "render" if is_fallback else "self-hosted",
+                    "build_id": getattr(app.state, "frontend_build_id", ""),
                 }
             st = dict(ch.runtime.status())
             s_cap = getattr(ch.pipeline, "station_cap", "full")
@@ -1064,6 +1098,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             st["mode_info"] = {"household_mode": ch.policy.household_mode, "station_cap": s_cap, "effective": eff}
             st["fallback"] = is_fallback
             st["server_origin"] = "render" if is_fallback else "self-hosted"
+            st["build_id"] = getattr(app.state, "frontend_build_id", "")
             return st
 
         ch = _resolve_channel(lr, None, ctx.household_id)
@@ -1090,6 +1125,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         st["stations"] = _build_stations_list(lr, ctx.household_id, getattr(ctx, "mode_ceiling", "full"))
         st["fallback"] = is_fallback
         st["server_origin"] = "render" if is_fallback else "self-hosted"
+        st["build_id"] = getattr(app.state, "frontend_build_id", "")
         return st
 
     @app.get("/events")
@@ -2240,6 +2276,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                     path=str(candidate),
                     filename="WagWatch.apk",
                     media_type="application/vnd.android.package-archive",
+                    headers={"Cache-Control": "no-cache, no-store, must-revalidate, max-age=0"},
                 )
         raise HTTPException(status_code=404, detail="APK build not found")
 
@@ -2269,7 +2306,16 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                     html_path = clean_path + ".html"
                     full_path, stat_result = self.lookup_path(html_path)
                     if stat_result:
-                        return self.file_response(full_path, stat_result, scope)
+                        response = self.file_response(full_path, stat_result, scope)
+
+                content_type = response.headers.get("content-type", "")
+                norm_path = path.lstrip("/")
+                if norm_path.startswith("_next/static/"):
+                    response.headers["cache-control"] = "public, max-age=31536000, immutable"
+                elif "text/html" in content_type or norm_path.endswith(".html") or not norm_path or "." not in norm_path:
+                    response.headers["cache-control"] = "no-cache, no-store, must-revalidate, max-age=0"
+                    response.headers["pragma"] = "no-cache"
+                    response.headers["expires"] = "0"
                 return response
 
         app.mount("/", CleanStaticFiles(directory=str(frontend_out), html=True), name="frontend")

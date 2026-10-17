@@ -101,6 +101,7 @@ export type Status = {
   revoked_station?: { id: string };
   fallback?: boolean;
   server_origin?: string;
+  build_id?: string;
 };
 
 export type Span = {

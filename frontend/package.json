@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build && node -e \"const fs=require('fs'); if(fs.existsSync('.next/BUILD_ID') && fs.existsSync('out')) fs.copyFileSync('.next/BUILD_ID', 'out/BUILD_ID');\"",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",

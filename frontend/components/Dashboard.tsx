@@ -37,6 +37,7 @@ import DebugDrawer from "./DebugDrawer";
 import MomentModal, { type MomentDetail } from "./MomentModal";
 import SoundboardDrawer from "./SoundboardDrawer";
 import MobileMenuDrawer from "./MobileMenuDrawer";
+import { hardReload } from "@/lib/reload";
 import type { Toast } from "@/lib/toasts";
 
 export default function Dashboard() {
@@ -236,6 +237,28 @@ export default function Dashboard() {
       .catch(() => undefined);
   }, [authenticated, joinHousehold]);
 
+  // Handle ChunkLoadError when a hotfix replaces static JS chunks on the server
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleChunkError = (event: ErrorEvent | PromiseRejectionEvent) => {
+      const msg = "message" in event ? event.message : String((event as PromiseRejectionEvent).reason);
+      if (
+        msg.includes("ChunkLoadError") ||
+        msg.includes("Loading chunk") ||
+        msg.includes("failed to fetch dynamically imported module")
+      ) {
+        console.warn("Detected ChunkLoadError, triggering hard reload for latest update:", msg);
+        void hardReload();
+      }
+    };
+    window.addEventListener("error", handleChunkError);
+    window.addEventListener("unhandledrejection", handleChunkError);
+    return () => {
+      window.removeEventListener("error", handleChunkError);
+      window.removeEventListener("unhandledrejection", handleChunkError);
+    };
+  }, []);
+
   if (welcomeVisible(authStatus, authenticated)) {
     return <WelcomeScreen onCreate={createHousehold} onRecover={recoverHousehold} />;
   }
@@ -251,9 +274,35 @@ export default function Dashboard() {
   const activeBClass = batteryLevelClass(activeBatteryPct, activeIsStale);
   const activeBText = batteryDisplay(activeBatteryPct, activeIsStale);
 
+  const currentBuildId = process.env.NEXT_PUBLIC_BUILD_ID;
+  const serverBuildId = state.status?.build_id;
+  const isUpdateAvailable = Boolean(serverBuildId && currentBuildId && serverBuildId !== currentBuildId);
+
   return (
     <div className={projector ? "projector" : undefined}>
       <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-3 px-3 pb-28 pt-2 sm:gap-4 sm:px-4 lg:gap-5 lg:p-8">
+        {isUpdateAvailable && (
+          <aside
+            aria-label="Application update available"
+            className="sticky top-2 z-40 mx-auto w-full max-w-xl flex items-center justify-between gap-3 rounded-2xl border border-accent/40 bg-[#1a1d24]/95 px-4 py-2.5 text-xs sm:text-sm font-medium text-text shadow-xl backdrop-blur-md animate-in slide-in-from-top duration-300"
+          >
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-accent/20 text-accent font-bold text-sm">
+                🚀
+              </span>
+              <span>
+                New <strong>WagWatch</strong> update is available!
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => hardReload()}
+              className="shrink-0 rounded-xl bg-accent px-3 py-1.5 text-xs font-bold text-black shadow hover:opacity-90 active:scale-95 transition-all cursor-pointer"
+            >
+              Update Now
+            </button>
+          </aside>
+        )}
         <Header dogName={profile.dog_name} location={profile.location} fallback={Boolean(state.status?.fallback)}>
           {/* Station Status Pill: Always visible on mobile and desktop */}
           <button
