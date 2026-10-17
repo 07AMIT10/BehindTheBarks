@@ -526,6 +526,49 @@ class EventUploaderTest {
     }
 
     @Test
+    fun `a server-initiated close is handled once despite onClosing and onClosed (M5)`() = runBlocking {
+        var pairingInvalids = 0
+        var terminalStateChanges = 0
+        val terminalSeen = CompletableDeferred<Unit>()
+
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (text.contains(""""type":"hello"""")) {
+                    // OkHttp delivers this one close as onClosing() and then onClosed(): the
+                    // duplicate used to run the close handling twice (2x notifications, 2x wipe).
+                    webSocket.close(4401, "bad identity")
+                }
+            }
+        }))
+
+        val uploader = EventUploader(
+            serverUrl = server.url("/ingest-events").toString(),
+            deviceName = "Pixel 8",
+            spool = spool,
+            listener = object : EventUploaderListener {
+                override fun onPairingInvalid(reason: String) {
+                    pairingInvalids += 1
+                }
+                override fun onStateChanged(state: ConnectionState) {
+                    if (state == ConnectionState.TERMINATED) {
+                        terminalStateChanges += 1
+                        terminalSeen.complete(Unit)
+                    }
+                }
+            },
+        )
+
+        uploader.start()
+        withTimeout(5000) { terminalSeen.await() }
+        // Give the duplicate callback its chance to arrive before judging.
+        kotlinx.coroutines.delay(400)
+        assertThat(uploader.connectionState).isEqualTo(ConnectionState.TERMINATED)
+        assertThat(pairingInvalids).isEqualTo(1)
+        assertThat(terminalStateChanges).isEqualTo(1)
+        assertThat(server.requestCount).isEqualTo(1)
+    }
+
+    @Test
     fun `policy downlink carries mode preview audio and viewer counts to the listener`() = runBlocking {
         val connected = CompletableDeferred<Unit>()
         val gotPolicy = CompletableDeferred<List<Any>>()

@@ -227,6 +227,8 @@ class EventUploader(
 
     private var webSocket: WebSocket? = null
     private var state = ConnectionState.DISCONNECTED
+    /** M5: OkHttp raises a server-initiated close as onClosing AND onClosed. One close is handled once. */
+    private var closeHandled = false
     private val isRunning = AtomicBoolean(false)
     private var backoffIndex = AtomicInteger(0)
     private var reconnectJob: Job? = null
@@ -356,6 +358,7 @@ class EventUploader(
             })
             synchronized(lock) {
                 webSocket = socket
+                closeHandled = false   // M5: the flag belongs to one socket; a fresh one starts clean
             }
         } catch (e: Exception) {
             handleFailure(e)
@@ -472,6 +475,8 @@ class EventUploader(
         // A deliberate stop() already set TERMINATED; a late close callback must not
         // overwrite it or notify the listener a second time.
         synchronized(lock) {
+            if (closeHandled) return   // M5: the second callback of the same socket joins nothing
+            closeHandled = true
             if (state == ConnectionState.TERMINATED && !isRunning.get()) return
         }
         if (code == CLOSE_UNAUTHORIZED || code == CLOSE_REVOKED) {
