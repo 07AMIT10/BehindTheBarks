@@ -1513,7 +1513,11 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
 
         def _household_exists(hid: str) -> bool:
             """A callback carries a household id that must be a real DB row: never a crafted id that
-            would lazily materialise a HouseholdRuntime (and keep it) inside the registry."""
+            would lazily materialise a HouseholdRuntime (and keep it) inside the registry. LEGACY is
+            the pre-migration household: the registry treats it as valid without a DB row
+            (see registry._household_settings), so treat:/cue: targets need no row either."""
+            if hid == LEGACY:
+                return True
             with app.state.db_session() as s:
                 return store_repo.get_household(s, hid) is not None
 
