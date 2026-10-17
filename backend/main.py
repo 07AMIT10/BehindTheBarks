@@ -653,7 +653,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
 
     @app.delete("/viewers/{viewer_id}")
     async def delete_viewer(ctx: Ctx = Depends(auth_ctx), viewer_id: str = "") -> dict:
-        """Owner-only: revoke one viewer (never themselves) and close their live sockets with 4410."""
+        """Owner-only: revoke one viewer (never themselves) and close their sockets: video 4410,
+        audio 4411 (the /audio relay is only validated at connect, so the hub gets an explicit kick)."""
         if not households_mode:
             _pin_only_404()
         if ctx.role != ROLE_OWNER:
@@ -672,6 +673,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         lr = app.state.registry.peek(ctx.household_id)
         if lr is not None:
             lr.hub.kick(viewer_id)  # their /ws loop ends; the browser shows the welcome screen again
+            for ch in lr.channels.values():  # and their /audio relay is never re-validated, close it
+                ch.audio.kick_viewer(viewer_id)
         return {"ok": True}
 
     async def _ingest_station_households(sock: WebSocket, hello) -> None:
@@ -2187,7 +2190,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         hub: AudioHub = ch.audio
         tracker = ch.tracker
         stream_id = str(uuid.uuid4())
-        q = hub.subscribe(owner=owner)
+        q = hub.subscribe(owner=owner, viewer_id=viewer_id)
 
         async def watch_client() -> None:
             try:

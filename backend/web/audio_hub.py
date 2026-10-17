@@ -10,11 +10,21 @@ Pure asyncio, no sockets: main.py owns the WebSocket, RemoteSession owns validat
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 
 AUDIO_QUEUE_FRAMES = 20  # 2 s at 10 frames/s per listener
 
 KICKED_AUDIO = object()  # the station or owner kicked viewers (close 4411)
 CLIENT_GONE = object()  # the listener's socket was closed by the client (the watcher saw it)
+
+
+@dataclass
+class _Sub:
+    """One listener. Owners are not kicked without asking; viewer subs carry the viewer's id so a
+    revoke can close exactly their sockets (the /audio relay is never re-validated after connect)."""
+
+    owner: bool = False
+    viewer_id: str | None = None
 
 
 def _put_drop_oldest(q: asyncio.Queue, item: object) -> None:
@@ -36,15 +46,15 @@ class AudioHub:
     def __init__(self, maxlen: int = AUDIO_QUEUE_FRAMES) -> None:
         self.maxlen = maxlen
         self.last_codec: int | None = None  # codec of the newest frame: a new listener starts on it
-        self._subs: dict[asyncio.Queue, bool] = {}  # queue -> is an owner (owners are not kicked)
+        self._subs: dict[asyncio.Queue, _Sub] = {}  # queue -> whose socket it serves
 
     @property
     def client_count(self) -> int:
         return len(self._subs)
 
-    def subscribe(self, *, owner: bool = False) -> asyncio.Queue:
+    def subscribe(self, *, owner: bool = False, viewer_id: str | None = None) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=self.maxlen)
-        self._subs[q] = bool(owner)
+        self._subs[q] = _Sub(owner=bool(owner), viewer_id=viewer_id)
         return q
 
     def unsubscribe(self, q: asyncio.Queue) -> None:
@@ -58,11 +68,24 @@ class AudioHub:
         for q in list(self._subs):
             _put_drop_oldest(q, frame)
 
+    def kick_viewer(self, viewer_id: str | None) -> int:
+        """Disconnect exactly the named viewer's own listeners (close 4411); owners stay."""
+        if not viewer_id:
+            return 0
+        count = 0
+        for q, sub in list(self._subs.items()):
+            if sub.owner or sub.viewer_id != viewer_id:
+                continue
+            self._subs.pop(q, None)
+            _put_drop_oldest(q, KICKED_AUDIO)
+            count += 1
+        return count
+
     def kick_all(self, include_owners: bool = False) -> int:
         """Disconnect listeners (close 4411). Owners stay, as they do on the video kick."""
         count = 0
-        for q, owner in list(self._subs.items()):
-            if owner and not include_owners:
+        for q, sub in list(self._subs.items()):
+            if sub.owner and not include_owners:
                 continue
             self._subs.pop(q, None)
             _put_drop_oldest(q, KICKED_AUDIO)

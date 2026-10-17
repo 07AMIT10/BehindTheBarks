@@ -63,6 +63,23 @@ def test_kick_all_spares_owners_unless_asked_and_marks_the_queue():
     assert hub.client_count == 0
 
 
+def test_kick_viewer_closes_exactly_that_viewer_sockets():
+    hub = AudioHub()
+    v1 = hub.subscribe(viewer_id="v1")
+    v1_b = hub.subscribe(viewer_id="v1")
+    v2 = hub.subscribe(viewer_id="v2")
+    owner_v1 = hub.subscribe(owner=True, viewer_id="v1")
+    assert hub.kick_viewer("v1") == 2
+    assert v1.get_nowait() is KICKED_AUDIO
+    assert v1_b.get_nowait() is KICKED_AUDIO
+    assert hub.client_count == 2  # v2 and the owner stay subscribed
+    assert v2.empty() and owner_v1.empty()  # only v1's queues were touched
+    hub.publish(frame(1))  # and they still receive frames
+    assert v2.get_nowait()[1:5] == (1).to_bytes(4, "little")
+    assert hub.kick_viewer("nobody") == 0
+    assert hub.kick_viewer(None) == 0
+
+
 def test_kick_on_a_full_queue_still_delivers_the_sentinel():
     hub = AudioHub(maxlen=2)
     q = hub.subscribe()
