@@ -136,8 +136,15 @@ class MonitorService : Service(), LifecycleOwner {
     private val audioShorts = ShortArray(AdpcmCodec.CHUNK_SAMPLES)
     /** 5s rolling PCM16 ring buffer for bioacoustic snippets on bark / whimper events. */
     private val audioSnippetBuffer = AudioSnippetBuffer(sampleRate = 16_000, durationSeconds = 5.0)
-    private var voiceAudioTrack: android.media.AudioTrack? = null
-    private var lastVoiceChunkMs: Long = 0L
+    private var voiceAudioTrack: android.media.AudioTrack? = null  // voice thread only (I5)
+    private var lastVoiceChunkMs: Long = 0L  // voice thread only (I5)
+    // I5: the WebSocket reader thread must never park in AudioTrack.write: pings and every
+    // downlink (treat, torch, policy, cue) ride behind a speech backlog there. Voice chunks are
+    // handed to this dedicated single thread, bounded by [MAX_QUEUED_VOICE_CHUNKS] (stale dropped).
+    private var voicePlaybackThread: android.os.HandlerThread? = null
+    private var voiceHandler: android.os.Handler? = null
+    private val voiceChunkQueue = VoiceChunkQueue(MAX_QUEUED_VOICE_CHUNKS)
+    private val voiceDrainScheduled = AtomicBoolean(false)
     private var currentStatusText: String = "Monitoring room with camera & audio..."
     private val approvalHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val approvalTimeout = Runnable { resolveRaise(RaiseResult.TIMEOUT) }
@@ -484,6 +491,13 @@ class MonitorService : Service(), LifecycleOwner {
         // 5. Initialize EventUploader
         val spoolDir = File(filesDir, "spool")
         val spool = EventSpool(spoolDir)
+
+        // I5: dedicated single-threaded voice playback. Started before the uploader: the socket's
+        // reader thread only ever enqueues here, AudioTrack.write happens on [VOICE] alone.
+        voiceChunkQueue.clear()
+        val voiceThread = android.os.HandlerThread("VoicePlaybackThread").apply { start() }
+        voicePlaybackThread = voiceThread
+        voiceHandler = android.os.Handler(voiceThread.looper)
 
         val up = EventUploader(
             serverUrl = serverUrl,
@@ -858,9 +872,42 @@ class MonitorService : Service(), LifecycleOwner {
         }
     }
 
-    /** Two-way push-to-talk voice downlink playback with canine hearing protection & pre-chime. */
+    /**
+     * Two-way push-to-talk voice downlink playback with canine hearing protection & pre-chime.
+     *
+     * I5: called on the WebSocket reader thread, which must never park - so this only enqueues
+     * into [voiceChunkQueue] (bounded, stale dropped) and the dedicated voice thread drains it.
+     * Scheduling the drain once per burst keeps pending callbacks at bay.
+     */
     fun playVoiceChunk(pcmBytes: ByteArray) {
         if (pcmBytes.isEmpty()) return
+        val handler = voiceHandler ?: return  // not running / shutting down: drop silently
+        // When the queue is full the staliest chunk is dropped (VoiceChunkQueue): newest speech wins.
+        voiceChunkQueue.offer(pcmBytes)
+        if (voiceDrainScheduled.compareAndSet(false, true)) {
+            handler.post { drainVoiceQueue() }
+        }
+    }
+
+    /** I5: runs ONLY on the dedicated voice playback thread. */
+    private fun drainVoiceQueue() {
+        try {
+            while (true) {
+                val chunk = voiceChunkQueue.poll() ?: break
+                if (voiceHandler == null) return  // service stopping: abandon without touching audio
+                playVoiceChunkOnVoiceThread(chunk)
+            }
+        } finally {
+            voiceDrainScheduled.set(false)
+            // A chunk enqueued between the polls above and this flag reset still needs a drain.
+            if (voiceHandler != null && voiceChunkQueue.depth > 0) {
+                voiceHandler?.post { drainVoiceQueue() }
+            }
+        }
+    }
+
+    /** I5: the AudioTrack lives on the voice thread; the reader thread never blocks here. */
+    private fun playVoiceChunkOnVoiceThread(pcmBytes: ByteArray) {
         val now = System.currentTimeMillis()
         if (now - lastVoiceChunkMs > 2000L) {
             // Gentle 150ms canine safety pre-chime so dog isn't startled
@@ -1098,11 +1145,22 @@ class MonitorService : Service(), LifecycleOwner {
         }
         wakeLock = null
 
+        // I5: voice playback first. Release the handler (a racing reader thread drops its chunk),
+        // release the AudioTrack (a parked AudioTrack.write returns at once), then quit the thread.
+        voiceHandler = null
+        voiceChunkQueue.clear()
+        voiceDrainScheduled.set(false)
         try {
             voiceAudioTrack?.stop()
             voiceAudioTrack?.release()
             voiceAudioTrack = null
         } catch (_: Exception) {}
+        try {
+            val voiceThread = voicePlaybackThread
+            voiceThread?.quitSafely()
+            voiceThread?.join(1_000)
+        } catch (_: Exception) {}
+        voicePlaybackThread = null
 
         unregisterNetworkCallback()
 
@@ -1159,6 +1217,9 @@ class MonitorService : Service(), LifecycleOwner {
         /** Set with the service's own running flag, so an activity can check it before it restarts anything. */
         @Volatile
         var isServiceRunning: Boolean = false
+
+        /** I5: at most this many voice chunks may wait for the dedicated playback thread. */
+        const val MAX_QUEUED_VOICE_CHUNKS = 5
 
         /** T3.9: codec of the live audio frames (AdpcmCodec.CODEC_IMA_ADPCM; PCM16 = 0 is for debugging). */
         const val AUDIO_CODEC = AdpcmCodec.CODEC_IMA_ADPCM
