@@ -66,6 +66,7 @@ class Runtime:
         self.demo = demo_clips
         self.mode: str = "demo" if is_demo(cfg) and demo_clips and demo_clips.available else "live"
         self.demo_notified: set[str] = set()
+        self.limited: Any | None = None  # set by the registry/legacy wrapper: shared blur + peek cache
 
     # -- lifecycle ----------------------------------------------------------------------------
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
@@ -178,7 +179,7 @@ class Runtime:
         if self.cfg["web"]["demo"].get("telegram_first") and getattr(
             self.notifier, "is_external", type(self.notifier).__name__ == "TelegramNotifier"
         ):
-            jpeg = self._latest_jpeg()
+            jpeg, _private = self._snapshot_jpeg()
             res = await self.notifier.send(
                 EmotionState(ts=t, emotion="unknown", confidence=0.0, source="rules",
                              reason=f"Demo clip {clip_id} at {t:.1f}s."), jpeg)
@@ -276,7 +277,7 @@ class Runtime:
 
     async def _run_llm(self, reason: str, now: float) -> None:
         feats, audio = self._context(now)
-        jpeg = self._latest_jpeg()
+        jpeg, _private = self._snapshot_jpeg()
         result = await self.interpreter.interpret(trigger=reason, now=now, features=feats, audio=audio,
                                                   rules=self._rules, jpeg=jpeg)
         if result is not None:
@@ -286,13 +287,58 @@ class Runtime:
             self.hub.publish("llm", dict(self.interpreter.last_call or {"trigger": reason}), meta={"ok": False})
 
     async def _notify(self, state: EmotionState) -> None:
-        jpeg = self._latest_jpeg()
+        jpeg, private = self._snapshot_jpeg()
         hid = getattr(self, "household_id", "default")
-        snap = await self.storage.store_snapshot(jpeg, household_id=hid, ts=state.ts, emotion=state.emotion)
+        # privacy/blackout: no snapshot is stored and none goes to the notifier (no pixels leave).
+        snap = None if private else await self.storage.store_snapshot(jpeg, household_id=hid, ts=state.ts,
+                                                                     emotion=state.emotion)
         state = state.model_copy(update={"snapshot": snap})
         res = await self.notifier.send(state, jpeg)
         self.hub.publish("notification", {"state": state.model_dump(mode="json"), "status": res.status,
                                           "channel": res.channel, "detail": res.detail})
+
+    def _effective_mode(self) -> str:
+        """min(station cap, household mode). A snapshot is whatever the household is entitled to keep:
+        peek windows are per-viewer view state and never raise what the house's own recorder sends."""
+        try:
+            cap = getattr(self.pipeline, "station_cap", "full")
+            return min_mode(cap, self.policy.household_mode)
+        except Exception:  # noqa: BLE001 - never let a policy read crash a notification
+            return "full"
+
+    def _snapshot_jpeg(self) -> tuple[bytes | None, bool]:
+        """(jpeg, private) for notification/LLM frames, honouring the household mode:
+
+        - privacy/blackout -> (None, True): skip the snapshot upload and notify with no image at all
+          (`latest_frame_jpeg()` alone cannot do this — it still carries the stale pre-change frame).
+        - limited -> the blurred treated frame, the same one /video serves (never the raw preview).
+        - full -> the newest raw preview, as before.
+        """
+        try:
+            mode = self._effective_mode()
+        except Exception:  # noqa: BLE001
+            mode = "full"
+        if mode in ("privacy", "blackout"):
+            return None, True
+        if mode == "limited":
+            raw = self._pipeline_raw_jpeg()
+            lim = getattr(self, "limited", None)
+            if lim is not None:
+                try:
+                    return lim.process(raw), False
+                except Exception:  # noqa: BLE001 - a blur failure must never degrade to raw pixels
+                    pass
+            from backend.web.limited import limit_jpeg  # lazy: heavy deps only when needed
+            return limit_jpeg(None), False  # the limited slate
+        return self._latest_jpeg(), False
+
+    def _pipeline_raw_jpeg(self) -> bytes | None:
+        """The un-processed newest preview the pipeline holds (None when the pipeline cannot say)."""
+        try:
+            raw = getattr(self.pipeline, "raw_frame_jpeg", None)
+            return raw() if raw is not None else self.pipeline.latest_frame_jpeg()
+        except Exception:  # noqa: BLE001
+            return None
 
     def _latest_jpeg(self) -> bytes | None:
         try:
