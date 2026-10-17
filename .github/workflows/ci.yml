@@ -91,14 +91,17 @@ jobs:
       # The release variant needs a keystore (T2.8) and a wss:// default server URL (H2). CI has no
       # production key, so it signs with a throwaway one if secret is not set.
       - name: Setup release keystore
+        id: keystore
         env:
           BTB_KEYSTORE_B64: ${{ secrets.BTB_KEYSTORE_B64 }}
         run: |
           if [ -n "$BTB_KEYSTORE_B64" ]; then
             echo "$BTB_KEYSTORE_B64" | base64 --decode > release.jks
             echo "release keystore decoded from secret"
+            echo "real_keystore=true" >> "$GITHUB_OUTPUT"
           else
             ../scripts/generate_release_keystore.sh release.jks
+            echo "real_keystore=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build Production APK & App Bundle (AAB)
@@ -108,23 +111,40 @@ jobs:
           BTB_KEY_PASSWORD: ${{ secrets.BTB_KEY_PASSWORD }}
         run: ./gradlew assembleRelease bundleRelease -PbtbDefaultIngestUrl=wss://example.invalid/ingest-events
 
+      # Both signatures produce the same artifacts, so this verification must run either way.
       - name: Verify 16KB Page Alignment on Release APK
-        if: hashFiles('android/release.jks') != ''
         run: |
           BUILD_TOOLS_ZIPALIGN=$(find $ANDROID_HOME/build-tools/ -name zipalign | sort -V | tail -n 1)
           echo "Using zipalign at $BUILD_TOOLS_ZIPALIGN"
           $BUILD_TOOLS_ZIPALIGN -c -P 16 4 app/build/outputs/apk/release/app-release.apk
 
+      # Uploads 1-2: production-signed artifacts (real keystore from the secret).
       - name: Upload Release APK
-        if: hashFiles('android/release.jks') != ''
+        if: steps.keystore.outputs.real_keystore == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
           path: android/app/build/outputs/apk/release/app-release.apk
 
       - name: Upload Release AAB (Play Store)
-        if: hashFiles('android/release.jks') != ''
+        if: steps.keystore.outputs.real_keystore == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: app-release-aab
+          path: android/app/build/outputs/bundle/release/app-release.aab
+
+      # Uploads 3-4: the throwaway keystore (scripts/generate_release_keystore.sh) is NOT the
+      # Play Store key, so these artifacts are named to say so.
+      - name: Upload Throwaway-Signed Release APK
+        if: steps.keystore.outputs.real_keystore != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-apk (throwaway-signed)
+          path: android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Upload Throwaway-Signed Release AAB
+        if: steps.keystore.outputs.real_keystore != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-aab (throwaway-signed)
           path: android/app/build/outputs/bundle/release/app-release.aab
