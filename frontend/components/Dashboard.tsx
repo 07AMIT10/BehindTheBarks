@@ -520,7 +520,7 @@ export default function Dashboard() {
           <>
             <ClipList http={backend.http} activeId={demoClip?.id ?? null} onPick={setDemoClip} />
             {demoClip ? (
-              <DemoPlayer http={backend.http} meta={demoClip} dogName={profile.dog_name} />
+              <DemoPlayer http={backend.http} token={token} meta={demoClip} dogName={profile.dog_name} />
             ) : (
               <div className="text-small text-muted">Pick a clip to replay it through the full pipeline.</div>
             )}
@@ -712,6 +712,8 @@ export default function Dashboard() {
                 treats={state.treats}
                 notifications={state.notifications}
                 nowSec={nowSec}
+                http={backend.http}
+                token={token}
                 selected={selectedSpan}
                 onSelect={setSelectedSpan}
                 onViewMoment={(sp) =>
@@ -729,6 +731,8 @@ export default function Dashboard() {
             </div>
             <DoggyDiary
               stationId={state.focusedStation}
+              http={backend.http}
+              token={token}
               onViewSnapshot={(snap, title) =>
                 setActiveMoment({
                   emotion: "happy",
@@ -780,6 +784,8 @@ export default function Dashboard() {
         isOpen={membersOpen}
         onClose={() => setMembersOpen(false)}
         isOwner={me?.role === "owner"}
+        http={backend.http}
+        token={token}
         fetchMembers={fetchMembers}
         revokeViewer={revokeViewer}
         revokeStation={revokeStation}

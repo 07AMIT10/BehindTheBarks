@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { fetchWithTimeout } from "@/lib/useBackend";
+import { authedHeaders, authedUrl } from "@/lib/httpAuth";
 
 export type DiaryHighlight = {
   kind: "rest" | "play" | "alert" | "routine";
@@ -37,10 +38,13 @@ export type DiaryData = {
 
 type Props = {
   stationId?: string;
+  /** Backend origin from the shared hook; diary calls must reach it cross-origin with auth. */
+  http: string;
+  token?: string | null;
   onViewSnapshot?: (snapshot: string, title: string) => void;
 };
 
-export default function DoggyDiary({ stationId, onViewSnapshot }: Props) {
+export default function DoggyDiary({ stationId, http, token, onViewSnapshot }: Props) {
   const [diary, setDiary] = useState<DiaryData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,7 +54,7 @@ export default function DoggyDiary({ stationId, onViewSnapshot }: Props) {
     setError(null);
     try {
       const qs = stationId && stationId !== "default" ? `?station=${encodeURIComponent(stationId)}` : "";
-      const res = await fetchWithTimeout(`/diary/daily${qs}`, {}, 6000);
+      const res = await fetchWithTimeout(authedUrl(http, `/diary/daily${qs}`, token), { headers: authedHeaders(token) }, 6000);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: DiaryData = await res.json();
       setDiary(data);
@@ -59,7 +63,7 @@ export default function DoggyDiary({ stationId, onViewSnapshot }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [stationId]);
+  }, [stationId, http, token]);
 
   useEffect(() => {
     void fetchDiary();

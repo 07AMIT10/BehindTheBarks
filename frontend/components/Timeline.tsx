@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { EMOTION_META, EMOTION_ORDER, emotionVars, sourceLabel } from "@/lib/emotions";
 import { durationLabel, hhmm, pct } from "@/lib/format";
 import { groupAudio, layoutSpans, leftPct, ticks, timelineWindow } from "@/lib/timeline";
+import { authedUrl } from "@/lib/httpAuth";
 import type { AudioMark, NotificationItem, Span } from "@/lib/types";
 import EmotionIcon from "./EmotionIcon";
 
@@ -13,6 +14,9 @@ type Props = {
   treats: number[];
   notifications: NotificationItem[];
   nowSec: number;
+  /** Backend origin from the shared hook: snippet playback must carry auth cross-origin. */
+  http: string;
+  token?: string | null;
   selected: number | null;
   onSelect: (index: number) => void;
   onViewMoment?: (span: Span) => void;
@@ -21,7 +25,7 @@ type Props = {
 const TREAT_ICON = "M3 13h18a9 5 0 0 1-18 0zM12 3v6";
 const BELL_ICON = "M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20.5a2 2 0 0 0 4 0";
 
-export default function Timeline({ spans, audio, treats, notifications, nowSec, selected, onSelect, onViewMoment }: Props) {
+export default function Timeline({ spans, audio, treats, notifications, nowSec, http, token, selected, onSelect, onViewMoment }: Props) {
   const w = timelineWindow(spans, nowSec);
   const laid = layoutSpans(spans, w, nowSec);
   const sounds = groupAudio(audio, w);
@@ -44,7 +48,7 @@ export default function Timeline({ spans, audio, treats, notifications, nowSec, 
     if (audioRef.current) {
       audioRef.current.pause();
     }
-    const audio = new Audio(`/snippets/${snippetId}`);
+    const audio = new Audio(authedUrl(http, `/snippets/${snippetId}`, token));
     audioRef.current = audio;
     setPlayingSnippet(snippetId);
     audio.play().catch(() => setPlayingSnippet(null));

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { authedHeaders, authedUrl, revokeViewerRequest, revokeStationRequest } from "./httpAuth";
 import type { AuthStatus } from "./household";
 import { backendBase } from "./config";
 import { initialState, reduce } from "./store";
@@ -428,18 +429,17 @@ export function useBackend() {
 
   const revokeViewer = useCallback(async (viewerId: string) => {
     const tok = token ?? getStoredToken();
-    const headers: Record<string, string> = {};
-    if (tok) headers["Authorization"] = `Bearer ${tok}`;
-    const res = await fetchWithTimeout(`${base.http}/viewers/${viewerId}`, { method: "DELETE", credentials: "include", headers }, 8000);
+    const req = revokeViewerRequest(base.http, viewerId, tok);
+    const res = await fetchWithTimeout(req.url, req.init, 8000);
     if (!res.ok) throw new Error(`revoke: HTTP ${res.status}`);
   }, [base, token]);
 
   const revokeStation = useCallback(async (stationId: string) => {
     const tok = token ?? getStoredToken();
-    const headers: Record<string, string> = {};
-    const res = await fetchWithTimeout(`${base.http}/stations/${stationId}`, { method: "DELETE", credentials: "include", headers }, 8000);
+    const req = revokeStationRequest(base.http, stationId, tok);
+    const res = await fetchWithTimeout(req.url, req.init, 8000);
     if (!res.ok) throw new Error(`revoke station: HTTP ${res.status}`);
-    void fetchWithTimeout(`${base.http}/status${tok ? `?token=${encodeURIComponent(tok)}` : ""}`, { headers, credentials: "include", cache: "no-store" }, 6000)
+    void fetchWithTimeout(authedUrl(base.http, "/status", tok), { headers: authedHeaders(tok), credentials: "include", cache: "no-store" }, 6000)
       .then((r) => r.ok && r.json())
       .then((st: Status) => st && dispatch({ kind: "status", status: st }))
       .catch(() => undefined);

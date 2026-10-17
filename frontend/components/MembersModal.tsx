@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useDialog } from "@/lib/useDialog";
 import { fetchWithTimeout } from "@/lib/useBackend";
+import { authedHeaders, authedUrl } from "@/lib/httpAuth";
 
 import { toggleSetting } from "../lib/household";
 
@@ -15,6 +16,9 @@ type Props = {
   isOpen: boolean;
   onClose: () => void;
   isOwner: boolean;
+  /** Backend origin from the shared hook; telegram routes must reach it cross-origin with auth. */
+  http: string;
+  token?: string | null;
   fetchMembers: () => Promise<Member>;
   revokeViewer: (id: string) => Promise<void>;
   revokeStation: (id: string) => Promise<void>;
@@ -27,7 +31,7 @@ export type Settings = { llm_enabled: boolean; log_enabled: boolean };
 
 
 /** Who can see this household (T2.6): stations and viewers, with owner-only revoke. */
-export default function MembersModal({ isOpen, onClose, isOwner, fetchMembers, revokeViewer, revokeStation, fetchSettings, saveSettings }: Props) {
+export default function MembersModal({ isOpen, onClose, isOwner, http, token, fetchMembers, revokeViewer, revokeStation, fetchSettings, saveSettings }: Props) {
   const [members, setMembers] = useState<Member | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -37,7 +41,7 @@ export default function MembersModal({ isOpen, onClose, isOwner, fetchMembers, r
 
   const loadTelegram = async () => {
     try {
-      const res = await fetchWithTimeout("/telegram/subscribers", {}, 5000);
+      const res = await fetchWithTimeout(authedUrl(http, "/telegram/subscribers", token), { headers: authedHeaders(token) }, 5000);
       if (res.ok) {
         const data = await res.json();
         setTelegramSubs(data.subscribers || []);
@@ -50,7 +54,7 @@ export default function MembersModal({ isOpen, onClose, isOwner, fetchMembers, r
   const connectTelegram = async () => {
     setTgLoading(true);
     try {
-      const res = await fetchWithTimeout("/telegram/link-code", { method: "POST" }, 5000);
+      const res = await fetchWithTimeout(authedUrl(http, "/telegram/link-code", token), { method: "POST", headers: authedHeaders(token) }, 5000);
       if (res.ok) {
         const data = await res.json();
         if (data.link) {
@@ -67,7 +71,7 @@ export default function MembersModal({ isOpen, onClose, isOwner, fetchMembers, r
 
   const disconnectTelegram = async (subId: string) => {
     try {
-      const res = await fetchWithTimeout(`/telegram/subscribers/${subId}`, { method: "DELETE" }, 5000);
+      const res = await fetchWithTimeout(authedUrl(http, `/telegram/subscribers/${subId}`, token), { method: "DELETE", headers: authedHeaders(token) }, 5000);
       if (res.ok) {
         setTelegramSubs((prev) => prev.filter((s) => s.id !== subId));
       }
