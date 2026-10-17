@@ -361,20 +361,21 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         if cached and (now - cached[0] < 20.0):
             viewer_id, household_id, role, mode_ceiling = cached[1]
         else:
-            with app.state.db_session() as s:
-                viewer = store_repo.viewer_by_token(s, token)
-                if viewer is None:
-                    _viewer_cache.pop(token, None)
-                    raise HTTPException(status_code=401, detail="session revoked or expired")
-                viewer_id = viewer.id
-                household_id = viewer.household_id
-                role = viewer.role
-                mode_ceiling = viewer.mode_ceiling or "full"
-                if now - _last_viewer_touch.get(viewer.id, 0.0) > 30.0:
-                    _last_viewer_touch[viewer.id] = now
-                    store_repo.touch_viewer(s, viewer)
-                    s.commit()
-            _viewer_cache[token] = (now, (viewer_id, household_id, role, mode_ceiling))
+            def _load_session(t: str, n: float) -> tuple[str, str, str, str]:
+                """The session lookup + the 30 s touch, run off the loop (pattern: _load_snippet_viewer)."""
+                with app.state.db_session() as s:
+                    viewer = store_repo.viewer_by_token(s, t)
+                    if viewer is None:
+                        _viewer_cache.pop(t, None)
+                        raise HTTPException(status_code=401, detail="session revoked or expired")
+                    if n - _last_viewer_touch.get(viewer.id, 0.0) > 30.0:
+                        _last_viewer_touch[viewer.id] = n
+                        store_repo.touch_viewer(s, viewer)
+                        s.commit()
+                    return viewer.id, viewer.household_id, viewer.role, (viewer.mode_ceiling or "full")
+
+            viewer_id, household_id, role, mode_ceiling = await asyncio.to_thread(_load_session, token, now)
+        _viewer_cache[token] = (now, (viewer_id, household_id, role, mode_ceiling))
 
         lr = await app.state.registry.get(household_id)
         return Ctx(household_id=household_id, role=role, viewer_id=viewer_id,
@@ -476,7 +477,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
 
     _cached_offline_stations: dict[str, tuple[float, list[dict]]] = {}
 
-    def _build_stations_list(lr, household_id: str, mode_ceiling: str = "full") -> list[dict]:
+    async def _build_stations_list(lr, household_id: str, mode_ceiling: str = "full") -> list[dict]:
         stations_list = []
         seen_sids = set()
         if lr is not None:
@@ -502,15 +503,14 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             if cached and (now - cached[0] < 10.0):
                 db_stations = cached[1]
             else:
-                db_stations = []
-                with app.state.db_session() as s:
-                    for db_st in store_repo.stations_of_household(s, household_id):
-                        if db_st.revoked_at is None:
-                            db_stations.append({
-                                "id": db_st.id,
-                                "name": db_st.name,
-                                "dog_name": db_st.dog_name,
-                            })
+                def _offline_stations(hid: str) -> list[dict]:
+                    """The household's unrevoked station rows, read off the event loop."""
+                    with app.state.db_session() as s:
+                        return [{"id": db_st.id, "name": db_st.name, "dog_name": db_st.dog_name}
+                                for db_st in store_repo.stations_of_household(s, hid)
+                                if db_st.revoked_at is None]
+
+                db_stations = await asyncio.to_thread(_offline_stations, household_id)
                 _cached_offline_stations[household_id] = (now, db_stations)
 
             for db_st in db_stations:
@@ -559,7 +559,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 _cached_offline_stations.pop(consumed.household_id, None)
                 lr = app.state.registry.peek(consumed.household_id)
                 if lr is not None:
-                    st_list = _build_stations_list(lr, consumed.household_id)
+                    st_list = await _build_stations_list(lr, consumed.household_id)
                     lr.hub.publish("status", {
                         "stations": st_list,
                         "paired_station": {"id": station.id, "name": station.name},
@@ -605,7 +605,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 del lr.channels[station_id]
                 if lr.default_channel_id == station_id:
                     lr.default_channel_id = next(iter(lr.channels.keys())) if lr.channels else None
-            st_list = _build_stations_list(lr, ctx.household_id, getattr(ctx, "mode_ceiling", "full"))
+            st_list = await _build_stations_list(lr, ctx.household_id, getattr(ctx, "mode_ceiling", "full"))
             lr.hub.publish("status", {
                 "stations": st_list,
                 "revoked_station": {"id": station_id},
@@ -684,8 +684,12 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         if hello.proto != PROTO_STATION or not hello.station_id:
             await sock.close(code=4401, reason="proto 2 with a paired station_id is required")
             return
-        with app.state.db_session() as s:
-            station = store_repo.station_by_id(s, hello.station_id)
+
+        def _load_station_row(sid: str):
+            with app.state.db_session() as s:
+                return store_repo.station_by_id(s, sid)
+
+        station = await asyncio.to_thread(_load_station_row, hello.station_id)
         if station is None or station.revoked_at is not None:
             await sock.close(code=4401, reason="unknown or revoked station")
             return
@@ -717,8 +721,12 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             await sock.close(code=CLOSE_BUSY, reason="Another phone is already streaming")
             return
 
-        with app.state.db_session() as s:
-            store_repo.touch_station(s, station)
+        def _touch_station_row(st) -> None:
+            """Paired-station heartbeat, off the event loop."""
+            with app.state.db_session() as s:
+                store_repo.touch_station(s, st)
+
+        await asyncio.to_thread(_touch_station_row, station)
 
         station_name = station.name or hello.device or "Station"
         try:
@@ -1160,7 +1168,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             "effective": effective,
         }
 
-        st["stations"] = _build_stations_list(lr, ctx.household_id, getattr(ctx, "mode_ceiling", "full"))
+        st["stations"] = await _build_stations_list(lr, ctx.household_id, getattr(ctx, "mode_ceiling", "full"))
         st["fallback"] = is_fallback
         st["server_origin"] = "render" if is_fallback else "self-hosted"
         st["build_id"] = getattr(app.state, "frontend_build_id", "")
@@ -1519,9 +1527,13 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                     token_candidate = parts[1].removeprefix("link_").strip()
 
             if token_candidate:
-                with app.state.db_session() as session:
-                    pair = store_repo.consume_pairing_code(session, token_candidate, kind="telegram")
-                    if pair:
+                def _connect_telegram(tok: str) -> str | None:
+                    """Consume the /connect code and record the subscriber — all blocking work below,
+                    answered with the dog's name (None: unknown or used-up code)."""
+                    with app.state.db_session() as session:
+                        pair = store_repo.consume_pairing_code(session, tok, kind="telegram")
+                        if pair is None:
+                            return None
                         store_repo.add_telegram_subscriber(
                             session,
                             pair.household_id,
@@ -1531,20 +1543,23 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                             label=user_label,
                         )
                         hh = store_repo.get_household(session, pair.household_id)
-                        dog_name = hh.dog_name if hh else "Your dog"
                         session.commit()
-                        await _tg_api("sendMessage", {
-                            "chat_id": chat_id,
-                            "text": f"🎉 Connected to 🐾 *{dog_name}'s WagWatch*!\n\nYou will receive real-time snapshots, bark alerts, and instant remote comfort buttons in this chat.",
-                            "parse_mode": "Markdown",
-                        })
-                        return {"ok": True, "connected": True}
-                    else:
-                        await _tg_api("sendMessage", {
-                            "chat_id": chat_id,
-                            "text": "⚠️ This WagWatch connection link has expired or was already used. Please generate a new link in WagWatch Settings.",
-                        })
-                        return {"ok": True, "error": "expired"}
+                        return hh.dog_name if hh else "Your dog"
+
+                dog_name = await asyncio.to_thread(_connect_telegram, token_candidate)
+                if dog_name is not None:
+                    await _tg_api("sendMessage", {
+                        "chat_id": chat_id,
+                        "text": f"🎉 Connected to 🐾 *{dog_name}'s WagWatch*!\n\nYou will receive real-time snapshots, bark alerts, and instant remote comfort buttons in this chat.",
+                        "parse_mode": "Markdown",
+                    })
+                    return {"ok": True, "connected": True}
+                else:
+                    await _tg_api("sendMessage", {
+                        "chat_id": chat_id,
+                        "text": "⚠️ This WagWatch connection link has expired or was already used. Please generate a new link in WagWatch Settings.",
+                    })
+                    return {"ok": True, "error": "expired"}
 
         # 2. Handle interactive button callbacks (treat, cue)
         cb = body.get("callback_query")
@@ -2120,7 +2135,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 status_data["mode_info"] = dict(status_data["mode_info"])
                 status_data["mode_info"]["effective"] = eff
             status_data["privacy_mode"] = eff == "blackout"
-            status_data["stations"] = _build_stations_list(lr, viewer.household_id, viewer.mode_ceiling or "full")
+            status_data["stations"] = await _build_stations_list(lr, viewer.household_id, viewer.mode_ceiling or "full")
             await sock.send_json({"type": "status", "seq": 0, "data": status_data})
             while True:
                 msg = await q.get()
