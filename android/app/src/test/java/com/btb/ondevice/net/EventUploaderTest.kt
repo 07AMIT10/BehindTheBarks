@@ -13,6 +13,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.OkHttpClient
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
@@ -797,6 +798,130 @@ class EventUploaderTest {
         assertThat(uploader.sendAudioChunk(preview)).isFalse()
         assertThat(uploader.sendAudioChunk(ByteArray(4))).isFalse()
         assertThat(uploader.audioFramesSent.get()).isEqualTo(0L)
+        uploader.stop()
+    }
+
+    // -- I2: audio snippet upload ---------------------------------------------------------------
+
+    /** Await a request without hanging the suite when nothing arrives. */
+    private fun awaitRequest(seconds: Long = 5) = server.takeRequest(seconds, java.util.concurrent.TimeUnit.SECONDS)
+
+    @Test
+    fun `snippet post carries the snippet station and bearer auth headers`() = runBlocking {
+        server.enqueue(MockResponse().setBody("ok"))
+
+        val uploader = EventUploader(
+            serverUrl = server.url("/ingest-events").toString(),
+            deviceName = "test-galaxy",
+            token = "tok-123",
+            stationId = "st1",
+            spool = spool,
+        )
+
+        uploader.uploadAudioSnippet("snip_st1_1", ByteArray(16))
+
+        val request = awaitRequest()
+        assertThat(request).isNotNull()
+        assertThat(request!!.path).isEqualTo("/events/audio-snippet")
+        assertThat(request.getHeader("X-Snippet-ID")).isEqualTo("snip_st1_1")
+        assertThat(request.getHeader("X-Station-ID")).isEqualTo("st1")
+        assertThat(request.getHeader("Authorization")).isEqualTo("Bearer tok-123")
+        assertThat(request.getHeader("Content-Type")).startsWith("audio/wav")
+        assertThat(request.bodySize).isEqualTo(16L)
+
+        uploader.stop()
+    }
+
+    @Test
+    fun `a tokenless station sends no auth header on the snippet post`() = runBlocking {
+        server.enqueue(MockResponse().setBody("ok"))
+
+        val uploader = EventUploader(
+            serverUrl = server.url("/ingest-events").toString(),
+            deviceName = "test-galaxy",
+            spool = spool,
+        )
+
+        uploader.uploadAudioSnippet("snip_1", ByteArray(16))
+
+        val request = awaitRequest()
+        assertThat(request).isNotNull()
+        assertThat(request!!.path).isEqualTo("/events/audio-snippet")
+        assertThat(request.getHeader("X-Snippet-ID")).isEqualTo("snip_1")
+        assertThat(request.getHeader("X-Station-ID")).isNull()
+        assertThat(request.getHeader("Authorization")).isNull()
+
+        uploader.stop()
+    }
+
+    @Test
+    fun `stalled snippets serialize - one in flight, one waiting, newest wins`() = runBlocking {
+        // The server holds every answer for 3s (headers included, so even the status line never
+        // arrives in time); the injected snippet client gives up after 200ms.
+        val stall = MockResponse().setBody("ok").setHeadersDelay(3, java.util.concurrent.TimeUnit.SECONDS)
+        server.enqueue(stall)
+        server.enqueue(stall)
+
+        val uploader = EventUploader(
+            serverUrl = server.url("/ingest-events").toString(),
+            deviceName = "test-galaxy",
+            spool = spool,
+            snippetOkHttpClient = OkHttpClient.Builder()
+                .connectTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(200, java.util.concurrent.TimeUnit.MILLISECONDS)
+                .build(),
+        )
+
+        uploader.uploadAudioSnippet("s1", ByteArray(8))
+        // A burst while the first POST is parked: the newest waits, the middle one is dropped.
+        uploader.uploadAudioSnippet("s2", ByteArray(8))
+        uploader.uploadAudioSnippet("s3", ByteArray(8))
+        assertThat(uploader.snippetUploadsDropped).isEqualTo(1)
+        assertThat(uploader.snippetUploadsBusy).isTrue()
+
+        // Only the first POST is out so far, nothing else may run concurrently.
+        val first = awaitRequest()
+        assertThat(first!!.getHeader("X-Snippet-ID")).isEqualTo("s1")
+
+        // The read timeout ends post #1; the gate then runs the newest waiting snippet (s3), not s2.
+        withTimeout(10000) {
+            while (server.requestCount < 2) kotlinx.coroutines.delay(25)
+        }
+        val second = awaitRequest()
+        assertThat(second!!.getHeader("X-Snippet-ID")).isEqualTo("s3")
+
+        withTimeout(10000) {
+            while (uploader.snippetUploadsBusy) kotlinx.coroutines.delay(25)
+        }
+        assertThat(uploader.snippetUploadsDropped).isEqualTo(1)
+
+        uploader.stop()
+    }
+
+    @Test
+    fun `snippet post failure frees the gate for the next bark`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(503))
+        server.enqueue(MockResponse().setBody("ok"))
+
+        val uploader = EventUploader(
+            serverUrl = server.url("/ingest-events").toString(),
+            deviceName = "test-galaxy",
+            spool = spool,
+        )
+
+        uploader.uploadAudioSnippet("bad", ByteArray(8))
+        val first = awaitRequest()
+        assertThat(first!!.getHeader("X-Snippet-ID")).isEqualTo("bad")
+        withTimeout(5000) { while (uploader.snippetUploadsBusy) kotlinx.coroutines.delay(25) }
+        assertThat(server.requestCount).isEqualTo(1)
+
+        // The failed POST released the gate: the next bark starts a fresh upload.
+        uploader.uploadAudioSnippet("good", ByteArray(8))
+        val second = awaitRequest()
+        assertThat(second!!.getHeader("X-Snippet-ID")).isEqualTo("good")
+        assertThat(second!!.path).isEqualTo("/events/audio-snippet")
+        assertThat(uploader.snippetUploadsDropped).isEqualTo(0)
+
         uploader.stop()
     }
 }

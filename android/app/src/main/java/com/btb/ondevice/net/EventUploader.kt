@@ -83,7 +83,17 @@ class EventUploader(
     val spool: EventSpool? = null,
     val okHttpClient: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(0, TimeUnit.MILLISECONDS)
+        .readTimeout(0, TimeUnit.MILLISECONDS)   // a WebSocket must tolerate long server silence
+        .build(),
+    /** I2: the snippet POST is a one-shot HTTP call, not a socket: deadlines are mandatory here,
+     *  because the stall-record shared client parks the upload forever. Read, write and call
+     *  timeouts bound a stalled server so the IO scope survives a barking-dog burst. Injectable
+     *  so tests can shrink the deadlines. */
+    val snippetOkHttpClient: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .writeTimeout(20, TimeUnit.SECONDS)
+        .callTimeout(90, TimeUnit.SECONDS)
         .build(),
     val pingIntervalMs: Long = 15_000L,
     var previewMinIntervalMs: Long = 500L,
@@ -113,6 +123,72 @@ class EventUploader(
     }
 
     fun queueBytes(): Long = webSocket?.queueSize() ?: 0L
+
+    // -- Audio snippet upload (I2) ---------------------------------------------------------------
+
+    /**
+     * I2: at most one snippet POST in flight plus one newest-wins waiting slot. A bark triggers a
+     * POST on Dispatchers.IO with deadlines from [snippetOkHttpClient]; further barks wait in the
+     * single slot or are counted as dropped, so a stalled server can never stack a queue of
+     * blocking requests that would starve pings, reconnect and spool on the same scope.
+     * The debounce logic upstream is unchanged.
+     */
+    val snippetUploadsDropped: Int get() = snippetGate.dropped
+    private val snippetGate: SnippetGate = SnippetGate { upload -> startSnippetPost(upload) }
+
+    /** Number of snippet POSTs that are out or waiting (diagnostics). */
+    val snippetUploadsBusy: Boolean get() = snippetGate.busy
+
+    /**
+     * Upload a 5-second canine bioacoustic WAV snippet for instant timeline replay.
+     * Best effort: returns immediately; outcomes and drops are counted, never queued deeply.
+     */
+    fun uploadAudioSnippet(snippetId: String, wavBytes: ByteArray) {
+        snippetGate.accept(SnippetUpload(snippetId, wavBytes))
+    }
+
+    private fun startSnippetPost(upload: SnippetUpload) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                postSnippet(upload)
+            } catch (t: Throwable) {
+                android.util.Log.w("EventUploader", "Snippet upload error: ${t.message}")
+            } finally {
+                // Always open the gate again (or start the waiting snippet), also after a failure.
+                snippetGate.completePost()
+            }
+        }
+    }
+
+    private fun postSnippet(upload: SnippetUpload) {
+        val cleanUrl = serverUrl.trim()
+        val base = when {
+            cleanUrl.startsWith("ws://") -> "http://" + cleanUrl.removePrefix("ws://")
+            cleanUrl.startsWith("wss://") -> "https://" + cleanUrl.removePrefix("wss://")
+            else -> cleanUrl
+        }.substringBefore("/ingest-events").trimEnd('/')
+
+        val httpUrl = "$base/events/audio-snippet"
+        val mediaType = "audio/wav".toMediaTypeOrNull()
+        val reqBody = upload.wav.toRequestBody(mediaType)
+        val reqBuilder = Request.Builder()
+            .url(httpUrl)
+            .header("X-Snippet-ID", upload.snippetId)
+            .post(reqBody)
+
+        if (!stationId.isNullOrEmpty()) {
+            reqBuilder.header("X-Station-ID", stationId)
+        }
+        if (!token.isNullOrEmpty()) {
+            reqBuilder.header("Authorization", "Bearer $token")
+        }
+
+        snippetOkHttpClient.newCall(reqBuilder.build()).execute().use { response ->
+            if (!response.isSuccessful) {
+                android.util.Log.w("EventUploader", "Snippet upload failed: HTTP ${response.code}")
+            }
+        }
+    }
 
     companion object {
         const val KIND_PREVIEW: Byte = 0x01
@@ -520,45 +596,6 @@ class EventUploader(
         }
         // Spool when disconnected or send failed
         return spool?.enqueue("audio", audio.ts, jsonPayload) ?: false
-    }
-
-    /**
-     * Upload a 5-second canine bioacoustic WAV snippet for instant timeline replay.
-     */
-    fun uploadAudioSnippet(snippetId: String, wavBytes: ByteArray) {
-        scope.launch(Dispatchers.IO) {
-            try {
-                val cleanUrl = serverUrl.trim()
-                val base = when {
-                    cleanUrl.startsWith("ws://") -> "http://" + cleanUrl.removePrefix("ws://")
-                    cleanUrl.startsWith("wss://") -> "https://" + cleanUrl.removePrefix("wss://")
-                    else -> cleanUrl
-                }.substringBefore("/ingest-events").trimEnd('/')
-
-                val httpUrl = "$base/events/audio-snippet"
-                val mediaType = "audio/wav".toMediaTypeOrNull()
-                val reqBody = wavBytes.toRequestBody(mediaType)
-                val reqBuilder = Request.Builder()
-                    .url(httpUrl)
-                    .header("X-Snippet-ID", snippetId)
-                    .post(reqBody)
-
-                if (!stationId.isNullOrEmpty()) {
-                    reqBuilder.header("X-Station-ID", stationId)
-                }
-                if (!token.isNullOrEmpty()) {
-                    reqBuilder.header("Authorization", "Bearer $token")
-                }
-
-                okHttpClient.newCall(reqBuilder.build()).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        android.util.Log.w("EventUploader", "Snippet upload failed: HTTP ${response.code}")
-                    }
-                }
-            } catch (t: Throwable) {
-                android.util.Log.w("EventUploader", "Snippet upload error: ${t.message}")
-            }
-        }
     }
 
     fun sendRules(rules: RulesLabel): Boolean {
