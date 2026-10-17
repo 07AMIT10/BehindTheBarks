@@ -7,6 +7,7 @@ import { welcomeVisible } from "@/lib/household";
 import { serverNow } from "@/lib/store";
 import { spanAt } from "@/lib/timeline";
 import { useBackend } from "@/lib/useBackend";
+import { pairingOptions } from "@/lib/pairing";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useNow } from "@/lib/useNow";
 import { batteryDisplay, batteryLevelClass, isTelemetryStale } from "@/lib/battery";
@@ -103,24 +104,33 @@ export default function Dashboard() {
   const [pairOpenCount, setPairOpenCount] = useState(0);
   const [pairing, setPairing] = useState<Pairing | null>(null);
   const [pairKind, setPairKind] = useState<"station" | "viewer">("station");
+  // Shared so a re-mint (regenerate / kind switch) always carries the owner's ceiling choice:
+  // PairingModal only echoes it into the select.
+  const [pairCeiling, setPairCeiling] = useState("full");
   const [pairError, setPairError] = useState<string | null>(null);
   const [initialStationCount, setInitialStationCount] = useState<number | null>(null);
 
-  const mintPairing = useCallback((kind: "station" | "viewer", ceiling = "full") => {
+  const mintPairing = useCallback((kind: "station" | "viewer", ceiling: string) => {
     setPairKind(kind);
     setPairError(null);
     setPairing(null);
-    void createPairing(kind, kind === "viewer" ? { mode_ceiling: ceiling, label: "viewer" } : {})
+    void createPairing(kind, pairingOptions(kind, ceiling))
       .then(setPairing)
       .catch((err) => setPairError(err instanceof Error ? err.message : "could not create the code"));
   }, [createPairing]);
+
+  // Changing the viewer ceiling mints a fresh code so the pairing carries the new constraint.
+  const changePairCeiling = useCallback((ceiling: string) => {
+    setPairCeiling(ceiling);
+    if (pairKind === "viewer") mintPairing(pairKind, ceiling);
+  }, [pairKind, mintPairing]);
 
   const openPairModal = useCallback((kind: "station" | "viewer" = "station") => {
     setPairOpenCount((n) => n + 1);
     setIsPairingOpen(true);
     setInitialStationCount(stations.length);
-    mintPairing(kind);
-  }, [stations.length, mintPairing]);
+    mintPairing(kind, pairCeiling);
+  }, [stations.length, mintPairing, pairCeiling]);
 
   const pairedStation = useMemo(() => {
     if (!isPairingOpen) return null;
@@ -760,8 +770,10 @@ export default function Dashboard() {
           deviceName={state.status?.phone?.device}
           isPaired={Boolean(pairedStation)}
           pairedDeviceName={pairedStation?.name}
-          onRegenerate={() => mintPairing(pairKind)}
-          onSwitchKind={(k) => mintPairing(k)}
+          onRegenerate={() => mintPairing(pairKind, pairCeiling)}
+          onSwitchKind={(k) => mintPairing(k, pairCeiling)}
+          onCeilingChange={changePairCeiling}
+          ceiling={pairCeiling}
         />
       )}
       <MembersModal

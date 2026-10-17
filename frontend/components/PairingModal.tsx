@@ -14,6 +14,9 @@ type Props = {
   error?: string | null;
   onRegenerate: () => void;
   onSwitchKind: (kind: "station" | "viewer") => void;
+  onCeilingChange: (ceiling: string) => void;
+  /** Viewer exposure ceiling; owned by the parent so a re-mint always carries the current choice. */
+  ceiling: string;
   kind: "station" | "viewer";
   isPaired?: boolean;
   pairedDeviceName?: string | null;
@@ -31,11 +34,12 @@ export default function PairingModal({
   error,
   onRegenerate,
   onSwitchKind,
+  onCeilingChange,
+  ceiling,
   kind,
   isPaired,
   pairedDeviceName,
 }: Props) {
-  const [ceiling, setCeiling] = useState("full");
   const [qrUrl, setQrUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [left, setLeft] = useState(pairing?.expires_in ?? 0);
@@ -123,7 +127,7 @@ export default function PairingModal({
         {kind === "viewer" && (
           <div className="mb-3 flex items-center gap-2 text-[13px] text-muted">
             Viewer can see
-            <select value={ceiling} onChange={(e) => setCeiling(e.target.value)}
+            <select value={ceiling} onChange={(e) => onCeilingChange(e.target.value)}
               className="h-9 rounded-lg border border-white/10 bg-white/5 px-2 text-[13px] text-white">
               <option value="full">everything</option>
               <option value="limited">limited (blurred video, Phase 3)</option>
