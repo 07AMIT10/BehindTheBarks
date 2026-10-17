@@ -27,7 +27,9 @@ write_files:
       [Service]
       Type=oneshot
       WorkingDirectory=/opt/btb/deploy
-      ExecStart=/usr/bin/docker compose exec -T app python -m backend.ops.state_backup backup --keep 14
+      # Guard first: a too-old pg client (Dockerfile pins postgresql-client-17) must fail the
+      # unit with a readable line, not break the nightly dump midway.
+      ExecStart=/bin/sh -c "/usr/bin/docker compose exec -T app sh scripts/pg_client_version_check.sh && /usr/bin/docker compose exec -T app python -m backend.ops.state_backup backup --keep 14"
   - path: /etc/systemd/system/btb-backup.timer
     permissions: "0644"
     content: |

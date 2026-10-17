@@ -20,7 +20,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     libgomp1 \
     curl \
-    postgresql-client \
+    # Pin the client to the Supabase/server major (supabase/config.toml major_version = 17):
+    # pg_dump/pg_restore must not be older than the server, or nightlies and restores refuse.
+    postgresql-client-17 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements-web.txt .
@@ -36,7 +38,8 @@ COPY --from=frontend-builder /app/frontend/out ./frontend/out
 # Set BTB_AUTO_RESTORE=1 to pull state/** from the nightly R2 archive at startup; add
 # BTB_RESTORE_DB=1 to also apply the database members (Supabase pg dump / SQLite btb.db).
 # scripts/auto_restore.sh keeps restore output visible and, by default, never overwrites the DB.
-COPY scripts/auto_restore.sh ./scripts/
+# scripts/pg_client_version_check.sh guards the nightly pg_dump/pg_restore against an old client.
+COPY scripts/auto_restore.sh scripts/pg_client_version_check.sh ./scripts/
 
 EXPOSE 8000
 
