@@ -1282,16 +1282,21 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
 
     @app.get("/snippets/{snippet_id}")
     async def get_audio_snippet(snippet_id: str, request: Request, ctx: Ctx = Depends(auth_ctx)) -> FileResponse:
+        """Auth-cached household audio. The shared `out/snippets/legacy` fallback exists only in
+        pin mode: in households mode a snippet outside THIS household's directory does not exist
+        (T2.7 — one household's WAVs are never served to another's viewer)."""
         safe_snippet_id = "".join(c for c in snippet_id if c.isalnum() or c in ("-", "_"))
         snippets_dir = Path("out/snippets") / ctx.household_id
         file_path = snippets_dir / f"{safe_snippet_id}.wav"
         if not file_path.exists():
+            if households_mode:
+                raise HTTPException(404, "Audio snippet not found")
             legacy_file = Path("out/snippets") / LEGACY / f"{safe_snippet_id}.wav"
             if legacy_file.exists():
                 file_path = legacy_file
             else:
                 raise HTTPException(404, "Audio snippet not found")
-        return FileResponse(file_path, media_type="audio/wav", headers={"Cache-Control": "public, max-age=86400"})
+        return FileResponse(file_path, media_type="audio/wav", headers={"Cache-Control": "private, max-age=3600"})
 
     @app.post("/torch")
     async def set_torch(ctx: Ctx = Depends(auth_ctx), station: str | None = None, body: dict | None = None) -> dict:
