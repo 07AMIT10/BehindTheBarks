@@ -974,6 +974,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             viewer_ids = [v.id for v in store_repo.viewers_of_household(s, ctx.household_id)]
             store_repo.delete_household(s, ctx.household_id)
             s.commit()
+            _viewer_cache.clear()  # their 20 s session cache must not outlive the household
         # Every open dashboard of the erased household gets a 4410 close (KICKED sentinel), not a
         # socket left waiting on a hub that will never publish again.
         for vid in viewer_ids:
