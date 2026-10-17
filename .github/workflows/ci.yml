@@ -99,6 +99,11 @@ jobs:
             echo "$BTB_KEYSTORE_B64" | base64 --decode > release.jks
             echo "release keystore decoded from secret"
             echo "real_keystore=true" >> "$GITHUB_OUTPUT"
+            # Production path: supply the signing credentials via GITHUB_ENV (GitHub masks
+            # secret values in logs). The Build step below then sees the required variables.
+            echo "BTB_KEYSTORE_PASSWORD=${{ secrets.BTB_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
+            echo "BTB_KEY_ALIAS=${{ secrets.BTB_KEY_ALIAS }}" >> "$GITHUB_ENV"
+            echo "BTB_KEY_PASSWORD=${{ secrets.BTB_KEY_PASSWORD }}" >> "$GITHUB_ENV"
           else
             ../scripts/generate_release_keystore.sh release.jks
             # Throwaway-signing path: the generator scripts/generate_release_keystore.sh keys the
@@ -110,11 +115,10 @@ jobs:
             echo "real_keystore=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Credentials arrive via GITHUB_ENV from the Setup release keystore step above (real or
+      # throwaway); an explicit env block here would override them with empty strings when the
+      # secrets are unset.
       - name: Build Production APK & App Bundle (AAB)
-        env:
-          BTB_KEYSTORE_PASSWORD: ${{ secrets.BTB_KEYSTORE_PASSWORD }}
-          BTB_KEY_ALIAS: ${{ secrets.BTB_KEY_ALIAS }}
-          BTB_KEY_PASSWORD: ${{ secrets.BTB_KEY_PASSWORD }}
         run: ./gradlew assembleRelease bundleRelease -PbtbDefaultIngestUrl=wss://example.invalid/ingest-events
 
       # Both signatures produce the same artifacts, so this verification must run either way.
