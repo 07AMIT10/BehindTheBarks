@@ -33,9 +33,14 @@ COPY data/ ./data/
 # Copy static frontend export from stage 1 into frontend/out
 COPY --from=frontend-builder /app/frontend/out ./frontend/out
 
+# Set BTB_AUTO_RESTORE=1 to pull state/** from the nightly R2 archive at startup; add
+# BTB_RESTORE_DB=1 to also apply the database members (Supabase pg dump / SQLite btb.db).
+# scripts/auto_restore.sh keeps restore output visible and, by default, never overwrites the DB.
+COPY scripts/auto_restore.sh ./scripts/
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
 
-CMD ["sh", "-c", "if [ \"$BTB_AUTO_RESTORE\" = \"1\" ]; then python -m backend.ops.state_backup restore 2>/dev/null || true; fi; exec uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips='*'"]
+CMD ["sh", "-c", "if [ \"$BTB_AUTO_RESTORE\" = \"1\" ]; then sh scripts/auto_restore.sh || echo 'BTB_AUTO_RESTORE: restore failed; starting without restored state (see the lines above)' >&2; fi; exec uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips='*'"]
