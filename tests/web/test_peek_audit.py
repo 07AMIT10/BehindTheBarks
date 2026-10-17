@@ -54,6 +54,7 @@ class Station:
 
 
 def _owner(c: TestClient, cookie: str) -> None:
+    """Present the following HTTP calls as this viewer/owner (jar-based, no per-request cookies)."""
     c.cookies.clear()
     c.cookies.set(VIEWER_COOKIE, cookie)
 
@@ -103,7 +104,8 @@ def test_peek_window_is_per_viewer_limited_in_time_and_audited(tmp_path):
             c.portal.call(setattr, ch.limited, "clock", lambda: now[0])
 
             # Nobody is peeking: effective exposure is the household mode, for everyone.
-            pre = c.get("/mode", params={"station": station.station_id}, cookies={VIEWER_COOKIE: viewer_cookie})
+            _owner(c, viewer_cookie)
+            pre = c.get("/mode", params={"station": station.station_id})
             assert pre.json() == {"household_mode": "limited", "station_cap": "full", "effective": "limited"}
 
             owner_id = _viewer_id(c.app, owner_cookie)
@@ -111,7 +113,7 @@ def test_peek_window_is_per_viewer_limited_in_time_and_audited(tmp_path):
             assert owner_id != viewer_id
 
             # The VIEWER peeks for 15 s.
-            p = c.post("/peek", params={"station": station.station_id}, cookies={VIEWER_COOKIE: viewer_cookie})
+            p = c.post("/peek", params={"station": station.station_id})
             assert p.status_code == 200
             assert p.json()["ok"] is True and p.json()["status"] == "peeking"
             assert p.json() == {"ok": True, "status": "peeking", "duration_s": 15.0, "expires_at": now[0] + 15.0}
@@ -124,19 +126,23 @@ def test_peek_window_is_per_viewer_limited_in_time_and_audited(tmp_path):
             assert c.portal.call(ch.limited.is_peeking, viewer_id) is True
 
             # Per-viewer exposure: the peeker sees full, every other identity stays limited...
-            own = c.get("/mode", params={"station": station.station_id}, cookies={VIEWER_COOKIE: viewer_cookie})
+            _owner(c, viewer_cookie)
+            own = c.get("/mode", params={"station": station.station_id})
             assert own.json()["effective"] == "full"
-            others = c.get("/mode", params={"station": station.station_id}, cookies={VIEWER_COOKIE: owner_cookie})
+            _owner(c, owner_cookie)
+            others = c.get("/mode", params={"station": station.station_id})
             assert others.json()["effective"] == "limited"
 
             # ...and the window lapses exactly at expires_at (fake clock now past it).
             now[0] += 16.0
             assert c.portal.call(ch.limited.is_peeking, viewer_id) is False
-            after = c.get("/mode", params={"station": station.station_id}, cookies={VIEWER_COOKIE: viewer_cookie})
+            _owner(c, viewer_cookie)
+            after = c.get("/mode", params={"station": station.station_id})
             assert after.json()["effective"] == "limited"
 
             # The owner's peek appends its own entry with the owner's ids and role.
-            po = c.post("/peek", params={"station": station.station_id}, cookies={VIEWER_COOKIE: owner_cookie})
+            _owner(c, owner_cookie)
+            po = c.post("/peek", params={"station": station.station_id})
             assert po.status_code == 200 and po.json()["expires_at"] == now[0] + 15.0
             assert c.portal.call(lambda: ch.limited.audit_log[-1]) == {
                 "viewer_id": owner_id, "role": "owner", "ts": now[0],
@@ -144,7 +150,8 @@ def test_peek_window_is_per_viewer_limited_in_time_and_audited(tmp_path):
 
             # A refusal is NOT audited: with the station capped below full there is no peek.
             phone.send_text(json.dumps({"type": "mode_state", "data": {"cap": "privacy", "effective": "privacy"}}))
-            denied = c.post("/peek", params={"station": station.station_id}, cookies={VIEWER_COOKIE: viewer_cookie})
+            _owner(c, viewer_cookie)
+            denied = c.post("/peek", params={"station": station.station_id})
             assert denied.status_code == 409
             assert c.portal.call(len, ch.limited.audit_log) == 2
 
@@ -182,12 +189,14 @@ def test_peek_starts_from_the_household_mode_not_from_a_precursor(tmp_path):
             now = [time.time()]
             c.portal.call(setattr, ch.limited, "clock", lambda: now[0])
 
-            p = c.post("/peek", params={"station": station.station_id}, cookies={VIEWER_COOKIE: owner_cookie})
+            _owner(c, owner_cookie)
+            p = c.post("/peek", params={"station": station.station_id})
             assert p.status_code == 200
             # Restart the clock from a much later moment: at the peek's own recorded expiry the
             # window is gone from every surface, no restart of any kind needed.
             now[0] += 200.0
-            late = c.get("/mode", params={"station": station.station_id}, cookies={VIEWER_COOKIE: owner_cookie})
+            _owner(c, owner_cookie)
+            late = c.get("/mode", params={"station": station.station_id})
             assert late.json()["effective"] == "limited", "no peek echo should outlive its recorded expiry"
             assert c.portal.call(ch.limited.is_peeking, _viewer_id(c.app, owner_cookie)) is False
 

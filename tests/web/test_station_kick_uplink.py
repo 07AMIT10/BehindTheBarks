@@ -77,11 +77,11 @@ def _viewer_cookie(c: TestClient, owner_cookie: str) -> str:
     return c.cookies[VIEWER_COOKIE]
 
 
-def _audio_close_code(c: TestClient, cookies: dict) -> int:
+def _audio_close_code(c: TestClient, cookie: str) -> int:
     """Open /audio, expect a refusal, and return its close code."""
-    c.cookies.clear()
+    _owner(c, cookie)
     with pytest.raises(WebSocketDisconnect) as err:
-        with c.websocket_connect("/audio", cookies=cookies) as ws:
+        with c.websocket_connect("/audio") as ws:
             ws.receive_json()
     return err.value.code
 
@@ -117,8 +117,8 @@ def test_phone_kick_viewers_uplink_disconnects_listeners_and_cools_down(tmp_path
             phone.send_bytes(bytes([KIND_PREVIEW]) + FAKE_JPEG)
 
             # A viewer listens to the station's audio before the phone claims its camera back.
-            c.cookies.clear()
-            with c.websocket_connect("/audio", cookies={VIEWER_COOKIE: viewer_cookie}) as audio_ws:
+            _owner(c, viewer_cookie)
+            with c.websocket_connect("/audio") as audio_ws:
                 assert audio_ws.receive_json()["type"] == "audio_hello"
 
                 # Precise-but-boring cooldown testing: the fake clock is injected into the
@@ -144,7 +144,7 @@ def test_phone_kick_viewers_uplink_disconnects_listeners_and_cools_down(tmp_path
 
                 # 3. During the cooldown a new listener is refused with the same code, and /video
                 #    answers 403 "Viewers disconnected ..." even for the owner, station or not.
-                assert _audio_close_code(c, {VIEWER_COOKIE: viewer_cookie}) == 4411
+                assert _audio_close_code(c, viewer_cookie) == 4411
                 now[0] += 30.0  # still inside the 60 s window
                 _owner(c, owner_cookie)
                 vid = c.get("/video", params={"station": station.station_id})
@@ -154,7 +154,7 @@ def test_phone_kick_viewers_uplink_disconnects_listeners_and_cools_down(tmp_path
                 # 4. After the window lapses the audio surface (viewer role included) comes back.
                 now[0] += 61.0
                 _owner(c, viewer_cookie)
-                with c.websocket_connect("/audio", cookies={VIEWER_COOKIE: viewer_cookie}) as back:
+                with c.websocket_connect("/audio") as back:
                     assert back.receive_json()["type"] == "audio_hello"
 
             # The phone hangs up: its close is what ends the uplink (pipeline stops itself).
@@ -180,8 +180,8 @@ def test_owner_endpoint_and_phone_uplink_arm_the_same_tracker(tmp_path):
             assert c.post("/mode", json={"mode": "full"}).status_code == 200
             phone.send_bytes(bytes([KIND_PREVIEW]) + FAKE_JPEG)
 
-            c.cookies.clear()
-            with c.websocket_connect("/audio", cookies={VIEWER_COOKIE: viewer_cookie}) as audio_ws:
+            _owner(c, viewer_cookie)
+            with c.websocket_connect("/audio") as audio_ws:
                 assert audio_ws.receive_json()["type"] == "audio_hello"
 
                 lr = c.portal.call(c.app.state.registry.get, station.household_id)
@@ -207,7 +207,7 @@ def test_owner_endpoint_and_phone_uplink_arm_the_same_tracker(tmp_path):
                 assert c.get("/video").status_code == 403
                 now[0] += 31.0  # past this window as well
                 _owner(c, viewer_cookie)
-                with c.websocket_connect("/audio", cookies={VIEWER_COOKIE: viewer_cookie}) as back:
+                with c.websocket_connect("/audio") as back:
                     assert back.receive_json()["type"] == "audio_hello"
 
             phone.send_text(json.dumps({"type": "bye"}))
