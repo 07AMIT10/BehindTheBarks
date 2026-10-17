@@ -1590,6 +1590,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         pipeline = ch.pipeline if ch else ctx.pipeline
         policy = ch.policy if ch else (ctx.policy or getattr(ctx.runtime, "policy", None))
         hub = ch.hub if ch else ctx.hub
+        limited = ch.limited if ch else ctx.limited
         if policy is None:
             policy = Policy(household_mode="full")
             if ch:
@@ -1604,12 +1605,16 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             if policy.household_mode != "blackout":
                 policy._prev_household_mode = policy.household_mode
             policy.household_mode = "blackout"
+            if limited is not None:
+                limited.clear_peeks()  # blackout must never be lifted by a stale peek window
             set_policy_fn = getattr(pipeline, "set_policy", None)
             if set_policy_fn:
                 set_policy_fn("blackout")
             if not target_station and lr:
                 for s_ch in lr.channels.values():
                     s_ch.policy.household_mode = "blackout"
+                    if s_ch.limited is not None:
+                        s_ch.limited.clear_peeks()
                     if hasattr(s_ch.pipeline, "set_policy"):
                         s_ch.pipeline.set_policy("blackout")
             hub.publish("status", {
@@ -1627,12 +1632,16 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 return {"ok": True, "privacy_mode": True, "status": "pending", "mode": restore_mode}
             else:
                 policy.household_mode = restore_mode
+                if limited is not None:
+                    limited.clear_peeks()
                 set_policy_fn = getattr(pipeline, "set_policy", None)
                 if set_policy_fn:
                     set_policy_fn(restore_mode)
                 if not target_station and lr:
                     for s_ch in lr.channels.values():
                         s_ch.policy.household_mode = restore_mode
+                        if s_ch.limited is not None:
+                            s_ch.limited.clear_peeks()
                         if hasattr(s_ch.pipeline, "set_policy"):
                             s_ch.pipeline.set_policy(restore_mode)
                 eff = policy.compute_effective(station_cap, ctx)
@@ -1701,7 +1710,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
 
         station_cap = getattr(pipeline, "station_cap", "full") if pipeline else "full"
         h_mode = policy.household_mode if policy else getattr(pipeline, "_policy_mode", "full") if pipeline else "full"
-        is_peeking = limited.is_peeking(ctx.viewer_id or "owner") if limited else False
+        # A peek window only ever lifted `limited`; in any other mode it must not raise the mode.
+        is_peeking = bool(limited and h_mode == "limited" and limited.is_peeking(ctx.viewer_id or "owner"))
         base = "full" if is_peeking else h_mode
         effective = min_mode(station_cap, base, getattr(ctx, "mode_ceiling", "full"))
         return {
@@ -1712,15 +1722,24 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
 
     @app.post("/peek")
     async def post_peek(ctx: Ctx = Depends(auth_ctx), station: str | None = None) -> dict:
-        """T3.5: temporary 15s window raising effective mode to min(full, ceiling) if station cap is full."""
+        """T3.5: temporary 15s window raising effective mode to min(full, ceiling) — only in the
+        documented contract (docs/privacy_architecture_and_threat_model.md): the household is in
+        `limited` (the mode a peek lifts) and the station cap is `full`."""
         lr = app.state.registry.peek(ctx.household_id) or await app.state.registry.get(ctx.household_id)
         ch = _resolve_channel(lr, station, ctx.household_id)
         if station and ch is None:
             raise HTTPException(404, f"station {station!r} is not active")
         pipeline = ch.pipeline if ch else ctx.pipeline
+        policy = ch.policy if ch else (ctx.policy or getattr(ctx.runtime, "policy", None))
         tracker = ch.tracker if ch else ctx.tracker
         limited = ch.limited if ch else ctx.limited
 
+        household_mode = policy.household_mode if policy else "full"
+        if household_mode != "limited":
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "household_mode", "message": f"Peek not allowed while household mode is {household_mode}"}
+            )
         station_cap = getattr(pipeline, "station_cap", "full") if pipeline else "full"
         if station_cap != "full":
             raise HTTPException(
@@ -1771,6 +1790,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
             if ch.policy.household_mode != "blackout":
                 ch.policy._prev_household_mode = ch.policy.household_mode
             ch.policy.household_mode = mode
+            if ch.limited is not None:
+                ch.limited.clear_peeks()  # the household lifted/lowered the mode: end every peek
             set_policy_fn = getattr(ch.pipeline, "set_policy", None)
             if set_policy_fn:
                 set_policy_fn(mode)
@@ -1807,6 +1828,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         if lr:
             for s_ch in lr.channels.values():
                 s_ch.policy.household_mode = mode
+                if s_ch.limited is not None:
+                    s_ch.limited.clear_peeks()  # the household lifted/lowered the mode: end every peek
                 if hasattr(s_ch.pipeline, "set_policy"):
                     s_ch.pipeline.set_policy(mode)
         eff = policy.compute_effective(station_cap, ctx)
@@ -1932,7 +1955,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                     station_cap = getattr(pipeline, "station_cap", "full") if pipeline else "full"
                     pol = policy or ctx.policy or getattr(ctx.runtime, "policy", None)
                     h_mode = pol.household_mode if pol else getattr(pipeline, "_policy_mode", "full") if pipeline else "full"
-                    is_peeking = limited.is_peeking(ctx.viewer_id or "owner") if limited else False
+                    # A peek only ever lifted `limited`: in privacy/blackout/full it must not raise anything.
+                    is_peeking = bool(limited and h_mode == "limited" and limited.is_peeking(ctx.viewer_id or "owner"))
                     eff_mode = pol.compute_effective(station_cap, ctx, is_peeking=is_peeking) if pol else min_mode(station_cap, "full" if is_peeking else h_mode, getattr(ctx, "mode_ceiling", "full"))
 
                     if pipeline is None or getattr(pipeline, "_idle", False):

@@ -103,3 +103,10 @@ class Limited:
         expires_at = self._peeks.get(viewer_id, 0.0)
         return self.clock() < expires_at
 
+    def clear_peeks(self) -> int:
+        """End every active peek window (the household lifted or lowered its mode, so an old "peek"
+        must never keep raising a mode it was granted under)."""
+        count = len(self._peeks)
+        self._peeks.clear()
+        return count
+

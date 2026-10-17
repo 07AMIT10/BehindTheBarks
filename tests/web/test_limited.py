@@ -108,7 +108,16 @@ def test_peek_endpoint_and_cap_rejection(tmp_path):
         hid = r_create.json()["household_id"]
         owner_tok = client.cookies.get(VIEWER_COOKIE)
 
-        # Station cap is full by default: POST /peek succeeds
+        # In full mode a peek is refused: there is nothing to lift (documented contract)
+        r_full_denied = client.post("/peek")
+        assert r_full_denied.status_code == 409
+        assert r_full_denied.json()["detail"]["error"] == "household_mode"
+
+        # In limited mode the 15s peek works while the station cap is full
+        client.get("/mode")
+        lr = app.state.registry.peek(hid)
+        assert lr is not None
+        lr.policy.set_mode("limited")
         r_peek = client.post("/peek")
         assert r_peek.status_code == 200
         data = r_peek.json()
