@@ -714,6 +714,12 @@ class MonitorService : Service(), LifecycleOwner {
                 }
                 // T3.9: live audio, only in Full mode with a listener (AudioStreamGate), same AudioRecord.
                 streamAudioChunk(up, pcm16)
+            },
+            onMicUnavailable = {
+                // M4: fire exactly once (MicSource guarantees it). The user hears barks analysis
+                // stopped: the session goes on without audio, the notification says so and does not
+                // spam on every failed read afterwards.
+                updateNotification("Microphone unavailable — monitoring without audio")
             }
         )
         micSource = mic
@@ -882,7 +888,7 @@ class MonitorService : Service(), LifecycleOwner {
     fun playVoiceChunk(pcmBytes: ByteArray) {
         if (pcmBytes.isEmpty()) return
         val handler = voiceHandler ?: return  // not running / shutting down: drop silently
-        // When the queue is full the staliest chunk is dropped (VoiceChunkQueue): newest speech wins.
+        // When the queue is full the stalest chunk is dropped (VoiceChunkQueue): newest speech wins.
         voiceChunkQueue.offer(pcmBytes)
         if (voiceDrainScheduled.compareAndSet(false, true)) {
             handler.post { drainVoiceQueue() }
