@@ -169,6 +169,11 @@ def station_by_id(session: Session, station_id: str) -> Station | None:
     return session.get(Station, station_id)
 
 
+def get_station(session: Session, station_id: str) -> Station | None:
+    """Lookup by primary key (the name used by endpoint callers, e.g. the audio-snippet upload)."""
+    return session.get(Station, station_id)
+
+
 def stations_of_household(session: Session, household_id: str) -> list[Station]:
     return list(session.execute(select(Station).where(Station.household_id == household_id)).scalars())
 
