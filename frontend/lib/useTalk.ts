@@ -11,6 +11,8 @@ export interface UseTalkOptions {
 
 export interface TalkControl {
   talking: boolean;
+  /** True from startTalk() until the mic graph is live or the attempt ends: covers the permission-dialog window. */
+  starting: boolean;
   error: string | null;
   startTalk: () => Promise<void>;
   stopTalk: () => void;
@@ -19,6 +21,7 @@ export interface TalkControl {
 export function useTalk(opts: UseTalkOptions): TalkControl {
   const { http, token, stationId, disabled = false } = opts;
   const [talking, setTalking] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -26,6 +29,9 @@ export function useTalk(opts: UseTalkOptions): TalkControl {
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const bufferRef = useRef<number[]>([]);
   const isTalkingRef = useRef(false);
+  /** startTalk is awaiting getUserMedia / graph connect: a stopTalk during it latches here. */
+  const startingRef = useRef(false);
+  const wantStopRef = useRef(false);
 
   const flushBuffer = useCallback(
     async (final: boolean = false) => {
@@ -75,13 +81,7 @@ export function useTalk(opts: UseTalkOptions): TalkControl {
     [http, token, stationId]
   );
 
-  const stopTalk = useCallback(() => {
-    if (!isTalkingRef.current) return;
-    isTalkingRef.current = false;
-    setTalking(false);
-
-    void flushBuffer(true);
-
+  const teardown = useCallback(() => {
     if (processorRef.current) {
       processorRef.current.disconnect();
       processorRef.current = null;
@@ -97,10 +97,28 @@ export function useTalk(opts: UseTalkOptions): TalkControl {
       audioCtxRef.current = null;
     }
     bufferRef.current = [];
-  }, [flushBuffer]);
+  }, []);
+
+  const stopTalk = useCallback(() => {
+    if (!isTalkingRef.current) {
+      // Mic graph not up yet (permission dialog open, getUserMedia pending): latch the
+      // release so the teardown runs the moment startTalk finishes, instead of letting
+      // the mic stream into /voice/chunk until the tab dies.
+      if (startingRef.current) wantStopRef.current = true;
+      return;
+    }
+    isTalkingRef.current = false;
+    setTalking(false);
+
+    void flushBuffer(true);
+    teardown();
+  }, [flushBuffer, teardown]);
 
   const startTalk = useCallback(async () => {
-    if (disabled || isTalkingRef.current) return;
+    if (disabled || isTalkingRef.current || startingRef.current) return;
+    startingRef.current = true;
+    wantStopRef.current = false;
+    setStarting(true);
     setError(null);
 
     try {
@@ -169,9 +187,22 @@ export function useTalk(opts: UseTalkOptions): TalkControl {
     } catch (err) {
       console.error("Failed to start voice transmission", err);
       setError(err instanceof Error ? err.message : "Microphone permission denied");
-      stopTalk();
+      // Partial start (e.g. mic granted but the graph failed to build): stop the tracks now.
+      teardown();
+      isTalkingRef.current = false;
+      setTalking(false);
+    } finally {
+      // A release during the pending window tears the fresh mic graph down immediately.
+      if (wantStopRef.current) {
+        wantStopRef.current = false;
+        isTalkingRef.current = false;
+        setTalking(false);
+        teardown();
+      }
+      startingRef.current = false;
+      setStarting(false);
     }
-  }, [disabled, flushBuffer, stopTalk]);
+  }, [disabled, flushBuffer, teardown]);
 
   useEffect(() => {
     return () => {
@@ -181,6 +212,7 @@ export function useTalk(opts: UseTalkOptions): TalkControl {
 
   return {
     talking,
+    starting,
     error,
     startTalk,
     stopTalk,

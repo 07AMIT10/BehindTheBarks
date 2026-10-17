@@ -54,8 +54,14 @@ export function TalkButton({
   disabled?: boolean;
 }) {
   const talking = control.talking;
+  // A release hits stopTalk() while the permission dialog is up: show that this hold is live.
+  const pending = control.starting && !control.talking;
   const name = "Talk to your pet";
-  const tooltip = talking ? "Release to stop speaking" : "Hold to speak through station speaker";
+  const tooltip = pending
+    ? "Microphone starting — release to cancel"
+    : talking
+    ? "Release to stop speaking"
+    : "Hold to speak through station speaker";
 
   const talkingStyle = {
     background: "rgba(239, 68, 68, 0.22)",
@@ -109,7 +115,7 @@ export function TalkButton({
       style={talking ? talkingStyle : idleStyle}
     >
       <MicIcon talking={talking} />
-      <span>{talking ? "Speaking…" : "Hold to Talk"}</span>
+      <span>{pending ? "Starting…" : talking ? "Speaking…" : "Hold to Talk"}</span>
     </button>
   );
 }
