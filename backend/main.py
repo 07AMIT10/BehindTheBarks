@@ -1176,6 +1176,8 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
     snippet_cfg = web.get("snippets") or {}
     SNIPPET_MAX_BYTES = 1_000_000  # keep in step with the original hard cap (401: 1 MB)
     SNIPPET_MIN_BYTES = 44  # a bare RIFF/WAVE header
+    SNIPPET_MAX_PER_HOUSEHOLD = int(snippet_cfg.get("max_per_household", 50) or 50)
+    SNIPPET_RETENTION_S = float(snippet_cfg.get("retention_days", 7) or 7) * 86_400.0
 
     def _load_snippet_viewer(token: str):
         with app.state.db_session() as s:
@@ -1218,6 +1220,30 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
                 return st.household_id
         raise HTTPException(status_code=401, detail="unauthorized: household session or paired station required")
 
+    def _sweep_snippets(snippets_dir: Path) -> int:
+        """Per-household retention, run inline on every upload (no background task): delete WAVs
+        older than web.snippets.retention_days, then the oldest beyond web.snippets.max_per_household.
+        Only this household's own directory is ever touched."""
+        deleted = 0
+        try:
+            files = [p for p in snippets_dir.iterdir() if p.is_file() and p.suffix == ".wav"]
+            cutoff = time.time() - SNIPPET_RETENTION_S
+            keep = []
+            for p in files:
+                if p.stat().st_mtime < cutoff:
+                    p.unlink()
+                    deleted += 1
+                else:
+                    keep.append(p)
+            excess = len(keep) - SNIPPET_MAX_PER_HOUSEHOLD
+            if excess > 0:
+                for p in sorted(keep, key=lambda p: p.stat().st_mtime)[:excess]:
+                    p.unlink()
+                    deleted += 1
+        except OSError:
+            return deleted
+        return deleted
+
     @app.post("/events/audio-snippet")
     async def upload_audio_snippet(request: Request) -> dict:
         # Decide auth (and the destination directory) BEFORE reading any body bytes.
@@ -1251,6 +1277,7 @@ def create_app(cfg: dict | None = None, *, pipeline: Any = None, interpreter: An
         snippets_dir.mkdir(parents=True, exist_ok=True)
         out_file = snippets_dir / f"{safe_snippet_id}.wav"
         out_file.write_bytes(body)
+        _sweep_snippets(snippets_dir)
         return {"ok": True, "snippet_id": safe_snippet_id, "size": len(body)}
 
     @app.get("/snippets/{snippet_id}")
